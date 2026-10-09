@@ -1,0 +1,123 @@
+//! In-memory адаптер для тестов (только cfg(test)).
+
+use std::sync::Mutex;
+
+use async_trait::async_trait;
+use chrono::NaiveDate;
+use kernel::error::{AppError, AppResult};
+use rust_decimal::Decimal;
+use uuid::Uuid;
+
+use crate::domain::Transaction;
+use crate::ports::{FactLine, Filter, Payment, TransactionRepository};
+
+#[derive(Default)]
+pub struct InMemoryTransactionRepository {
+    rows: Mutex<Vec<Transaction>>,
+}
+
+fn matches(r: &Transaction, project_id: Uuid, f: &Filter) -> bool {
+    r.project_id == project_id
+        && f.from.is_none_or(|from| r.occurred_on >= from)
+        && f.to.is_none_or(|to| r.occurred_on <= to)
+        && f.account_code.as_deref().is_none_or(|a| r.account_code == a)
+        && f.created_by.is_none_or(|u| r.created_by == u)
+        && f.untranslated.is_none_or(|l| r.description.localized().is_some_and(|d| d.missing(l)))
+}
+
+#[async_trait]
+impl TransactionRepository for InMemoryTransactionRepository {
+    async fn insert(&self, item: &Transaction) -> AppResult<()> {
+        let mut rows = self.rows.lock().unwrap();
+        if item.plan.is_some() && rows.iter().any(|r| r.project_id == item.project_id && r.plan == item.plan) {
+            return Err(AppError::Conflict("plan".into()));
+        }
+        rows.push(item.clone());
+        Ok(())
+    }
+
+    async fn update(&self, item: &Transaction) -> AppResult<()> {
+        let mut rows = self.rows.lock().unwrap();
+        let row = rows.iter_mut().find(|r| r.project_id == item.project_id && r.id == item.id);
+        *row.ok_or_else(|| AppError::NotFound(item.id.to_string()))? = item.clone();
+        Ok(())
+    }
+
+    async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Transaction>> {
+        Ok(self.rows.lock().unwrap().iter().find(|r| r.project_id == project_id && r.id == id).cloned())
+    }
+
+    async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>> {
+        let rows = self.rows.lock().unwrap();
+        let mut items: Vec<_> = rows.iter().filter(|r| matches(r, project_id, filter)).cloned().collect();
+        items.sort_by(|a, b| b.occurred_on.cmp(&a.occurred_on).then(a.id.cmp(&b.id)));
+        Ok(items.into_iter().skip(offset as usize).take(limit as usize).collect())
+    }
+
+    async fn count(&self, project_id: Uuid, filter: &Filter) -> AppResult<i64> {
+        Ok(self.rows.lock().unwrap().iter().filter(|r| matches(r, project_id, filter)).count() as i64)
+    }
+
+    async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool> {
+        let mut rows = self.rows.lock().unwrap();
+        let before = rows.len();
+        rows.retain(|r| !(r.project_id == project_id && r.id == id));
+        Ok(rows.len() < before)
+    }
+
+    async fn lines(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<FactLine>> {
+        let rows = self.rows.lock().unwrap();
+        Ok(rows
+            .iter()
+            .filter(|r| r.project_id == project_id && r.occurred_on >= from && r.occurred_on <= to)
+            .flat_map(|r| {
+                r.lines.iter().map(move |l| FactLine {
+                    transaction_id: r.id,
+                    occurred_on: r.occurred_on,
+                    account_code: r.account_code.clone(),
+                    tx_kind: r.tx_kind.as_str().into(),
+                    category_code: l.category_code.clone(),
+                    amount: l.amount,
+                    created_by: r.created_by,
+                })
+            })
+            .collect())
+    }
+
+    async fn payments(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<Payment>> {
+        let rows = self.rows.lock().unwrap();
+        Ok(rows
+            .iter()
+            .filter(|r| r.project_id == project_id)
+            .filter_map(|r| {
+                let (plan_id, plan_date) = r.plan?;
+                (plan_date >= from && plan_date <= to).then(|| Payment {
+                    plan_id,
+                    plan_date,
+                    transaction_id: r.id,
+                    occurred_on: r.occurred_on,
+                    amount: r.total(),
+                })
+            })
+            .collect())
+    }
+
+    async fn turnover(&self, project_id: Uuid, to: NaiveDate) -> AppResult<Vec<(String, Decimal, Decimal)>> {
+        let rows = self.rows.lock().unwrap();
+        let mut out: Vec<(String, Decimal, Decimal)> = Vec::new();
+        for r in rows.iter().filter(|r| r.project_id == project_id && r.occurred_on <= to) {
+            let idx = match out.iter().position(|x| x.0 == r.account_code) {
+                Some(i) => i,
+                None => {
+                    out.push((r.account_code.clone(), Decimal::ZERO, Decimal::ZERO));
+                    out.len() - 1
+                }
+            };
+            match r.tx_kind {
+                crate::domain::TxKind::Income => out[idx].1 += r.total(),
+                crate::domain::TxKind::Expense => out[idx].2 += r.total(),
+            }
+        }
+        Ok(out)
+    }
+}

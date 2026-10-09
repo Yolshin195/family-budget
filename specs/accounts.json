@@ -1,0 +1,5 @@
+{"name":"accounts","entity":"Account","title":"Счета","example_code":"CARD_KBANK",
+ "fields":[{"name":"name_lang","type":"enum","values":["RU","EN","TH"],"description":"Язык оригинала названия"},{"name":"name_ru","type":"string","required":false,"description":"Перевод названия: ru"},{"name":"name_en","type":"string","required":false,"description":"Перевод названия: en"},{"name":"name_th","type":"string","required":false,"description":"Перевод названия: th"},{"name":"account_kind","type":"enum","values":["CASH","CARD","BANK","SAVINGS"],"description":"Тип счёта"},
+   {"name":"currency_code","type":"ref","ref":"currencies","description":"Валюта счёта"},
+   {"name":"opening_balance","type":"decimal","description":"Начальный остаток"},
+   {"name":"holder_user_id","type":"uuid","required":false,"description":"Держатель счёта (участник проекта)"}]}

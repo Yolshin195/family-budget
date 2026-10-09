@@ -1,0 +1,230 @@
+//! Демо-данные: заполняются один раз, если в БД нет пользователей. Всё создаётся через сервисы
+//! фич — те же проверки, что у пользователя в интерфейсе. Даты — относительно текущего месяца.
+
+use std::str::FromStr;
+use std::sync::Arc;
+
+use chrono::{Datelike, Months, NaiveDate};
+use kernel::auth::{Memberships, Role};
+use kernel::error::AppResult;
+use kernel::i18n::Lang;
+use rust_decimal::Decimal;
+use uuid::Uuid;
+
+use crate::wiring::wire_projects::{ensure_currency, localized};
+
+pub struct Services {
+    pub projects: Arc<projects::Service>,
+    pub currencies: Arc<currencies::Service>,
+    pub rates: Arc<rates::Service>,
+    pub accounts: Arc<accounts::Service>,
+    pub transactions: Arc<transactions::Service>,
+    pub limits: Arc<limits::Service>,
+    pub planning: Arc<planning::Service>,
+}
+
+pub const PASSWORD: &str = "demo123";
+
+fn dec(s: &str) -> Decimal {
+    Decimal::from_str(s).unwrap_or_default()
+}
+
+/// День месяца с отступом `back` месяцев назад; 31-е в коротком месяце → последний день.
+fn day(back: u32, d: u32) -> NaiveDate {
+    let today = chrono::Local::now().date_naive();
+    let first = today.with_day(1).unwrap_or(today).checked_sub_months(Months::new(back)).unwrap_or(today);
+    first.checked_add_days(chrono::Days::new((d - 1) as u64)).filter(|x| x.month() == first.month()).unwrap_or(first)
+}
+
+pub async fn run(s: &Services) -> anyhow::Result<()> {
+    if s.projects.login("aleksey@demo.local", PASSWORD).await.is_ok() {
+        return Ok(());
+    }
+    println!("Демо-данные: создаю пользователей и семейный проект…");
+    let me = s.projects.register("aleksey@demo.local", "Алексей", PASSWORD, Lang::Ru, "THB").await.map_err(err)?;
+    let anna = s.projects.register("anna@demo.local", "Anna", PASSWORD, Lang::Th, "THB").await.map_err(err)?;
+    let family = s.projects.create_project(me, "Семья", projects::ProjectKind::Family, "THB").await.map_err(err)?;
+    s.projects.add_member(me, family, "anna@demo.local", Role::Editor).await.map_err(err)?;
+    fill_family(s, family, me, anna).await.map_err(err)?;
+    fill_personal(s, me).await.map_err(err)?;
+    println!("Демо-данные готовы: aleksey@demo.local / anna@demo.local, пароль {PASSWORD}");
+    Ok(())
+}
+
+fn err(e: kernel::error::AppError) -> anyhow::Error {
+    anyhow::anyhow!("seed: {e}")
+}
+
+async fn account(s: &Services, p: Uuid, code: &str, kind: &str, cur: &str, opening: &str, holder: Option<Uuid>, lang: Lang, names: (&str, &str, &str)) -> AppResult<()> {
+    let (name, name_lang, name_ru, name_en, name_th) = localized(lang, names.0, names.1, names.2);
+    s.accounts
+        .create(p, accounts::dto::CreateAccountDto {
+            code: code.into(),
+            name,
+            name_lang,
+            name_ru,
+            name_en,
+            name_th,
+            account_kind: kind.into(),
+            currency_code: cur.into(),
+            opening_balance: dec(opening),
+            holder_user_id: holder,
+        })
+        .await
+        .map(|_| ())
+}
+
+struct Tx<'a> {
+    date: NaiveDate,
+    account: &'a str,
+    kind: &'a str,
+    desc: Option<(&'a str, Lang)>,
+    /// (ru, en, th) — переводы описания, которые есть сразу
+    tr: (Option<&'a str>, Option<&'a str>, Option<&'a str>),
+    lines: Vec<(&'a str, &'a str, Option<&'a str>)>,
+    plan: Option<(Uuid, NaiveDate)>,
+    by: Uuid,
+}
+
+async fn tx(s: &Services, p: Uuid, t: Tx<'_>) -> AppResult<()> {
+    if t.date > chrono::Local::now().date_naive() {
+        return Ok(());
+    }
+    let input = transactions::dto::TransactionInput {
+        occurred_on: t.date,
+        account_code: t.account.into(),
+        tx_kind: t.kind.into(),
+        description: t.desc.map(|d| d.0.to_string()),
+        description_lang: t.desc.map(|d| d.1).unwrap_or(Lang::Ru).upper().into(),
+        description_ru: t.tr.0.map(Into::into),
+        description_en: t.tr.1.map(Into::into),
+        description_th: t.tr.2.map(Into::into),
+        plan_id: t.plan.map(|x| x.0),
+        plan_date: t.plan.map(|x| x.1),
+        lines: t
+            .lines
+            .into_iter()
+            .map(|(c, a, n)| transactions::dto::LineDto { category_code: c.into(), amount: dec(a), note: n.map(Into::into) })
+            .collect(),
+    };
+    s.transactions.create(p, t.by, input).await.map(|_| ())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn plan(s: &Services, p: Uuid, by: Uuid, lang: Lang, names: (&str, &str, &str), kind: &str, acc: &str, cat: &str, amount: &str, rec: &str, start: NaiveDate) -> AppResult<Uuid> {
+    let (name, name_lang, name_ru, name_en, name_th) = localized(lang, names.0, names.1, names.2);
+    let input = planning::dto::PlanInput {
+        name,
+        name_lang,
+        name_ru,
+        name_en,
+        name_th,
+        tx_kind: kind.into(),
+        account_code: acc.into(),
+        category_code: cat.into(),
+        amount: dec(amount),
+        recurrence: rec.into(),
+        interval: 1,
+        start_on: start,
+        end_on: None,
+        active: true,
+    };
+    Ok(s.planning.create(p, by, input).await?.id)
+}
+
+async fn limit(s: &Services, p: Uuid, cat: &str, period: &str, amount: &str, from: NaiveDate) -> AppResult<()> {
+    s.limits
+        .create(p, limits::dto::LimitInput { valid_from: from, category_code: cat.into(), limit_period: period.into(), amount: dec(amount) })
+        .await
+        .map(|_| ())
+}
+
+async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<()> {
+    let ru = Lang::Ru;
+    for c in ["USD", "RUB"] {
+        ensure_currency(&s.currencies, p, c, ru).await?;
+    }
+    for (cur, rate, back) in [("USD", "33.80", 2), ("USD", "33.25", 0), ("RUB", "0.39", 2), ("RUB", "0.37", 0)] {
+        s.rates.create(p, rates::dto::RateInput { rate_date: day(back, 1), currency_code: cur.into(), rate: dec(rate) }).await?;
+    }
+    account(s, p, "CASH", "CASH", "THB", "4500", None, ru, ("Наличные", "Cash", "เงินสด")).await?;
+    account(s, p, "CARD_KBANK", "CARD", "THB", "62000", Some(me), ru, ("Карта KBank", "KBank card", "บัตรกสิกร")).await?;
+    // Счёт заведён Анной на тайском — переводы на ru/en есть, видно в справочнике.
+    account(s, p, "CARD_SCB", "CARD", "THB", "18000", Some(anna), Lang::Th, ("Карта SCB", "SCB card", "บัตรไทยพาณิชย์")).await?;
+    account(s, p, "WISE_USD", "BANK", "USD", "850", Some(me), Lang::En, ("Wise доллары", "Wise USD", "Wise ดอลลาร์")).await?;
+
+    let start = day(3, 1);
+    for (cat, period, amount) in [
+        ("HOME", "MONTH", "21000"),
+        ("FOOD", "MONTH", "18000"),
+        ("FOOD_CAFE", "MONTH", "6000"),
+        ("TRANSPORT", "MONTH", "4000"),
+        ("FUN", "MONTH", "2500"),
+        ("HOUSEHOLD", "WEEK", "700"),
+        ("HEALTH", "YEAR", "24000"),
+    ] {
+        limit(s, p, cat, period, amount, start).await?;
+    }
+
+    let rent = plan(s, p, me, ru, ("Аренда квартиры", "Apartment rent", "ค่าเช่าคอนโด"), "EXPENSE", "CARD_KBANK", "HOME_RENT", "15000", "MONTHLY", day(9, 5)).await?;
+    let power = plan(s, p, me, ru, ("Электричество", "Electricity", "ค่าไฟ"), "EXPENSE", "CARD_KBANK", "HOME_ELECTRICITY", "1800", "MONTHLY", day(9, 20)).await?;
+    let water = plan(s, p, anna, Lang::Th, ("Вода", "Water", "ค่าน้ำ"), "EXPENSE", "CARD_SCB", "HOME_WATER", "250", "MONTHLY", day(9, 20)).await?;
+    // Интернет заведён на тайском без перевода на русский — пример «нет перевода».
+    let net = s
+        .planning
+        .create(p, anna, planning::dto::PlanInput {
+            name: "อินเทอร์เน็ต AIS Fibre".into(),
+            name_lang: "TH".into(),
+            name_ru: None,
+            name_en: Some("AIS Fibre internet".into()),
+            name_th: None,
+            tx_kind: "EXPENSE".into(),
+            account_code: "CARD_SCB".into(),
+            category_code: "HOME_INTERNET".into(),
+            amount: dec("649"),
+            recurrence: "MONTHLY".into(),
+            interval: 1,
+            start_on: day(9, 12),
+            end_on: None,
+            active: true,
+        })
+        .await?
+        .id;
+    let netflix = plan(s, p, me, Lang::En, ("Netflix", "Netflix", "Netflix"), "EXPENSE", "CARD_KBANK", "FUN_SUBSCRIPTIONS", "419", "MONTHLY", day(9, 15)).await?;
+    let salary = plan(s, p, me, ru, ("Зарплата Алексея", "Aleksey's salary", "เงินเดือนอเล็กเซย์"), "INCOME", "CARD_KBANK", "SALARY", "85000", "MONTHLY", day(9, 1)).await?;
+    let freelance = plan(s, p, anna, Lang::Th, ("Подработка Анны", "Anna's side gig", "งานเสริมของแอนนา"), "INCOME", "CARD_SCB", "FREELANCE", "12000", "MONTHLY", day(9, 25)).await?;
+    plan(s, p, me, ru, ("Страховка авто", "Car insurance", "ประกันรถ"), "EXPENSE", "CARD_KBANK", "TRANSPORT", "7200", "ONCE", day(0, 27)).await?;
+
+    // Прошлый месяц: все планы оплачены (кроме подработки — пропуск), плюс повседневные траты.
+    for back in [1u32, 0] {
+        let pay = |plan: Uuid, d: u32| (plan, day(back, d));
+        tx(s, p, Tx { date: day(back, 1), account: "CARD_KBANK", kind: "INCOME", desc: Some(("Зарплата", ru)), tr: (None, Some("Salary"), Some("เงินเดือน")), lines: vec![("SALARY", "85000", None)], plan: Some(pay(salary, 1)), by: me }).await?;
+        tx(s, p, Tx { date: day(back, 6), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Аренда квартиры", ru)), tr: (None, Some("Apartment rent"), Some("ค่าเช่าคอนโด")), lines: vec![("HOME_RENT", "15000", None)], plan: Some(pay(rent, 5)), by: me }).await?;
+        tx(s, p, Tx { date: day(back, 3), account: "CARD_SCB", kind: "EXPENSE", desc: Some(("ท็อปส์ ซูเปอร์มาร์เก็ต", Lang::Th)), tr: (Some("Tops, супермаркет"), None, None),
+            lines: vec![("FOOD_GROCERIES", "1640", Some("овощи, мясо")), ("HOUSEHOLD", "385", Some("средства для стирки")), ("FOOD_CAFE", "120", Some("кофе"))], plan: None, by: anna }).await?;
+        tx(s, p, Tx { date: day(back, 4), account: "CASH", kind: "EXPENSE", desc: Some(("Grab до офиса", ru)), tr: (None, None, None), lines: vec![("TRANSPORT_TAXI", "210", None)], plan: None, by: me }).await?;
+        tx(s, p, Tx { date: day(back, 7), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Ужин с друзьями", ru)), tr: (None, Some("Dinner with friends"), None), lines: vec![("FOOD_CAFE", "2450", None)], plan: None, by: me }).await?;
+        tx(s, p, Tx { date: day(back, 8), account: "CARD_SCB", kind: "EXPENSE", desc: Some(("Big C", Lang::En)), tr: (None, None, Some("บิ๊กซี")),
+            lines: vec![("FOOD_GROCERIES", "2180", None), ("KIDS", "690", Some("краски")), ("HOUSEHOLD", "240", None)], plan: None, by: anna }).await?;
+        tx(s, p, Tx { date: day(back, 9), account: "WISE_USD", kind: "EXPENSE", desc: Some(("Spotify Family", Lang::En)), tr: (None, None, None), lines: vec![("FUN_SUBSCRIPTIONS", "19.99", None)], plan: None, by: me }).await?;
+        tx(s, p, Tx { date: day(back, 9), account: "CASH", kind: "EXPENSE", desc: Some(("ร้านกาแฟ", Lang::Th)), tr: (None, None, None), lines: vec![("FOOD_CAFE", "1850", Some("кофе за неделю"))], plan: None, by: anna }).await?;
+        if back == 1 {
+            tx(s, p, Tx { date: day(1, 12), account: "CARD_SCB", kind: "EXPENSE", desc: None, tr: (None, None, None), lines: vec![("HOME_INTERNET", "649", None)], plan: Some(pay(net, 12)), by: anna }).await?;
+            tx(s, p, Tx { date: day(1, 15), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Netflix", Lang::En)), tr: (None, None, None), lines: vec![("FUN_SUBSCRIPTIONS", "419", None)], plan: Some(pay(netflix, 15)), by: me }).await?;
+            tx(s, p, Tx { date: day(1, 21), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Электричество", ru)), tr: (None, None, None), lines: vec![("HOME_ELECTRICITY", "1960", Some("кондиционер"))], plan: Some(pay(power, 20)), by: me }).await?;
+            tx(s, p, Tx { date: day(1, 20), account: "CARD_SCB", kind: "EXPENSE", desc: None, tr: (None, None, None), lines: vec![("HOME_WATER", "230", None)], plan: Some(pay(water, 20)), by: anna }).await?;
+            tx(s, p, Tx { date: day(1, 18), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Аптека", ru)), tr: (None, Some("Pharmacy"), Some("ร้านขายยา")), lines: vec![("HEALTH", "780", None)], plan: None, by: me }).await?;
+            tx(s, p, Tx { date: day(1, 23), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Кино", ru)), tr: (None, None, None), lines: vec![("FUN", "640", None), ("FOOD_CAFE", "260", Some("попкорн"))], plan: None, by: me }).await?;
+            s.planning.skip(p, anna, freelance, day(1, 25)).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn fill_personal(s: &Services, me: Uuid) -> AppResult<()> {
+    let session = s.projects.session(me, None).await?.ok_or_else(|| kernel::error::AppError::NotFound("personal".into()))?;
+    let p = session.project_id;
+    account(s, p, "CASH", "CASH", "THB", "2000", Some(me), Lang::Ru, ("Мои наличные", "My cash", "เงินสดของฉัน")).await?;
+    tx(s, p, Tx { date: day(0, 2), account: "CASH", kind: "EXPENSE", desc: Some(("Книги по Rust", Lang::Ru)), tr: (None, Some("Rust books"), None), lines: vec![("FUN", "890", None)], plan: None, by: me }).await?;
+    Ok(())
+}

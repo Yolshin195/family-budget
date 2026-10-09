@@ -1,0 +1,25 @@
+# @generated rust-hex-api: крейт фичи `budget` (blank). Зависит только от kernel.
+[package]
+name = "budget"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+# Doc-тестов в эталоне нет — не тратим на них время `cargo test`.
+doctest = false
+
+[dependencies]
+kernel.workspace = true
+anyhow.workspace = true
+askama.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+sqlx.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

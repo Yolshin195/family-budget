@@ -1,0 +1,35 @@
+{
+  "name": "limits",
+  "kind": "journal",
+  "entity": "Limit",
+  "title": "Лимиты",
+  "date_field": "valid_from",
+  "fields": [
+    {
+      "name": "valid_from",
+      "type": "date",
+      "description": "Действует с даты"
+    },
+    {
+      "name": "category_code",
+      "type": "ref",
+      "ref": "categories",
+      "description": "Категория (лимит на всё поддерево)"
+    },
+    {
+      "name": "limit_period",
+      "type": "enum",
+      "values": [
+        "WEEK",
+        "MONTH",
+        "YEAR"
+      ],
+      "description": "Период лимита"
+    },
+    {
+      "name": "amount",
+      "type": "decimal",
+      "description": "Сумма лимита в базовой валюте проекта"
+    }
+  ]
+}

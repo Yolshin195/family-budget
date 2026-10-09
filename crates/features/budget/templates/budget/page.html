@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}{{ page.t("title") }}{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center gap-3 mb-5">
+  <h1 class="text-2xl font-semibold mr-2">{{ page.t("title") }}</h1>
+  <div class="flex rounded-lg border border-stone-200 bg-white overflow-hidden text-sm">
+    {% for v in ["week", "month", "year"] %}
+      <a href="?view={{ v }}&date={{ today }}&member={{ member }}" class="px-3 py-1.5 {% if view == *v %}bg-stone-900 text-white{% else %}hover:bg-stone-100{% endif %}">{{ page.t(v) }}</a>
+    {% endfor %}
+  </div>
+  <div class="flex items-center rounded-lg border border-stone-200 bg-white">
+    <a class="px-3 py-1.5 hover:bg-stone-100 rounded-l-lg" href="?view={{ view }}&date={{ prev }}&member={{ member }}">←</a>
+    <span class="px-3 py-1.5 font-medium min-w-40 text-center">{{ title }}</span>
+    <a class="px-3 py-1.5 hover:bg-stone-100 rounded-r-lg" href="?view={{ view }}&date={{ next }}&member={{ member }}">→</a>
+  </div>
+  <a class="btn-ghost" href="?view={{ view }}&member={{ member }}">{{ page.t("today") }}</a>
+  {% if page.session.members.len() > 1 %}
+  <form method="get" class="ml-auto">
+    <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="date" value="{{ prev }}">
+    <select class="input !w-auto text-sm" name="member" onchange="this.form.date.value='{{ today }}';this.form.submit()">
+      <option value="">{{ page.t("all_members") }}</option>
+      {% for mbr in page.session.members %}<option value="{{ mbr.user_id }}" {% if member == mbr.user_id.to_string() %}selected{% endif %}>{{ mbr.name }}</option>{% endfor %}
+    </select>
+  </form>
+  {% endif %}
+</div>
+
+{% if !missing_rates.is_empty() %}
+<div class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">{{ page.t("missing_rates") }} <b>{{ missing_rates }}</b> · <a class="underline" href="/rates">/rates</a></div>
+{% endif %}
+
+<div class="grid gap-3 md:grid-cols-4 mb-6">
+  <div class="card p-4">
+    <div class="text-xs text-stone-500">{{ page.t("incomes") }}</div>
+    <div class="text-xl font-semibold tabular-nums text-brand-700">{{ inc_total }}</div>
+    <div class="text-xs text-stone-500 mt-1 tabular-nums">{{ page.t("fact") }} {{ inc_fact }} · {{ page.t("plan") }} {{ inc_plan }}</div>
+  </div>
+  <div class="card p-4">
+    <div class="text-xs text-stone-500">{{ page.t("expenses") }}</div>
+    <div class="text-xl font-semibold tabular-nums text-rose-700">{{ exp_total }}</div>
+    <div class="text-xs text-stone-500 mt-1 tabular-nums">{{ page.t("fact") }} {{ exp_fact }} · {{ page.t("plan") }} {{ exp_plan }}</div>
+  </div>
+  <div class="card p-4">
+    <div class="text-xs text-stone-500">{{ page.t("net") }}</div>
+    <div class="text-xl font-semibold tabular-nums {% if net_negative %}text-rose-700{% endif %}">{{ net }} <span class="text-sm font-normal text-stone-400">{{ base }}</span></div>
+    <div class="text-xs text-stone-400 mt-1">{{ page.t("base_currency") }}: {{ base }}</div>
+  </div>
+  <div class="card p-4">
+    <div class="text-xs text-stone-500 mb-1">{{ page.t("accounts") }}</div>
+    <ul class="space-y-0.5 text-sm">
+      {% for (name, bal, cur, neg) in accounts %}
+        <li class="flex justify-between gap-2"><span class="truncate text-stone-600">{{ name }}</span><span class="tabular-nums whitespace-nowrap {% if *neg %}text-rose-700{% endif %}">{{ bal }} <span class="text-stone-400 text-xs">{{ cur }}</span></span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<div class="grid gap-6 lg:grid-cols-[1fr_18rem]">
+  <div class="space-y-6 min-w-0">
+    <section class="card overflow-x-auto">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-stone-200">
+        <h2 class="font-semibold">{{ page.t("expenses") }}</h2>
+        <div class="flex gap-1 text-sm"><button type="button" class="btn-ghost !py-1" id="expand">{{ page.t("expand") }}</button>
+          <a class="btn-ghost !py-1" href="/limits">{{ page.t("set_limits") }}</a></div>
+      </div>
+      <table class="w-full" id="tree">
+        <thead class="border-b border-stone-100"><tr>
+          <th class="th">{{ page.t("category") }}</th><th class="th num">{{ page.t("limit") }}</th><th class="th num">{{ page.t("fact") }}</th>
+          <th class="th num">{{ page.t("plan") }}</th><th class="th num">{{ page.t("forecast") }}</th><th class="th num">{{ page.t("available") }}</th><th class="th w-32"></th></tr></thead>
+        <tbody class="divide-y divide-stone-100">
+        {% for r in expenses %}
+          <tr data-code="{{ r.code }}" data-parent="{{ r.parent }}" data-depth="{{ r.depth }}" class="{% if r.depth >= 2 %}hidden{% endif %} {% if r.is_zero %}text-stone-400{% endif %} {% if r.has_children %}cursor-pointer hover:bg-stone-50{% endif %}">
+            <td class="td whitespace-nowrap" style="padding-left: {{ 1 + r.depth * 3 / 2 }}rem">
+              {% if r.has_children %}<span class="toggle inline-block w-4 text-stone-400">{% if r.depth >= 1 %}▸{% else %}▾{% endif %}</span>{% else %}<span class="inline-block w-4"></span>{% endif %}
+              <span class="{% if r.depth == 0 %}font-medium{% endif %}">{{ r.title }}</span>
+              {% if r.children_over %}<span title="{{ page.t("children_over") }}" class="ml-1 text-amber-600">⚠</span>{% endif %}
+            </td>
+            <td class="td num text-stone-500">{{ r.limit }}</td>
+            <td class="td num">{{ r.fact }}</td>
+            <td class="td num text-sky-700">{{ r.planned }}</td>
+            <td class="td num font-medium">{{ r.forecast }}</td>
+            <td class="td num {% if r.available_negative %}text-rose-700 font-medium{% endif %}" {% if r.inherited %}title="{{ page.t("inherited") }}"{% endif %}>{{ r.available }}{% if r.inherited %}<sup class="text-stone-400">↑</sup>{% endif %}</td>
+            <td class="td">
+              {% if !r.percent.is_empty() %}
+              <div class="flex items-center gap-2">
+                <div class="h-2 flex-1 rounded-full bg-stone-100 overflow-hidden">
+                  <div class="h-full rounded-full {% if r.level == "over" %}bg-rose-500{% else if r.level == "warn" %}bg-amber-400{% else %}bg-brand-500{% endif %}" style="width: {{ r.bar }}%"></div>
+                </div>
+                <span class="text-xs tabular-nums w-10 text-right {% if r.level == "over" %}text-rose-700{% else if r.level == "warn" %}text-amber-700{% else %}text-stone-500{% endif %}">{{ r.percent }}</span>
+              </div>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card overflow-x-auto">
+      <h2 class="px-4 py-3 border-b border-stone-200 font-semibold">{{ page.t("incomes") }}</h2>
+      <table class="w-full">
+        <thead class="border-b border-stone-100"><tr><th class="th">{{ page.t("category") }}</th><th class="th num">{{ page.t("fact") }}</th><th class="th num">{{ page.t("plan") }}</th><th class="th num">{{ page.t("forecast") }}</th></tr></thead>
+        <tbody class="divide-y divide-stone-100">
+        {% for r in incomes %}{% if !r.is_zero || r.depth == 0 %}
+          <tr class="{% if r.is_zero %}text-stone-400{% endif %}">
+            <td class="td" style="padding-left: {{ 1 + r.depth * 3 / 2 }}rem"><span class="{% if r.depth == 0 %}font-medium{% endif %}">{{ r.title }}</span></td>
+            <td class="td num">{{ r.fact }}</td><td class="td num text-sky-700">{{ r.planned }}</td><td class="td num font-medium text-brand-700">{{ r.forecast }}</td>
+          </tr>
+        {% endif %}{% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+
+  <aside class="card p-4 h-fit">
+    <h2 class="font-semibold mb-3">📅 {{ page.t("upcoming") }}</h2>
+    <ul class="space-y-2 text-sm">
+      {% for u in upcoming %}
+        <li><a href="{{ u.href }}" class="flex items-center gap-2 rounded-lg px-2 py-1.5 -mx-2 hover:bg-stone-50">
+          <span class="tabular-nums text-xs w-10 {% if u.overdue %}text-rose-600 font-medium{% else %}text-stone-500{% endif %}">{{ u.date }}</span>
+          <span class="flex-1 truncate">{{ u.title }}</span>
+          <span class="tabular-nums {% if u.is_expense %}text-stone-800{% else %}text-brand-700{% endif %}">{% if u.is_expense %}−{% else %}+{% endif %}{{ u.amount }}</span></a></li>
+      {% endfor %}
+    </ul>
+    {% if upcoming.is_empty() %}<p class="text-sm text-stone-500">{{ page.t("nothing_planned") }}</p>{% endif %}
+  </aside>
+</div>
+<script>
+(() => {
+  const rows = [...document.querySelectorAll('#tree tbody tr')];
+  const kids = code => rows.filter(r => r.dataset.parent === code);
+  function hideDeep(code) { for (const k of kids(code)) { k.classList.add('hidden'); hideDeep(k.dataset.code); const t = k.querySelector('.toggle'); if (t) t.textContent = '▸'; } }
+  for (const r of rows) {
+    if (!r.querySelector('.toggle')) continue;
+    r.addEventListener('click', () => {
+      const t = r.querySelector('.toggle'), open = t.textContent === '▾';
+      if (open) hideDeep(r.dataset.code); else kids(r.dataset.code).forEach(k => k.classList.remove('hidden'));
+      t.textContent = open ? '▸' : '▾';
+    });
+  }
+  document.getElementById('expand').onclick = () => rows.forEach(r => { r.classList.remove('hidden'); const t = r.querySelector('.toggle'); if (t) t.textContent = '▾'; });
+})();
+</script>
+{% endblock %}

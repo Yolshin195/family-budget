@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="{{ lang.code() }}">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if register %}{{ self.t("register") }}{% else %}{{ self.t("login") }}{% endif %} · {{ self.t("app.title") }}</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="min-h-screen bg-stone-50 font-sans text-stone-900 antialiased grid place-items-center p-4">
+  <div class="w-full max-w-sm">
+    <div class="flex justify-between items-center mb-6">
+      <div class="flex items-center gap-2 font-semibold"><span class="grid place-items-center w-8 h-8 rounded-lg bg-emerald-600 text-white text-sm"><svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1"/><path d="M3 7v10a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3"/><path d="M21 12h-4a2 2 0 0 0 0 4h4v-4z"/></svg></span>{{ self.t("app.title") }}</div>
+      <div class="flex rounded-lg border border-stone-200 overflow-hidden text-xs bg-white">
+        {% for l in langs %}<a href="/lang/{{ l.code() }}?back={% if register %}/register{% else %}/login{% endif %}" class="px-2 py-1.5 {% if *l == lang %}bg-stone-900 text-white{% else %}hover:bg-stone-100{% endif %}">{{ l.upper() }}</a>{% endfor %}
+      </div>
+    </div>
+    <p class="text-sm text-stone-500 mb-4">{{ self.t("tagline") }}</p>
+    <form method="post" class="bg-white rounded-2xl border border-stone-200 shadow-sm p-6 space-y-4">
+      <h1 class="text-xl font-semibold">{% if register %}{{ self.t("register") }}{% else %}{{ self.t("login") }}{% endif %}</h1>
+      {% if let Some(err) = error %}<div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{{ err }}</div>{% endif %}
+      {% if register %}
+      <label class="block"><span class="block text-xs font-medium uppercase tracking-wide text-stone-500 mb-1">{{ self.t("your_name") }}</span>
+        <input class="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" name="name" value="{{ name }}" required></label>
+      {% endif %}
+      <label class="block"><span class="block text-xs font-medium uppercase tracking-wide text-stone-500 mb-1">{{ self.t("email") }}</span>
+        <input class="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" type="email" name="email" value="{{ email }}" required autofocus></label>
+      <label class="block"><span class="block text-xs font-medium uppercase tracking-wide text-stone-500 mb-1">{{ self.t("password") }}</span>
+        <input class="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm" type="password" name="password" required></label>
+      {% if register %}
+      <label class="block"><span class="block text-xs font-medium uppercase tracking-wide text-stone-500 mb-1">{{ self.t("base_currency") }}</span>
+        <input class="w-full rounded-lg border border-stone-300 px-3 py-2 text-sm uppercase font-mono" name="base_currency" value="THB" maxlength="3" required></label>
+      {% endif %}
+      <button class="w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-medium text-white hover:bg-emerald-700">{% if register %}{{ self.t("register") }}{% else %}{{ self.t("login") }}{% endif %}</button>
+      <p class="text-sm text-center text-stone-500">
+        {% if register %}{{ self.t("have_account") }} <a class="text-emerald-700 underline" href="/login">{{ self.t("login") }}</a>
+        {% else %}{{ self.t("no_account") }} <a class="text-emerald-700 underline" href="/register">{{ self.t("register") }}</a>{% endif %}
+      </p>
+    </form>
+    {% if !register %}<p class="mt-4 text-xs text-center text-stone-400">{{ self.t("demo_hint") }}</p>{% endif %}
+  </div>
+</body>
+</html>

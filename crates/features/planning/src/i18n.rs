@@ -1,0 +1,42 @@
+//! Строки интерфейса фичи «Планирование».
+use kernel::i18n::Tr;
+
+pub fn dict(key: &str) -> Option<Tr> {
+    Some(match key {
+        "nav" => ("Календарь", "Calendar", "ปฏิทิน"),
+        "title" => ("Календарь платежей", "Payment calendar", "ปฏิทินการชำระ"),
+        "plans" => ("Плановые операции", "Planned items", "รายการตามแผน"),
+        "new" => ("Новая плановая операция", "New planned item", "รายการตามแผนใหม่"),
+        "edit" => ("Плановая операция", "Planned item", "รายการตามแผน"),
+        "recurrence" => ("Повторение", "Repeats", "การทำซ้ำ"),
+        "ONCE" => ("Однократно", "Once", "ครั้งเดียว"),
+        "DAILY" => ("Каждый день", "Daily", "ทุกวัน"),
+        "WEEKLY" => ("Каждую неделю", "Weekly", "ทุกสัปดาห์"),
+        "MONTHLY" => ("Каждый месяц", "Monthly", "ทุกเดือน"),
+        "YEARLY" => ("Каждый год", "Yearly", "ทุกปี"),
+        "interval" => ("Каждые N", "Every N", "ทุก N"),
+        "start_on" => ("Начало", "Starts", "เริ่ม"),
+        "end_on" => ("Окончание", "Ends", "สิ้นสุด"),
+        "active" => ("Активен", "Active", "ใช้งาน"),
+        "stopped" => ("остановлен", "stopped", "หยุดแล้ว"),
+        "expected_amount" => ("Ожидаемая сумма", "Expected amount", "จำนวนที่คาด"),
+        "EXPECTED" => ("Ожидается", "Expected", "รอชำระ"),
+        "OVERDUE" => ("Просрочено", "Overdue", "เลยกำหนด"),
+        "PAID" => ("Оплачено", "Paid", "ชำระแล้ว"),
+        "SKIPPED" => ("Пропущено", "Skipped", "ข้าม"),
+        "pay" => ("Оплатил", "Mark as paid", "ชำระแล้ว"),
+        "skip" => ("Пропустить", "Skip", "ข้าม"),
+        "unskip" => ("Вернуть в ожидание", "Restore", "คืนสถานะ"),
+        "open_tx" => ("Открыть операцию", "Open transaction", "เปิดรายการ"),
+        "paid_on" => ("Оплачено", "Paid on", "ชำระเมื่อ"),
+        "due" => ("Дата по плану", "Due date", "วันครบกำหนด"),
+        "planned_exp" => ("Ещё к оплате", "Still to pay", "ยังต้องจ่าย"),
+        "paid_exp" => ("Оплачено по планам", "Paid from plans", "จ่ายตามแผนแล้ว"),
+        "planned_inc" => ("Ожидаемые доходы", "Expected income", "รายรับที่คาด"),
+        "pay_hint" => ("«Оплатил» откроет форму операции, заполненную из плана, — сумму и счёт можно поправить.",
+                       "“Mark as paid” opens a transaction form prefilled from the plan — adjust amount and account if needed.",
+                       "“ชำระแล้ว” จะเปิดแบบฟอร์มที่กรอกจากแผนไว้แล้ว — แก้ไขจำนวนเงินและบัญชีได้"),
+        "manage" => ("Плановые операции", "Planned items", "รายการตามแผน"),
+        _ => return None,
+    })
+}

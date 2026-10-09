@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="{{ page.lang.code() }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %} · {{ page.t("app.title") }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="bg-stone-50 text-stone-900 font-sans antialiased min-h-screen">
+  <header class="bg-white border-b border-stone-200">
+    <div class="max-w-6xl mx-auto px-4 flex flex-wrap items-center gap-x-6 gap-y-2 py-3">
+      <a href="/budget" class="flex items-center gap-2 font-semibold text-stone-900">
+        <span class="grid place-items-center w-8 h-8 rounded-lg bg-brand-600 text-white text-sm"><svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1"/><path d="M3 7v10a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3"/><path d="M21 12h-4a2 2 0 0 0 0 4h4v-4z"/></svg></span>
+        <span class="hidden sm:inline">{{ page.t("app.title") }}</span>
+      </a>
+      <nav class="flex flex-wrap gap-1 text-sm order-3 sm:order-none w-full sm:w-auto">
+        {% for item in page.nav_items() %}
+          <a href="{{ item.href }}"
+             class="rounded-lg px-3 py-1.5 {% if item.feature == page.active %}bg-brand-50 text-brand-700 font-medium{% else %}text-stone-600 hover:bg-stone-100{% endif %}">
+            {{ page.nav_label(item) }}
+          </a>
+        {% endfor %}
+      </nav>
+      <div class="ml-auto flex items-center gap-3 text-sm">
+        <details class="relative">
+          <summary class="list-none cursor-pointer rounded-lg border border-stone-200 px-3 py-1.5 hover:bg-stone-50">
+            <span class="text-stone-500">{{ page.t("nav.project") }}:</span>
+            <span class="font-medium">{{ page.session.project_name }}</span> ▾
+          </summary>
+          <div class="absolute right-0 mt-1 w-64 card p-1 z-20">
+            {% for p in page.other_projects() %}
+              <a href="/projects/switch/{{ p.id }}" class="block rounded-lg px-3 py-2 hover:bg-stone-100">{{ p.name }}</a>
+            {% endfor %}
+            <a href="/projects" class="block rounded-lg px-3 py-2 text-brand-700 hover:bg-stone-100">⚙ {{ page.t("nav.projects_manage") }}</a>
+          </div>
+        </details>
+        <div class="flex rounded-lg border border-stone-200 overflow-hidden text-xs">
+          {% for l in page.langs() %}
+            <a href="/lang/{{ l.code() }}?back={{ page.back() }}"
+               class="px-2 py-1.5 {% if page.is_lang(l) %}bg-stone-900 text-white{% else %}hover:bg-stone-100{% endif %}">{{ l.upper() }}</a>
+          {% endfor %}
+        </div>
+        <span class="hidden md:inline text-stone-500">{{ page.session.user_name }}</span>
+        <a href="/logout" class="text-stone-500 hover:text-stone-900">{{ page.t("nav.logout") }}</a>
+      </div>
+    </div>
+  </header>
+  {% if !page.can_write() %}
+    <div class="bg-amber-50 text-amber-800 text-sm text-center py-1.5 border-b border-amber-200">{{ page.t("readonly") }}</div>
+  {% endif %}
+  <main class="max-w-6xl mx-auto px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

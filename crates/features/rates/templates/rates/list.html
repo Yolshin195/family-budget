@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{{ page.t("title") }}{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold">{{ page.t("title") }}</h1>
+<p class="text-sm text-stone-500 mb-4">{{ page.t("hint") }} · {{ page.t("currency") }}: <b>{{ page.session.base_currency }}</b></p>
+{% if let Some(err) = error %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ err }}</div>{% endif %}
+{% if page.can_write() %}
+<form method="post" class="card p-4 mb-4 flex flex-wrap items-end gap-3">
+  <div><label class="label">{{ page.t("date") }}</label><input class="input" type="date" name="rate_date" value="{{ today }}" required></div>
+  <div><label class="label">{{ page.t("currency") }}</label>
+    <select class="input" name="currency_code">{% for c in currencies %}{% if c.code != page.session.base_currency %}<option value="{{ c.code }}">{{ c.label }}</option>{% endif %}{% endfor %}</select></div>
+  <div><label class="label">{{ page.t("rate") }}</label><input class="input tabular-nums w-36" name="rate" inputmode="decimal" required placeholder="0.37"></div>
+  <button class="btn-primary">{{ page.t("add") }}</button>
+</form>
+{% endif %}
+<div class="card overflow-x-auto">
+  <table class="w-full">
+    <thead class="border-b border-stone-200"><tr><th class="th">{{ page.t("date") }}</th><th class="th">{{ page.t("currency") }}</th><th class="th num">{{ page.t("rate") }}</th><th class="th"></th></tr></thead>
+    <tbody class="divide-y divide-stone-100">
+    {% for r in rows %}
+      <tr><td class="td">{{ r.rate_date }}</td><td class="td font-mono">1 {{ r.currency_code }}</td>
+        <td class="td num">= {{ r.rate }} {{ page.session.base_currency }}</td>
+        <td class="td text-right">{% if page.can_write() %}<form method="post" action="/rates/{{ r.id }}/delete"><button class="btn-danger !py-1 text-xs">{{ page.t("delete") }}</button></form>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if rows.is_empty() %}<p class="p-6 text-center text-stone-500">{{ page.t("empty") }}</p>{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,4 @@
+{"name":"categories","entity":"Category","title":"Категории","example_code":"FOOD",
+ "fields":[{"name":"name_lang","type":"enum","values":["RU","EN","TH"],"description":"Язык оригинала названия"},{"name":"name_ru","type":"string","required":false,"description":"Перевод названия: ru"},{"name":"name_en","type":"string","required":false,"description":"Перевод названия: en"},{"name":"name_th","type":"string","required":false,"description":"Перевод названия: th"},{"name":"category_kind","type":"enum","values":["EXPENSE","INCOME"],"description":"Расход или доход"},
+   {"name":"parent_code","type":"string","required":false,"description":"Код родителя; пусто у корня"},
+   {"name":"sort_order","type":"i32","description":"Порядок среди соседей"}]}

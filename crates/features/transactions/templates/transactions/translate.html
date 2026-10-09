@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ page.t("translate_title") }}{% endblock %}
+{% block content %}
+<a href="/transactions" class="text-sm text-stone-500 hover:text-stone-900">← {{ page.t("title") }}</a>
+<h1 class="text-2xl font-semibold mt-1 mb-4">🌐 {{ page.t("translate_title") }}</h1>
+{% if let Some(err) = error %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ err }}</div>{% endif %}
+<form method="post" class="card p-5 space-y-4 max-w-2xl">
+  <div class="rounded-lg bg-stone-50 border border-stone-200 p-3">
+    <div class="label">{{ page.t("original") }} · {{ t.description_lang }}</div>
+    <div class="text-lg">{% if let Some(d) = t.description %}{{ d }}{% endif %}</div>
+    <div class="text-xs text-stone-500 mt-1">{{ t.occurred_on }} · {{ kernel::web::money(t.total) }}</div>
+  </div>
+  {% for (code, name, val) in fields %}
+    <div><label class="label">{{ code }} · {{ page.t(code) }}</label>
+      <input class="input" name="{{ name }}" value="{{ val }}" {% if *code == page.lang.upper() %}autofocus{% endif %}></div>
+  {% endfor %}
+  <div class="flex gap-2"><button class="btn-primary">{{ page.t("save") }}</button><a href="/transactions" class="btn-ghost">{{ page.t("cancel") }}</a></div>
+</form>
+{% endblock %}

@@ -1,0 +1,25 @@
+# @managed rust-hex-api: общее ядро, от которого зависят все фичи.
+[package]
+name = "kernel"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+# Doc-тестов в эталоне нет — не тратим на них время `cargo test`.
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+askama.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+axum.workspace = true
+jsonwebtoken.workspace = true
+serde.workspace = true
+sqlx.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

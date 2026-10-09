@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS fb_plan_skips;
+DROP TABLE IF EXISTS fb_plans;

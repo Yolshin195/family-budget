@@ -1,0 +1,30 @@
+{# Переводимое поле: оригинал + язык оригинала + переводы ru/en/th. Имена полей формы: X, X_lang, X_ru, X_en, X_th. #}
+{% macro i18n_fields(page, field, label, original, lang, ru, en, th) %}
+<div class="grid gap-3 sm:grid-cols-[1fr_10rem]">
+  <div>
+    <label class="label" for="{{ field }}">{{ label }}</label>
+    <input class="input" id="{{ field }}" name="{{ field }}" value="{{ original }}" required>
+  </div>
+  <div>
+    <label class="label" for="{{ field }}_lang">{{ page.t("lang.original") }}</label>
+    <select class="input" id="{{ field }}_lang" name="{{ field }}_lang">
+      <option value="RU" {% if lang == "RU" %}selected{% endif %}>RU · {{ page.t("RU") }}</option>
+      <option value="EN" {% if lang == "EN" %}selected{% endif %}>EN · {{ page.t("EN") }}</option>
+      <option value="TH" {% if lang == "TH" %}selected{% endif %}>TH · {{ page.t("TH") }}</option>
+    </select>
+  </div>
+</div>
+<details class="mt-2 rounded-lg border border-dashed border-stone-300 px-3 py-2" {% if !ru.is_empty() || !en.is_empty() || !th.is_empty() %}open{% endif %}>
+  <summary class="cursor-pointer text-sm text-stone-600">🌐 {{ page.t("lang.translations") }}</summary>
+  <div class="grid gap-3 sm:grid-cols-3 mt-2">
+    <div><label class="label">RU</label><input class="input" name="{{ field }}_ru" value="{{ ru }}"></div>
+    <div><label class="label">EN</label><input class="input" name="{{ field }}_en" value="{{ en }}"></div>
+    <div><label class="label">TH</label><input class="input" name="{{ field }}_th" value="{{ th }}"></div>
+  </div>
+</details>
+{% endmacro %}
+
+{# Отметка «нет перевода на язык интерфейса». #}
+{% macro no_tr(page, missing) %}
+{% if missing %}<span class="chip bg-amber-50 text-amber-700 border border-amber-200" title="{{ page.t("lang.no_translation") }}">🌐 {{ page.lang.upper() }}?</span>{% endif %}
+{% endmacro %}

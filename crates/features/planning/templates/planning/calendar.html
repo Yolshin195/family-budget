@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}{{ page.t("title") }}{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center gap-3 mb-4">
+  <h1 class="text-2xl font-semibold mr-2">{{ page.t("title") }}</h1>
+  <div class="flex items-center rounded-lg border border-stone-200 bg-white">
+    <a class="px-3 py-1.5 hover:bg-stone-100 rounded-l-lg" href="?month={{ prev }}">←</a>
+    <span class="px-3 py-1.5 font-medium min-w-36 text-center">{{ month_title }}</span>
+    <a class="px-3 py-1.5 hover:bg-stone-100 rounded-r-lg" href="?month={{ next }}">→</a>
+  </div>
+  <a class="btn-ghost" href="?month={{ this_month }}">{{ page.t("today") }}</a>
+  <a class="btn-ghost ml-auto" href="/planning/plans">⚙ {{ page.t("manage") }}</a>
+  {% if page.can_write() %}<a class="btn-primary" href="/planning/plans/new">+ {{ page.t("add") }}</a>{% endif %}
+</div>
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+  <div class="card p-4"><div class="text-xs text-stone-500">{{ page.t("planned_exp") }}</div><div class="text-lg font-semibold tabular-nums">{{ still_to_pay }}</div>
+    {% if overdue > 0 %}<div class="text-xs text-rose-600 mt-0.5">{{ page.t("OVERDUE") }}: {{ overdue }}</div>{% endif %}</div>
+  <div class="card p-4"><div class="text-xs text-stone-500">{{ page.t("paid_exp") }}</div><div class="text-lg font-semibold tabular-nums text-stone-600">{{ paid }}</div></div>
+  <div class="card p-4"><div class="text-xs text-stone-500">{{ page.t("planned_inc") }}</div><div class="text-lg font-semibold tabular-nums text-brand-700">{{ income }}</div></div>
+  <div class="card p-4 text-xs text-stone-500 space-y-1">
+    <div><span class="inline-block w-2.5 h-2.5 rounded-sm bg-stone-300 mr-1"></span>{{ page.t("EXPECTED") }}</div>
+    <div><span class="inline-block w-2.5 h-2.5 rounded-sm bg-rose-500 mr-1"></span>{{ page.t("OVERDUE") }}</div>
+    <div><span class="inline-block w-2.5 h-2.5 rounded-sm bg-brand-500 mr-1"></span>{{ page.t("PAID") }}</div>
+    <div><span class="inline-block w-2.5 h-2.5 rounded-sm bg-stone-200 mr-1"></span><s>{{ page.t("SKIPPED") }}</s></div>
+  </div>
+</div>
+
+<div class="card overflow-hidden">
+  <div class="grid grid-cols-7 border-b border-stone-200 bg-stone-50">
+    {% for w in weekdays %}<div class="px-2 py-2 text-xs font-medium text-stone-500 text-center">{{ w }}</div>{% endfor %}
+  </div>
+  {% for week in weeks %}
+  <div class="grid grid-cols-7 divide-x divide-stone-100 border-b border-stone-100 last:border-b-0">
+    {% for c in week %}
+    <div class="min-h-28 p-1.5 {% if !c.in_month %}bg-stone-50/70{% endif %}">
+      <div class="text-xs mb-1 {% if c.is_today %}inline-grid place-items-center w-6 h-6 rounded-full bg-stone-900 text-white{% else if c.in_month %}text-stone-700{% else %}text-stone-300{% endif %}">{{ c.day }}</div>
+      <div class="space-y-1">
+      {% for o in c.items %}
+        <a href="{{ o.href }}" title="{{ o.title }} · {{ o.amount }} · {{ page.t(o.status) }}"
+           class="block rounded-md px-1.5 py-1 text-[11px] leading-tight transition hover:ring-2 hover:ring-brand-100
+           {% if o.status == "PAID" %}bg-brand-50 text-brand-900 border border-brand-100
+           {% else if o.status == "OVERDUE" %}bg-rose-50 text-rose-900 border border-rose-200
+           {% else if o.status == "SKIPPED" %}bg-stone-50 text-stone-400 line-through border border-stone-100
+           {% else %}bg-white text-stone-700 border border-stone-200{% endif %}">
+          <div class="truncate">{% if o.status == "PAID" %}✓ {% endif %}{{ o.title }}</div>
+          <div class="tabular-nums font-medium {% if !o.is_expense %}text-brand-700{% endif %}">{% if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}</div>
+        </a>
+      {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

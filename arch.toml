@@ -1,0 +1,10 @@
+# rust-hex-api: параметры эталонной архитектуры проекта. version меняет только `arch.py upgrade`.
+[arch]
+version = 1
+
+[project]
+title = "Семейная бухгалтерия"
+crate_name = "family_budget"
+port = 8080
+# Префикс имён таблиц фич (budget_ → budget_currencies)
+table_prefix = "fb_"

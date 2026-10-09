@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{{ page.t("plans") }}{% endblock %}
+{% block content %}
+<a href="/planning" class="text-sm text-stone-500 hover:text-stone-900">← {{ page.t("title") }}</a>
+<div class="flex items-center justify-between mt-1 mb-4">
+  <h1 class="text-2xl font-semibold">{{ page.t("plans") }}</h1>
+  {% if page.can_write() %}<a class="btn-primary" href="/planning/plans/new">+ {{ page.t("add") }}</a>{% endif %}
+</div>
+<div class="card overflow-x-auto">
+  <table class="w-full">
+    <thead class="border-b border-stone-200"><tr>
+      <th class="th">{{ page.t("name") }}</th><th class="th">{{ page.t("category") }}</th><th class="th">{{ page.t("recurrence") }}</th>
+      <th class="th">{{ page.t("start_on") }}</th><th class="th num">{{ page.t("amount") }}</th><th class="th"></th></tr></thead>
+    <tbody class="divide-y divide-stone-100">
+    {% for (p, cat, amount) in plans %}
+      <tr class="{% if !p.active %}opacity-50{% endif %}">
+        <td class="td"><span class="font-medium">{{ p.title(page.lang) }}</span> {% call m::no_tr(page, p.missing_tr(page.lang)) %}{% endcall %}
+          {% if !p.active %}<span class="chip bg-stone-100 text-stone-500">{{ page.t("stopped") }}</span>{% endif %}</td>
+        <td class="td text-stone-600">{{ cat }}</td>
+        <td class="td text-stone-600">{{ page.t(p.recurrence) }}{% if p.interval > 1 %} × {{ p.interval }}{% endif %}</td>
+        <td class="td text-stone-600">{{ p.start_on }}{% if let Some(e) = p.end_on %} — {{ e }}{% endif %}</td>
+        <td class="td num font-medium {% if p.is_expense() %}text-rose-700{% else %}text-brand-700{% endif %}">{% if p.is_expense() %}−{% else %}+{% endif %}{{ amount }}</td>
+        <td class="td text-right">{% if page.can_write() %}<a class="btn-ghost" href="/planning/plans/{{ p.id }}/edit">{{ page.t("edit") }}</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if plans.is_empty() %}<p class="p-6 text-center text-stone-500">{{ page.t("empty") }}</p>{% endif %}
+</div>
+{% endblock %}

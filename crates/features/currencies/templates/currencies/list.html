@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{{ page.t("title") }}{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-2xl font-semibold">{{ page.t("title") }}</h1>
+  {% if page.can_write() %}<a href="/currencies/new" class="btn-primary">+ {{ page.t("add") }}</a>{% endif %}
+</div>
+<div class="card overflow-x-auto">
+  <table class="w-full">
+    <thead class="border-b border-stone-200"><tr>
+      <th class="th">{{ page.t("code") }}</th><th class="th">{{ page.t("name") }}</th>
+      <th class="th">{{ page.t("symbol") }}</th><th class="th num">{{ page.t("minor_units") }}</th><th class="th"></th>
+    </tr></thead>
+    <tbody class="divide-y divide-stone-100">
+    {% for c in rows %}
+      <tr class="{% if c.archived %}opacity-50{% endif %}">
+        <td class="td font-mono">{{ c.code }}
+          {% if c.code == page.session.base_currency %}<span class="chip bg-brand-50 text-brand-700 ml-1">{{ page.t("base") }}</span>{% endif %}</td>
+        <td class="td">{{ c.title(page.lang) }} {% call m::no_tr(page, c.missing_tr(page.lang)) %}{% endcall %}
+          {% if c.archived %}<span class="chip bg-stone-100 text-stone-500">{{ page.t("archived") }}</span>{% endif %}</td>
+        <td class="td">{{ c.symbol }}</td>
+        <td class="td num">{{ c.minor_units }}</td>
+        <td class="td text-right">{% if page.can_write() %}<a class="btn-ghost" href="/currencies/{{ c.code }}/edit">{{ page.t("edit") }}</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if rows.is_empty() %}<p class="p-6 text-center text-stone-500">{{ page.t("empty") }}</p>{% endif %}
+</div>
+{% endblock %}

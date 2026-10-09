@@ -1,0 +1,373 @@
+//! Входящий адаптер: календарь платежей и плановые операции.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use askama::Template;
+use axum::extract::{Path, Query, State};
+use axum::routing::{get, post};
+use axum::{Extension, Form, Router};
+use chrono::{Datelike, Days, Months, NaiveDate};
+use kernel::error::AppError;
+use kernel::i18n::{Lang, month_name, weekdays};
+use kernel::web::{Choice, PageCtx, PageError, PageResult, money, parse_money, render, see_other, url_encode};
+use rust_decimal::Decimal;
+use serde::Deserialize;
+use uuid::Uuid;
+
+use crate::dto::{OccurrenceDto, PlanDto, PlanInput};
+use crate::service::PlanningService;
+
+type Svc = State<Arc<PlanningService>>;
+
+pub fn router(service: Arc<PlanningService>) -> Router {
+    Router::new()
+        .route("/", get(calendar))
+        .route("/occurrence/{plan}/{date}", get(occurrence))
+        .route("/occurrence/{plan}/{date}/skip", post(skip))
+        .route("/occurrence/{plan}/{date}/unskip", post(unskip))
+        .route("/plans", get(plans))
+        .route("/plans/new", get(new_form).post(create))
+        .route("/plans/{id}/edit", get(edit_form).post(update))
+        .route("/plans/{id}/delete", post(delete))
+        .with_state(service)
+}
+
+fn ctx(page: PageCtx) -> PageCtx {
+    page.for_feature(crate::NAME, crate::i18n::dict)
+}
+
+fn today() -> NaiveDate {
+    chrono::Local::now().date_naive()
+}
+
+fn ym(d: NaiveDate) -> String {
+    format!("{}-{:02}", d.year(), d.month())
+}
+
+fn month_start(s: &str) -> NaiveDate {
+    let t = today();
+    NaiveDate::parse_from_str(&format!("{s}-01"), "%Y-%m-%d").unwrap_or_else(|_| t.with_day(1).unwrap_or(t))
+}
+
+/// Ссылка «Оплатил»: форма транзакции, заполненная из плана.
+fn pay_href(o: &OccurrenceDto, lang: Lang, back: &str) -> String {
+    let (desc, desc_lang) = o.plan.title_with_lang(lang);
+    format!(
+        "/transactions/new?plan_id={}&plan_date={}&account={}&category={}&amount={}&kind={}&desc={}&desc_lang={}&back={}",
+        o.plan.id,
+        o.date,
+        url_encode(&o.plan.account_code),
+        url_encode(&o.plan.category_code),
+        o.plan.amount.normalize(),
+        o.plan.tx_kind,
+        url_encode(&desc),
+        desc_lang.upper(),
+        url_encode(back)
+    )
+}
+
+// ---------------------------------------------------------------- календарь
+
+struct OccView {
+    href: String,
+    title: String,
+    amount: String,
+    status: String,
+    is_expense: bool,
+}
+
+struct DayCell {
+    day: u32,
+    in_month: bool,
+    is_today: bool,
+    items: Vec<OccView>,
+}
+
+#[derive(Template)]
+#[template(path = "planning/calendar.html")]
+struct CalendarPage {
+    page: PageCtx,
+    month_title: String,
+    prev: String,
+    next: String,
+    this_month: String,
+    weekdays: [&'static str; 7],
+    weeks: Vec<Vec<DayCell>>,
+    still_to_pay: String,
+    paid: String,
+    income: String,
+    overdue: usize,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct MonthQuery {
+    month: String,
+}
+
+async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Query<MonthQuery>) -> PageResult {
+    let lang = page.lang;
+    let first = month_start(&q.month);
+    let last = first.checked_add_months(Months::new(1)).and_then(|d| d.pred_opt()).unwrap_or(first);
+    // Сетка с понедельника по воскресенье, захватывая края соседних месяцев.
+    let grid_from = first - Days::new(first.weekday().num_days_from_monday() as u64);
+    let grid_to = last + Days::new(6 - last.weekday().num_days_from_monday() as u64);
+    let t = today();
+    let occ = svc.occurrences(page.session.project_id, grid_from, grid_to, t).await?;
+
+    let (mut to_pay, mut paid, mut income, mut overdue) = (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO, 0);
+    let mut by_day: HashMap<NaiveDate, Vec<OccView>> = HashMap::new();
+    let back = format!("/planning?month={}", ym(first));
+    for o in &occ {
+        let in_month = o.date >= first && o.date <= last;
+        if in_month {
+            match (o.plan.is_expense(), o.is_open(), o.status.as_str()) {
+                (true, true, s) => {
+                    to_pay += o.plan.amount;
+                    if s == "OVERDUE" {
+                        overdue += 1;
+                    }
+                }
+                (true, false, "PAID") => paid += o.paid_amount.unwrap_or_default(),
+                (false, true, _) => income += o.plan.amount,
+                (false, false, "PAID") => income += o.paid_amount.unwrap_or_default(),
+                _ => {}
+            }
+        }
+        let amount = o.paid_amount.unwrap_or(o.plan.amount);
+        by_day.entry(o.date).or_default().push(OccView {
+            href: format!("/planning/occurrence/{}/{}?back={}", o.plan.id, o.date, url_encode(&back)),
+            title: o.plan.title(lang).to_string(),
+            amount: money(amount),
+            status: o.status.clone(),
+            is_expense: o.plan.is_expense(),
+        });
+    }
+    let mut weeks = Vec::new();
+    let mut d = grid_from;
+    while d <= grid_to {
+        let mut week = Vec::with_capacity(7);
+        for _ in 0..7 {
+            week.push(DayCell { day: d.day(), in_month: d.month() == first.month(), is_today: d == t, items: by_day.remove(&d).unwrap_or_default() });
+            d = d.succ_opt().unwrap_or(d);
+        }
+        weeks.push(week);
+    }
+    render(&CalendarPage {
+        month_title: format!("{} {}", month_name(lang, first.month()), first.year()),
+        prev: ym(first.checked_sub_months(Months::new(1)).unwrap_or(first)),
+        next: ym(first.checked_add_months(Months::new(1)).unwrap_or(first)),
+        this_month: ym(t),
+        weekdays: weekdays(lang),
+        weeks,
+        still_to_pay: money(to_pay),
+        paid: money(paid),
+        income: money(income),
+        overdue,
+        page: ctx(page),
+    })
+}
+
+// ---------------------------------------------------------------- вхождение
+
+#[derive(Template)]
+#[template(path = "planning/occurrence.html")]
+struct OccurrencePage {
+    page: PageCtx,
+    o: OccurrenceDto,
+    category: String,
+    pay_href: String,
+    back: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct BackQuery {
+    back: String,
+}
+
+fn safe_back(back: &str) -> String {
+    if back.starts_with("/planning") { back.to_string() } else { "/planning".to_string() }
+}
+
+async fn occurrence(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Path((plan, date)): Path<(Uuid, NaiveDate)>,
+    Query(q): Query<BackQuery>,
+) -> PageResult {
+    let p = page.session.project_id;
+    let o = svc.occurrence(p, plan, date, today()).await?;
+    let titles: HashMap<String, String> = svc.category_titles(p, page.lang).await?.into_iter().collect();
+    let back = safe_back(&q.back);
+    render(&OccurrencePage {
+        category: titles.get(&o.plan.category_code).cloned().unwrap_or_else(|| o.plan.category_code.clone()),
+        pay_href: pay_href(&o, page.lang, &back),
+        o,
+        back,
+        page: ctx(page),
+    })
+}
+
+async fn skip(State(svc): Svc, Extension(page): Extension<PageCtx>, Path((plan, date)): Path<(Uuid, NaiveDate)>, Form(q): Form<BackQuery>) -> PageResult {
+    let s = page.session.scope();
+    svc.skip(s.project_id, s.user_id, plan, date).await?;
+    Ok(see_other(&safe_back(&q.back)))
+}
+
+async fn unskip(State(svc): Svc, Extension(page): Extension<PageCtx>, Path((plan, date)): Path<(Uuid, NaiveDate)>, Form(q): Form<BackQuery>) -> PageResult {
+    svc.unskip(page.session.project_id, plan, date).await?;
+    Ok(see_other(&safe_back(&q.back)))
+}
+
+// ---------------------------------------------------------------- планы
+
+#[derive(Template)]
+#[template(path = "planning/plans.html")]
+struct PlansPage {
+    page: PageCtx,
+    plans: Vec<(PlanDto, String, String)>,
+}
+
+async fn plans(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
+    let p = page.session.project_id;
+    let titles: HashMap<String, String> = svc.category_titles(p, page.lang).await?.into_iter().collect();
+    let plans = svc
+        .list(p)
+        .await?
+        .into_iter()
+        .map(|x| {
+            let cat = titles.get(&x.category_code).cloned().unwrap_or_else(|| x.category_code.clone());
+            let amount = money(x.amount);
+            (x, cat, amount)
+        })
+        .collect();
+    render(&PlansPage { page: ctx(page), plans })
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct PlanForm {
+    name: String,
+    name_lang: String,
+    name_ru: String,
+    name_en: String,
+    name_th: String,
+    tx_kind: String,
+    account_code: String,
+    category_code: String,
+    amount: String,
+    recurrence: String,
+    interval: String,
+    start_on: String,
+    end_on: String,
+    active: String,
+}
+
+#[derive(Template)]
+#[template(path = "planning/plan_form.html")]
+struct PlanFormPage {
+    page: PageCtx,
+    id: Option<Uuid>,
+    f: PlanForm,
+    recurrences: &'static [&'static str],
+    accounts: Vec<Choice>,
+    categories: Vec<Choice>,
+    error: Option<String>,
+}
+
+fn opt(v: &str) -> Option<String> {
+    Some(v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+impl PlanForm {
+    fn to_input(&self) -> Result<PlanInput, AppError> {
+        let v = AppError::Validation;
+        Ok(PlanInput {
+            name: self.name.clone(),
+            name_lang: self.name_lang.clone(),
+            name_ru: opt(&self.name_ru),
+            name_en: opt(&self.name_en),
+            name_th: opt(&self.name_th),
+            tx_kind: self.tx_kind.clone(),
+            account_code: self.account_code.clone(),
+            category_code: self.category_code.clone(),
+            amount: parse_money("amount", &self.amount).map_err(v)?,
+            recurrence: self.recurrence.clone(),
+            interval: self.interval.trim().parse().map_err(|_| v("interval: целое число ≥ 1".into()))?,
+            start_on: self.start_on.parse().map_err(|_| v("start_on: неверная дата".into()))?,
+            end_on: opt(&self.end_on).map(|s| s.parse()).transpose().map_err(|_| v("end_on: неверная дата".into()))?,
+            active: self.active == "on" || self.active == "true",
+        })
+    }
+
+    fn from_dto(p: PlanDto) -> Self {
+        Self {
+            name: p.name,
+            name_lang: p.name_lang,
+            name_ru: p.name_ru.unwrap_or_default(),
+            name_en: p.name_en.unwrap_or_default(),
+            name_th: p.name_th.unwrap_or_default(),
+            tx_kind: p.tx_kind,
+            account_code: p.account_code,
+            category_code: p.category_code,
+            amount: p.amount.normalize().to_string(),
+            recurrence: p.recurrence,
+            interval: p.interval.to_string(),
+            start_on: p.start_on.to_string(),
+            end_on: p.end_on.map(|d| d.to_string()).unwrap_or_default(),
+            active: if p.active { "on".into() } else { String::new() },
+        }
+    }
+}
+
+async fn form_page(svc: &PlanningService, page: PageCtx, id: Option<Uuid>, f: PlanForm, error: Option<String>) -> PageResult {
+    let p = page.session.project_id;
+    let accounts = svc.account_choices(p, page.lang).await?;
+    let categories = svc.category_choices(p, page.lang).await?;
+    render(&PlanFormPage { page: ctx(page), id, f, recurrences: crate::domain::Recurrence::VALUES, accounts, categories, error })
+}
+
+async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
+    let f = PlanForm {
+        name_lang: page.lang.upper().into(),
+        tx_kind: "EXPENSE".into(),
+        recurrence: "MONTHLY".into(),
+        interval: "1".into(),
+        start_on: today().to_string(),
+        active: "on".into(),
+        ..Default::default()
+    };
+    form_page(&svc, page, None, f, None).await
+}
+
+async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): Form<PlanForm>) -> PageResult {
+    let s = page.session.scope();
+    let result = async { svc.create(s.project_id, s.user_id, f.to_input()?).await }.await;
+    match result {
+        Ok(_) => Ok(see_other("/planning/plans")),
+        Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, None, f, Some(m)).await,
+        Err(e) => Err(PageError(e)),
+    }
+}
+
+async fn edit_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>) -> PageResult {
+    let p = svc.get(page.session.project_id, id).await?;
+    form_page(&svc, page, Some(id), PlanForm::from_dto(p), None).await
+}
+
+async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>, Form(f): Form<PlanForm>) -> PageResult {
+    let p = page.session.project_id;
+    let result = async { svc.update(p, id, f.to_input()?).await }.await;
+    match result {
+        Ok(_) => Ok(see_other("/planning/plans")),
+        Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, Some(id), f, Some(m)).await,
+        Err(e) => Err(PageError(e)),
+    }
+}
+
+async fn delete(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>) -> PageResult {
+    svc.delete(page.session.project_id, id).await?;
+    Ok(see_other("/planning/plans"))
+}

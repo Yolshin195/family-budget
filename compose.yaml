@@ -1,0 +1,38 @@
+# Запуск: make (или `podman compose up -d --build`). Открыть: http://localhost:8080
+name: family-budget
+
+services:
+  db:
+    image: docker.io/library/postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: family_budget
+      POSTGRES_USER: budget
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-budget}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U budget -d family_budget"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    image: localhost/family-budget:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://budget:${DB_PASSWORD:-budget}@db:5432/family_budget
+      JWT_SECRET: ${JWT_SECRET:-change-me-please}
+      SEED_DEMO: ${SEED_DEMO:-1}
+      BIND_ADDR: 0.0.0.0:8080
+    ports:
+      - "${APP_PORT:-8080}:8080"
+
+volumes:
+  pgdata:

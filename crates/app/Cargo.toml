@@ -1,0 +1,48 @@
+[package]
+name = "family_budget"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+kernel.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+dotenvy.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+utoipa.workspace = true
+utoipa-swagger-ui.workspace = true
+uuid.workspace = true
+# Крейты фич. Блок ведёт arch.py.
+# @arch:deps:begin
+currencies = { path = "../features/currencies", optional = true }
+rates = { path = "../features/rates", optional = true }
+accounts = { path = "../features/accounts", optional = true }
+categories = { path = "../features/categories", optional = true }
+transactions = { path = "../features/transactions", optional = true }
+limits = { path = "../features/limits", optional = true }
+projects = { path = "../features/projects", optional = true }
+planning = { path = "../features/planning", optional = true }
+budget = { path = "../features/budget", optional = true }
+# @arch:deps:end
+
+[features]
+# Включённые фичи = default. Блок ведёт arch.py.
+# @arch:features:begin
+default = ["projects", "currencies", "rates", "accounts", "categories", "transactions", "limits", "planning", "budget", "seed"]
+projects = ["dep:projects", "currencies", "categories"]
+currencies = ["dep:currencies"]
+rates = ["dep:rates", "currencies"]
+accounts = ["dep:accounts", "currencies"]
+categories = ["dep:categories"]
+transactions = ["dep:transactions", "accounts", "categories"]
+limits = ["dep:limits", "categories"]
+planning = ["dep:planning", "transactions"]
+budget = ["dep:budget", "transactions", "planning", "limits", "rates"]
+# @arch:features:end
+# Демо-данные при пустой БД (не фича предметной области — флаг приложения).
+seed = ["budget"]

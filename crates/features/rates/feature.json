@@ -1,0 +1,25 @@
+{
+  "name": "rates",
+  "kind": "journal",
+  "entity": "Rate",
+  "title": "Курсы валют",
+  "date_field": "rate_date",
+  "fields": [
+    {
+      "name": "rate_date",
+      "type": "date",
+      "description": "Дата курса"
+    },
+    {
+      "name": "currency_code",
+      "type": "ref",
+      "ref": "currencies",
+      "description": "Валюта"
+    },
+    {
+      "name": "rate",
+      "type": "decimal",
+      "description": "Сколько единиц базовой валюты за 1 единицу валюты"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "family-budget-styles",
+  "private": true,
+  "description": "Сборка Tailwind CSS для шаблонов Askama. Результат коммитится в crates/app/static/app.css — для cargo run Node не нужен.",
+  "scripts": {
+    "css": "tailwindcss -i styles/app.css -o crates/app/static/app.css --minify",
+    "css:watch": "tailwindcss -i styles/app.css -o crates/app/static/app.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}

@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}{{ page.t("title") }}{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold mb-4">{{ page.t("title") }}</h1>
+{% if let Some(err) = error %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ err }}</div>{% endif %}
+<div class="grid gap-4 lg:grid-cols-2">
+{% for p in projects %}
+  <section class="card p-5 {% if p.id == page.session.project_id %}ring-2 ring-brand-100 border-brand-500{% endif %}">
+    <div class="flex items-start justify-between gap-2">
+      <div>
+        <h2 class="font-semibold text-lg">{{ p.name }}</h2>
+        <div class="text-xs text-stone-500 mt-0.5">{{ page.t(p.kind) }} · {{ p.base_currency }} · {{ page.t("role") }}: {{ page.t(p.role.as_str()) }}</div>
+      </div>
+      {% if p.id == page.session.project_id %}<span class="chip bg-brand-50 text-brand-700">{{ page.t("current") }}</span>
+      {% else %}<a class="btn-ghost" href="/projects/switch/{{ p.id }}">{{ page.t("switch") }} →</a>{% endif %}
+    </div>
+    <h3 class="label mt-4">{{ page.t("members") }}</h3>
+    <ul class="divide-y divide-stone-100">
+      {% for m in p.members %}
+      <li class="flex flex-wrap items-center gap-2 py-2 text-sm">
+        <span class="font-medium">{{ m.name }}</span>{% if m.user_id == page.session.user_id %}<span class="text-xs text-stone-400">({{ page.t("you") }})</span>{% endif %}
+        <span class="text-stone-400 text-xs">{{ m.email }}</span>
+        {% if p.role.as_str() == "OWNER" && p.kind == "FAMILY" %}
+          <form method="post" action="/projects/{{ p.id }}/members/{{ m.user_id }}/role" class="ml-auto">
+            <select class="input !w-auto !py-1 text-xs" name="role" onchange="this.form.submit()">
+              {% for r in roles %}<option value="{{ r }}" {% if m.role.as_str() == *r %}selected{% endif %}>{{ page.t(r) }}</option>{% endfor %}
+            </select></form>
+          {% if m.user_id != page.session.user_id %}
+          <form method="post" action="/projects/{{ p.id }}/members/{{ m.user_id }}/remove"><button class="btn-danger !py-1 text-xs">{{ page.t("remove") }}</button></form>
+          {% endif %}
+        {% else %}
+          <span class="ml-auto chip bg-stone-100 text-stone-600">{{ page.t(m.role.as_str()) }}</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% if p.role.as_str() == "OWNER" && p.kind == "FAMILY" %}
+    <form method="post" action="/projects/{{ p.id }}/members" class="mt-3 flex flex-wrap gap-2">
+      <input class="input flex-1 min-w-40" type="email" name="email" placeholder="email" required>
+      <select class="input !w-auto" name="role">{% for r in roles %}{% if *r != "OWNER" %}<option value="{{ r }}">{{ page.t(r) }}</option>{% endif %}{% endfor %}</select>
+      <button class="btn-primary">{{ page.t("add_member") }}</button>
+    </form>
+    <p class="text-xs text-stone-400 mt-1">{{ page.t("add_member_hint") }}</p>
+    {% endif %}
+    {% if p.role.as_str() != "OWNER" %}
+    <form method="post" action="/projects/{{ p.id }}/members/{{ page.session.user_id }}/remove" class="mt-3"><button class="btn-danger text-xs">{{ page.t("leave") }}</button></form>
+    {% endif %}
+  </section>
+{% endfor %}
+  <section class="card p-5 border-dashed">
+    <h2 class="font-semibold text-lg mb-3">+ {{ page.t("new_project") }}</h2>
+    <form method="post" action="/projects/create" class="space-y-3">
+      <div><label class="label">{{ page.t("name") }}</label><input class="input" name="name" required></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label">{{ page.t("kind") }}</label>
+          <select class="input" name="kind"><option value="FAMILY">{{ page.t("FAMILY") }}</option><option value="PERSONAL">{{ page.t("PERSONAL") }}</option></select></div>
+        <div><label class="label">{{ page.t("base_currency") }}</label><input class="input font-mono uppercase" name="base_currency" value="{{ page.session.base_currency }}" maxlength="3" required></div>
+      </div>
+      <button class="btn-primary">{{ page.t("create") }}</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

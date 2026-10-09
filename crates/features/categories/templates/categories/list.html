@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{{ page.t("title") }}{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-1">
+  <h1 class="text-2xl font-semibold">{{ page.t("title") }}</h1>
+  {% if page.can_write() %}<a href="/categories/new" class="btn-primary">+ {{ page.t("add") }}</a>{% endif %}
+</div>
+<p class="text-sm text-stone-500 mb-4">{{ page.t("tree_hint") }}</p>
+<div class="grid gap-4 lg:grid-cols-2 items-start">
+{% for (kind, label) in [("EXPENSE", "expenses"), ("INCOME", "incomes")] %}
+  <section class="card">
+    <h2 class="px-4 py-3 border-b border-stone-200 font-medium">{{ page.t(label) }}</h2>
+    <ul class="divide-y divide-stone-100">
+    {% for (depth, c) in rows %}{% if c.category_kind == **kind %}
+      <li class="flex items-center gap-2 px-4 py-2 group {% if c.archived %}opacity-50{% endif %}" style="padding-left: {{ 1 + depth * 3 / 2 }}rem">
+        {% if *depth > 0 %}<span class="text-stone-300">└</span>{% endif %}
+        <span class="{% if *depth == 0 %}font-medium{% endif %}">{{ c.title(page.lang) }}</span>
+        {% call m::no_tr(page, c.missing_tr(page.lang)) %}{% endcall %}
+        <span class="text-xs text-stone-400 font-mono">{{ c.code }}</span>
+        {% if page.can_write() %}
+        <span class="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition">
+          {% if !c.archived %}<a class="btn-ghost !py-1 text-xs" href="/categories/new?parent={{ c.code }}&kind={{ c.category_kind }}">{{ page.t("add_child") }}</a>{% endif %}
+          <a class="btn-ghost !py-1 text-xs" href="/categories/{{ c.code }}/edit">{{ page.t("edit") }}</a>
+        </span>
+        {% endif %}
+      </li>
+    {% endif %}{% endfor %}
+    </ul>
+  </section>
+{% endfor %}
+</div>
+{% endblock %}
