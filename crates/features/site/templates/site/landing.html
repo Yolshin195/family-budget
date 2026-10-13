@@ -1,0 +1,138 @@
+{% extends "public.html" %}
+{% block fulltitle %}{{ self.t("meta.title") }}{% endblock %}
+{% block meta %}
+  <meta name="description" content="{{ self.t("meta.description") }}">
+  <link rel="canonical" href="{{ p.canonical() }}">
+  {% for l in p.langs %}<link rel="alternate" hreflang="{{ l.code() }}" href="{{ p.url(l) }}">
+  {% endfor %}<link rel="alternate" hreflang="x-default" href="{{ p.base }}/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ self.t("app.title") }}">
+  <meta property="og:title" content="{{ self.t("meta.title") }}">
+  <meta property="og:description" content="{{ self.t("meta.description") }}">
+  <meta property="og:url" content="{{ p.canonical() }}">
+  <meta property="og:locale" content="{{ p.og_locale() }}">
+  <meta property="og:image" content="{{ p.abs_asset("og.png") }}">
+  <meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preload" as="image" href="{{ self.asset("overview.webp") }}" type="image/webp" fetchpriority="high">
+{% endblock %}
+{% block body %}
+<a class="skip-link" href="#main">{{ self.t("skip_to_content") }}</a>
+<header class="site-header">
+  <div class="site-wrap site-header-row">
+    <a href="/?lang={{ lang.code() }}" class="logo" aria-label="{{ self.t("app.title") }}">
+      <span class="logo-mark"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("wallet") }}"></use></svg></span>
+      <span class="logo-text">{{ self.t("app.title") }}</span>
+    </a>
+    <nav class="site-nav" aria-label="{{ self.t("nav.main") }}">
+      <div class="lang-switch" role="group" aria-label="{{ self.t("nav.language") }}">
+        {% for l in p.langs %}<a href="/?lang={{ l.code() }}" class="lang-link" hreflang="{{ l.code() }}" lang="{{ l.code() }}"{% if *l == lang %} aria-current="true"{% endif %}>{{ l.upper() }}</a>{% endfor %}
+      </div>
+      <a class="btn-ghost hide-sm" href="/auth/login">{{ self.t("nav.login") }}</a>
+      <a class="btn-primary" href="/auth/register">{{ self.t("cta.create") }}</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero">
+    <div class="site-wrap hero-grid">
+      <div class="hero-copy">
+        <h1 class="hero-title">{{ self.t("hero.title") }}</h1>
+        <p class="hero-subtitle">{{ self.t("hero.subtitle") }}</p>
+        <div class="hero-actions">
+          <a class="btn-primary btn-lg" href="/auth/register">{{ self.t("cta.create") }}</a>
+          <a class="btn-secondary btn-lg" href="/auth/login"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("brand-github") }}"></use></svg>{{ self.t("cta.github") }}</a>
+          <a class="btn-secondary btn-lg" href="/auth/login"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("brand-facebook") }}"></use></svg>{{ self.t("cta.facebook") }}</a>
+        </div>
+        {% if guest_demo %}
+        <form method="post" action="/demo" class="hero-demo">
+          <button class="link-button"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("eye") }}"></use></svg>{{ self.t("cta.demo") }}</button>
+          <span class="text-subtle text-sm">· {{ self.t("cta.demo_hint") }}</span>
+        </form>
+        {% endif %}
+      </div>
+      <figure class="hero-shot">
+        <img src="{{ self.asset("overview.webp") }}" width="1280" height="800" alt="{{ self.t("hero.alt") }}" fetchpriority="high" decoding="async">
+      </figure>
+    </div>
+  </section>
+
+  <section class="site-section" aria-labelledby="benefits">
+    <div class="site-wrap">
+      <h2 class="site-h2" id="benefits">{{ self.t("benefits.title") }}</h2>
+      <ul class="benefits" role="list">
+        {% for (n, icon) in [("b1", "users"), ("b2", "zap"), ("b3", "receipt-text"), ("b4", "gauge"), ("b5", "calendar-days"), ("b6", "languages")] %}
+        <li class="benefit">
+          <span class="benefit-icon"><svg class="icon" aria-hidden="true"><use href="{{ self.icon(icon) }}"></use></svg></span>
+          <h3 class="benefit-title">{{ self.t(format!("{}.title", n).as_str()) }}</h3>
+          <p class="benefit-text">{{ self.t(format!("{}.text", n).as_str()) }}</p>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+
+  <section class="site-section site-section-alt" aria-labelledby="how">
+    <div class="site-wrap">
+      <h2 class="site-h2" id="how">{{ self.t("how.title") }}</h2>
+      <ol class="steps">
+        {% for n in ["s1", "s2", "s3"] %}
+        <li class="step">
+          <h3 class="step-title">{{ self.t(format!("{}.title", n).as_str()) }}</h3>
+          <p class="text-muted">{{ self.t(format!("{}.text", n).as_str()) }}</p>
+        </li>
+        {% endfor %}
+      </ol>
+    </div>
+  </section>
+
+  {% if guest_demo %}
+  <section class="site-section" aria-labelledby="demo">
+    <div class="site-wrap demo-box">
+      <div>
+        <h2 class="site-h2 !mb-2" id="demo">{{ self.t("demo.title") }}</h2>
+        <p class="text-muted max-w-2xl">{{ self.t("demo.text") }}</p>
+      </div>
+      <form method="post" action="/demo"><button class="btn-secondary btn-lg"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("eye") }}"></use></svg>{{ self.t("cta.demo") }}</button></form>
+    </div>
+  </section>
+  {% endif %}
+
+  <section class="site-section" aria-labelledby="faq">
+    <div class="site-wrap site-narrow">
+      <h2 class="site-h2" id="faq">{{ self.t("faq.title") }}</h2>
+      <div class="faq">
+        {% for n in ["1", "2", "3", "4"] %}
+        <details class="faq-item">
+          <summary>{{ self.t(format!("q{}", n).as_str()) }}<svg class="icon faq-chevron" aria-hidden="true"><use href="{{ self.icon("chevron-down") }}"></use></svg></summary>
+          <p>{{ self.t(format!("a{}", n).as_str()) }}</p>
+        </details>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="site-section final-cta" aria-labelledby="final">
+    <div class="site-wrap text-center">
+      <h2 class="site-h2" id="final">{{ self.t("final.title") }}</h2>
+      <p class="text-muted mb-6">{{ self.t("final.text") }}</p>
+      <a class="btn-primary btn-lg" href="/auth/register">{{ self.t("cta.create") }}</a>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="site-wrap site-footer-row">
+    <p class="text-sm text-subtle">© 2026 {{ self.t("app.title") }}</p>
+    <nav aria-label="{{ self.t("footer.contacts") }}">
+      <ul class="footer-links">
+        <li><a href="/privacy?lang={{ lang.code() }}">{{ self.t("footer.privacy") }}</a></li>
+        <li><a href="/terms?lang={{ lang.code() }}">{{ self.t("footer.terms") }}</a></li>
+        <li><a href="/data-deletion?lang={{ lang.code() }}">{{ self.t("footer.deletion") }}</a></li>
+        <li><a href="mailto:{{ p.contact }}">{{ self.t("footer.contacts") }}: {{ p.contact }}</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>
+{% endblock %}

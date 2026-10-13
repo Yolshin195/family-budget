@@ -26,8 +26,10 @@ pub struct Assembled {
     pub router: Router,
     /// Страницы всех фич (под авторизацией).
     pub pages: Router,
-    /// Публичные страницы (вход, регистрация).
+    /// Публичные страницы (лендинг, вход, правовые страницы).
     pub public: Router,
+    /// Страницы аккаунта: вход есть, проекта может не быть (онбординг).
+    pub account: Router,
     pub nav: Vec<NavItem>,
     pub openapi: OpenApi,
     pub names: Vec<&'static str>,
@@ -38,6 +40,7 @@ pub async fn assemble(ctx: &AppContext, features: Vec<Feature>) -> anyhow::Resul
     let mut router = Router::new();
     let mut pages = Router::new();
     let mut public = Router::new();
+    let mut account = Router::new();
     let mut nav = Vec::new();
     let mut openapi = OpenApiBuilder::new().build();
     let mut names = Vec::new();
@@ -52,14 +55,20 @@ pub async fn assemble(ctx: &AppContext, features: Vec<Feature>) -> anyhow::Resul
         router = router.nest(f.mount, f.router);
         if let Some(web) = f.web {
             pages = pages.nest(f.mount, web.pages);
+            if let Some(r) = web.root {
+                pages = pages.merge(r);
+            }
             if let Some(p) = web.public {
                 public = public.merge(p);
+            }
+            if let Some(a) = web.account {
+                account = account.merge(a);
             }
             nav.extend(web.nav);
         }
         openapi.merge(f.openapi);
         names.push(f.name);
     }
-    nav.sort_by_key(|n| n.order);
-    Ok(Assembled { router, pages, public, nav, openapi, names })
+    nav.sort_by_key(|n| (n.group as u8, n.order));
+    Ok(Assembled { router, pages, public, account, nav, openapi, names })
 }

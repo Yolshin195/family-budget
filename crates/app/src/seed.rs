@@ -1,11 +1,18 @@
-//! Демо-данные: заполняются один раз, если в БД нет пользователей. Всё создаётся через сервисы
-//! фич — те же проверки, что у пользователя в интерфейсе. Даты — относительно текущего месяца.
+//! Демо-данные. Всё создаётся через сервисы фич — те же проверки, что у пользователя в интерфейсе.
+//! Даты — относительно текущего месяца.
+//!
+//! - `SEED_DEMO=1` (разработка): пользователи Алексей и Anna с личными проектами + семейный проект
+//!   «Семья». Войти под ними можно через «Вход для разработки» (без Rauthy, только `APP_ENV=dev`).
+//! - `GUEST_DEMO=1`: гость (`demo:guest`) — VIEWER в демо-семье; «Посмотреть демо» на лендинге.
+//!   Демо-семья пересоздаётся раз в сутки ([`reset_family`]) — гости не видят чужих правок.
+//!
+//! Пользователи демо входят только по `sub` вида `demo:*` — Rauthy таких не выдаёт.
 
 use std::str::FromStr;
 use std::sync::Arc;
 
 use chrono::{Datelike, Months, NaiveDate};
-use kernel::auth::{Memberships, Role};
+use kernel::auth::{Memberships, RequestMeta, Role};
 use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use rust_decimal::Decimal;
@@ -23,7 +30,10 @@ pub struct Services {
     pub planning: Arc<planning::Service>,
 }
 
-pub const PASSWORD: &str = "demo123";
+const ALEKSEY: (&str, &str, &str) = ("demo:aleksey", "aleksey@demo.local", "Алексей");
+const ANNA: (&str, &str, &str) = ("demo:anna", "anna@demo.local", "Anna");
+const GUEST: (&str, &str, &str) = (projects::GUEST_SUB, "guest@demo.local", "Гость · Guest");
+const FAMILY: &str = "Семья";
 
 fn dec(s: &str) -> Decimal {
     Decimal::from_str(s).unwrap_or_default()
@@ -36,19 +46,66 @@ fn day(back: u32, d: u32) -> NaiveDate {
     first.checked_add_days(chrono::Days::new((d - 1) as u64)).filter(|x| x.month() == first.month()).unwrap_or(first)
 }
 
-pub async fn run(s: &Services) -> anyhow::Result<()> {
-    if s.projects.login("aleksey@demo.local", PASSWORD).await.is_ok() {
+/// Демо-пользователи и их личные проекты (`SEED_DEMO=1`), демо-семья с гостем (`GUEST_DEMO=1`).
+pub async fn run(s: &Services, personal: bool, guest: bool) -> anyhow::Result<()> {
+    if !personal && !guest {
         return Ok(());
     }
-    println!("Демо-данные: создаю пользователей и семейный проект…");
-    let me = s.projects.register("aleksey@demo.local", "Алексей", PASSWORD, Lang::Ru, "THB").await.map_err(err)?;
-    let anna = s.projects.register("anna@demo.local", "Anna", PASSWORD, Lang::Th, "THB").await.map_err(err)?;
-    let family = s.projects.create_project(me, "Семья", projects::ProjectKind::Family, "THB").await.map_err(err)?;
-    s.projects.add_member(me, family, "anna@demo.local", Role::Editor).await.map_err(err)?;
-    fill_family(s, family, me, anna).await.map_err(err)?;
-    fill_personal(s, me).await.map_err(err)?;
-    println!("Демо-данные готовы: aleksey@demo.local / anna@demo.local, пароль {PASSWORD}");
+    let p = &s.projects;
+    let me = p.ensure_user(ALEKSEY.0, ALEKSEY.1, ALEKSEY.2, Lang::Ru).await.map_err(err)?;
+    let anna = p.ensure_user(ANNA.0, ANNA.1, ANNA.2, Lang::Th).await.map_err(err)?;
+    // Личные проекты — только новым демо-пользователям (у перенесённых из старой базы они уже есть).
+    let fresh = p.projects_of(me).await.map_err(err)?.is_empty();
+    if personal && fresh {
+        println!("Демо-данные: пользователи {} и {} с личными проектами…", ALEKSEY.1, ANNA.1);
+        p.onboard(me, ALEKSEY.2, "THB", Lang::Ru).await.map_err(err)?;
+        p.onboard(anna, ANNA.2, "THB", Lang::Th).await.map_err(err)?;
+        fill_personal(s, me).await.map_err(err)?;
+    }
+    let family = p.projects_of(me).await.map_err(err)?.into_iter().find(|(_, k, n)| *k == projects::ProjectKind::Family && n == FAMILY);
+    match family {
+        None => {
+            println!("Демо-данные: семейный проект «{FAMILY}»…");
+            create_family(s, me, anna, guest).await.map_err(err)?;
+        }
+        // База до обновления: семья уже есть — гостя добавить к ней.
+        Some((id, _, _)) if guest && !p.has_guest(id).await.map_err(err)? => {
+            p.ensure_user(GUEST.0, GUEST.1, GUEST.2, Lang::En).await.map_err(err)?;
+            p.add_guest(me, id).await.map_err(err)?;
+        }
+        Some(_) => {}
+    }
     Ok(())
+}
+
+/// Сброс демо для гостей (раз в сутки): семья удаляется со всеми данными и создаётся заново.
+pub async fn reset_family(s: &Services) -> anyhow::Result<()> {
+    let p = &s.projects;
+    let (Some(me), Some(anna)) = (p.user_by_sub(ALEKSEY.0).await.map_err(err)?, p.user_by_sub(ANNA.0).await.map_err(err)?) else {
+        return Ok(());
+    };
+    for (id, kind, name) in p.projects_of(me).await.map_err(err)? {
+        if kind == projects::ProjectKind::Family && name == FAMILY {
+            p.purge_project(id).await.map_err(err)?;
+        }
+    }
+    create_family(s, me, anna, true).await.map_err(err)?;
+    println!("Демо для гостей: проект «{FAMILY}» пересоздан");
+    Ok(())
+}
+
+async fn create_family(s: &Services, me: Uuid, anna: Uuid, guest: bool) -> AppResult<()> {
+    let meta = RequestMeta::default();
+    let p = &s.projects;
+    let family = p.create_project(me, FAMILY, projects::ProjectKind::Family, "THB", &meta).await?;
+    p.add_member(me, family, ANNA.1, Role::Editor, &meta).await?;
+    if guest {
+        let g = p.ensure_user(GUEST.0, GUEST.1, GUEST.2, Lang::En).await?;
+        // Гость — только наблюдатель; личного проекта у него нет.
+        let _ = g;
+        p.add_guest(me, family).await?;
+    }
+    fill_family(s, family, me, anna).await
 }
 
 fn err(e: kernel::error::AppError) -> anyhow::Error {
@@ -222,7 +279,7 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
 }
 
 async fn fill_personal(s: &Services, me: Uuid) -> AppResult<()> {
-    let session = s.projects.session(me, None).await?.ok_or_else(|| kernel::error::AppError::NotFound("personal".into()))?;
+    let session = Memberships::session(s.projects.as_ref(), me, None).await?.ok_or_else(|| kernel::error::AppError::NotFound("personal".into()))?;
     let p = session.project_id;
     account(s, p, "CASH", "CASH", "THB", "2000", Some(me), Lang::Ru, ("Мои наличные", "My cash", "เงินสดของฉัน")).await?;
     tx(s, p, Tx { date: day(0, 2), account: "CASH", kind: "EXPENSE", desc: Some(("Книги по Rust", Lang::Ru)), tr: (None, Some("Rust books"), None), lines: vec![("FUN", "890", None)], plan: None, by: me }).await?;

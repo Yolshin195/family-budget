@@ -9,7 +9,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::domain::Transaction;
-use crate::ports::{FactLine, Filter, Payment, TransactionRepository};
+use crate::ports::{FactLine, Filter, Payment, QuickStats, TransactionRepository};
 
 #[derive(Default)]
 pub struct InMemoryTransactionRepository {
@@ -119,5 +119,36 @@ impl TransactionRepository for InMemoryTransactionRepository {
             }
         }
         Ok(out)
+    }
+
+    async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate) -> AppResult<QuickStats> {
+        let rows = self.rows.lock().unwrap();
+        let mine: Vec<&Transaction> = rows.iter().filter(|r| r.project_id == project_id && r.created_by == user_id).collect();
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        for t in mine.iter().filter(|t| t.tx_kind.as_str() == kind && t.occurred_on >= since) {
+            for l in &t.lines {
+                match counts.iter_mut().find(|c| c.0 == l.category_code) {
+                    Some(c) => c.1 += 1,
+                    None => counts.push((l.category_code.clone(), 1)),
+                }
+            }
+        }
+        counts.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok(QuickStats { last_account: mine.last().map(|t| t.account_code.clone()), frequent: counts.into_iter().map(|c| c.0).collect() })
+    }
+
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
+        let mut rows = self.rows.lock().unwrap();
+        let n = rows.len();
+        rows.retain(|r| r.project_id != project_id);
+        Ok((n - rows.len()) as u64)
+    }
+
+    async fn count_first(&self, _from: chrono::DateTime<chrono::Utc>, _to: chrono::DateTime<chrono::Utc>) -> AppResult<i64> {
+        let rows = self.rows.lock().unwrap();
+        let mut users: Vec<Uuid> = rows.iter().map(|r| r.created_by).collect();
+        users.sort();
+        users.dedup();
+        Ok(users.len() as i64)
     }
 }

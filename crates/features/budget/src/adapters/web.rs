@@ -7,10 +7,9 @@ use axum::extract::{Query, State};
 use axum::routing::get;
 use axum::{Extension, Router};
 use chrono::{Datelike, NaiveDate};
-use kernel::i18n::month_name;
-use kernel::web::{PageCtx, PageResult, money, render};
+use kernel::i18n::{Lang, month_name};
+use kernel::web::{PageCtx, PageResult, money_in, render};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -70,6 +69,8 @@ struct BudgetPage {
     prev: String,
     next: String,
     today: String,
+    /// Начало показанного периода (фильтр участника не сбрасывает период).
+    current: String,
     member: String,
     expenses: Vec<RowView>,
     incomes: Vec<RowView>,
@@ -87,11 +88,12 @@ struct BudgetPage {
     base: String,
 }
 
-fn opt_money(v: Option<Decimal>) -> String {
-    v.map(money).unwrap_or_default()
+fn opt_money(lang: Lang, v: Option<Decimal>) -> String {
+    v.map(|x| money_in(lang, x)).unwrap_or_default()
 }
 
-fn row_view(r: Row) -> RowView {
+fn row_view(lang: Lang, r: Row) -> RowView {
+    let money = |v: Decimal| money_in(lang, v);
     let inherited = match (r.remaining, r.available) {
         (None, Some(_)) => true,
         (Some(rem), Some(av)) => av < rem,
@@ -110,11 +112,11 @@ fn row_view(r: Row) -> RowView {
         title: r.title,
         depth: r.depth,
         has_children: r.has_children,
-        limit: opt_money(r.limit),
+        limit: opt_money(lang, r.limit),
         fact: money(r.fact),
         planned: if r.planned.is_zero() { String::new() } else { money(r.planned) },
         forecast: money(r.forecast),
-        available: opt_money(r.available),
+        available: opt_money(lang, r.available),
     }
 }
 
@@ -134,11 +136,12 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
     let member = Uuid::parse_str(&q.member).ok();
     let s = page.session.clone();
     let r: Report = svc.report(s.project_id, &s.base_currency, period, page.lang, member, today).await?;
+    let lang = page.lang;
+    let money = |v: Decimal| money_in(lang, v);
 
     let exp_total = r.expense_fact + r.expense_planned;
     let inc_total = r.income_fact + r.income_planned;
     let net = r.net_forecast();
-    let back = format!("/budget?view={}&date={}", view.code(), period.from);
     let upcoming = r
         .upcoming
         .iter()
@@ -151,7 +154,6 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
             is_expense: u.kind == "EXPENSE",
         })
         .collect();
-    let _ = back;
     let page = page.for_feature(crate::NAME, crate::i18n::dict);
     render(&BudgetPage {
         view: view.code(),
@@ -159,6 +161,7 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         prev: period.prev().from.to_string(),
         next: period.next().from.to_string(),
         today: today.to_string(),
+        current: period.from.to_string(),
         member: q.member,
         exp_fact: money(r.expense_fact),
         exp_plan: money(r.expense_planned),
@@ -171,13 +174,13 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         accounts: r
             .accounts
             .iter()
-            .map(|a| (a.title.clone(), money(a.balance), a.currency.clone(), a.balance.to_f64().unwrap_or(0.0) < 0.0))
+            .map(|a| (a.title.clone(), money(a.balance), a.currency.clone(), a.balance < Decimal::ZERO))
             .collect(),
         upcoming,
         missing_rates: r.missing_rates.join(", "),
         base: r.base_currency.clone(),
-        expenses: r.expenses.into_iter().map(row_view).collect(),
-        incomes: r.incomes.into_iter().map(row_view).collect(),
+        expenses: r.expenses.into_iter().map(|x| row_view(lang, x)).collect(),
+        incomes: r.incomes.into_iter().map(|x| row_view(lang, x)).collect(),
         page,
     })
 }

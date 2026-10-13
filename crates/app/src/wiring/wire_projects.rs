@@ -1,7 +1,8 @@
 //! Связка фичи `projects`: начальное наполнение нового проекта через публичные API
-//! `currencies` и `categories` — базовая валюта и стартовое дерево категорий на трёх языках.
+//! `currencies` и `categories` — базовая валюта и стартовое дерево категорий на трёх языках;
+//! удаление всех данных проекта во всех фичах (удаление проекта, аккаунта, сброс демо).
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use kernel::error::{AppError, AppResult};
@@ -86,6 +87,53 @@ impl ::projects::ProjectBootstrap for BootstrapAdapter {
             match self.categories.create(project_id, dto).await {
                 Ok(_) | Err(AppError::Conflict(_)) => {}
                 Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Кто хранит данные проекта: сервисы фич с `purge_project`. Заполняется в конце сборки.
+#[derive(Default)]
+pub struct PurgeTargets {
+    pub list: Vec<Arc<dyn PurgeOne>>,
+}
+
+#[async_trait]
+pub trait PurgeOne: Send + Sync {
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
+}
+
+macro_rules! purge_one {
+    ($feature:literal, $svc:ty) => {
+        #[cfg(feature = $feature)]
+        #[async_trait]
+        impl PurgeOne for $svc {
+            async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
+                self.purge_project(project_id).await
+            }
+        }
+    };
+}
+
+purge_one!("transactions", ::transactions::Service);
+purge_one!("planning", ::planning::Service);
+purge_one!("limits", ::limits::Service);
+purge_one!("rates", ::rates::Service);
+purge_one!("accounts", ::accounts::Service);
+purge_one!("categories", ::categories::Service);
+purge_one!("currencies", ::currencies::Service);
+
+/// Порт `ProjectPurge`: по очереди во всех включённых фичах (сначала зависящие — потом справочники).
+#[derive(Clone, Default)]
+pub struct PurgeAdapter(pub Arc<OnceLock<PurgeTargets>>);
+
+#[async_trait]
+impl ::projects::ProjectPurge for PurgeAdapter {
+    async fn purge(&self, project_id: Uuid) -> AppResult<()> {
+        if let Some(t) = self.0.get() {
+            for f in &t.list {
+                f.purge(project_id).await?;
             }
         }
         Ok(())

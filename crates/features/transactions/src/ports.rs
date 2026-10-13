@@ -64,12 +64,69 @@ pub trait TransactionRepository: Send + Sync {
     async fn payments(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<Payment>>;
     /// Обороты по счетам по дату включительно: (счёт, доходы, расходы).
     async fn turnover(&self, project_id: Uuid, to: NaiveDate) -> AppResult<Vec<(String, Decimal, Decimal)>>;
+    /// Для быстрого расхода: последний счёт пользователя и его частые категории (по числу позиций
+    /// с `since`, чаще — первые) для операций типа `kind`.
+    async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate) -> AppResult<QuickStats>;
+    /// Удалить все операции проекта (удаление проекта или аккаунта).
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
+    /// Сколько пользователей внесли первую операцию за период — для воронки лендинга.
+    async fn count_first(&self, from: chrono::DateTime<chrono::Utc>, to: chrono::DateTime<chrono::Utc>) -> AppResult<i64>;
+}
+
+/// Привычки пользователя в проекте — из позиций транзакций, без отдельных таблиц.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct QuickStats {
+    pub last_account: Option<String>,
+    pub frequent: Vec<String>,
 }
 
 /// Зависимости фичи от других фич. Реализации — crates/app/src/wiring/wire_transactions.rs.
 pub struct Deps {
     pub accounts: Arc<dyn AccountsLookup>,
     pub categories: Arc<dyn CategoriesLookup>,
+    /// Остатки лимитов и курсы для предупреждения в форме (из фичи `budget`).
+    pub budget: Arc<dyn BudgetView>,
+}
+
+/// Лимит категории в периоде (суммы в базовой валюте проекта).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CategoryLimit {
+    pub code: String,
+    pub limit: Option<Decimal>,
+    /// Факт + план за период.
+    pub forecast: Decimal,
+    /// Сколько ещё можно потратить с учётом предков.
+    pub available: Option<Decimal>,
+}
+
+/// Что нужно от фичи `budget`: остатки лимитов за месяц даты и курсы к базовой валюте.
+#[async_trait]
+pub trait BudgetView: Send + Sync {
+    async fn limits(&self, project_id: Uuid, base_currency: &str, date: NaiveDate, lang: Lang) -> AppResult<Vec<CategoryLimit>>;
+    /// Курс 1 единицы валюты к базовой на дату (ближайший предыдущий).
+    async fn rates(&self, project_id: Uuid, base_currency: &str, date: NaiveDate) -> AppResult<Vec<(String, Decimal)>>;
+}
+
+/// Счёт для быстрого расхода: валюта и её символ.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountInfo {
+    pub code: String,
+    pub title: String,
+    pub currency: String,
+    pub symbol: String,
+}
+
+/// Категория для быстрого расхода: дерево и названия на всех трёх языках (поиск).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CategoryInfo {
+    pub code: String,
+    pub parent_code: Option<String>,
+    /// EXPENSE / INCOME
+    pub kind: String,
+    pub title: String,
+    pub depth: usize,
+    /// Оригинал и переводы через пробел — для поиска на любом языке.
+    pub names: String,
 }
 
 /// Что этой фиче нужно от справочника `accounts`.
@@ -80,6 +137,8 @@ pub trait AccountsLookup: Send + Sync {
     async fn choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>>;
     /// Названия всех счетов, включая архивные: (код, название).
     async fn titles(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<(String, String)>>;
+    /// Активные счета с валютой и её символом.
+    async fn infos(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<AccountInfo>>;
 }
 
 /// Что этой фиче нужно от справочника `categories`.
@@ -91,4 +150,6 @@ pub trait CategoriesLookup: Send + Sync {
     async fn choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>>;
     /// Названия всех категорий, включая архивные: (код, название).
     async fn titles(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<(String, String)>>;
+    /// Активные категории деревом с названиями на всех языках.
+    async fn infos(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<CategoryInfo>>;
 }

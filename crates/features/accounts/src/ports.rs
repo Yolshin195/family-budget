@@ -18,6 +18,8 @@ pub trait AccountRepository: Send + Sync {
     async fn find_by_code(&self, project_id: Uuid, code: &str) -> AppResult<Option<Account>>;
     async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Account>>;
     async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64>;
+    /// Удалить все записи проекта (удаление проекта или аккаунта).
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
 }
 
 /// Зависимости фичи от других фич. Порты объявляет эта фича (потребитель),

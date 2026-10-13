@@ -1,35 +1,47 @@
 {% extends "base.html" %}
+{% import "macros.html" as m %}
 {% block title %}{{ page.t("title") }}{% endblock %}
+{% block heading %}{{ page.t("title") }}{% endblock %}
+{% block actions %}<a class="btn-secondary" href="/budget"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chart-pie") }}"></use></svg>{{ page.t("to_budget") }}</a>{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-semibold">{{ page.t("title") }}</h1>
-<p class="text-sm text-stone-500 mb-4">{{ page.t("hint") }}</p>
-{% if let Some(err) = error %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ err }}</div>{% endif %}
+<p class="text-muted mb-4 max-w-3xl">{{ page.t("hint") }}</p>
+{% call m::form_alert(error, "category_code,limit_period,amount,valid_from") %}{% endcall %}
 {% if page.can_write() %}
-<form method="post" class="card p-4 mb-4 flex flex-wrap items-end gap-3">
-  <div class="min-w-56"><label class="label">{{ page.t("category") }}</label>
-    <select class="input" name="category_code">{% for c in categories %}{% if c.tag == "EXPENSE" %}<option value="{{ c.code }}">{{ c.indent() }}{{ c.label }}</option>{% endif %}{% endfor %}</select></div>
-  <div><label class="label">{{ page.t("period") }}</label>
-    <select class="input" name="limit_period"><option value="MONTH">{{ page.t("MONTH") }}</option><option value="WEEK">{{ page.t("WEEK") }}</option><option value="YEAR">{{ page.t("YEAR") }}</option></select></div>
-  <div><label class="label">{{ page.t("amount") }}, {{ page.session.base_currency }}</label><input class="input tabular-nums w-36" name="amount" inputmode="decimal" required></div>
-  <div><label class="label">{{ page.t("valid_from") }}</label><input class="input" type="date" name="valid_from" value="{{ today }}" required></div>
-  <button class="btn-primary">{{ page.t("add") }}</button>
+<form method="post" class="card card-pad mb-6 flex flex-wrap items-start gap-4" data-form>
+  <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+  <div class="field !mb-0 min-w-56 grow sm:grow-0"><label class="label" for="category_code">{{ page.t("category") }}</label>
+    <select class="input" id="category_code" name="category_code" autofocus{% call m::aria(error, "category_code") %}{% endcall %}>{% for c in categories %}{% if c.tag == "EXPENSE" %}<option value="{{ c.code }}">{{ c.indent() }}{{ c.label }}</option>{% endif %}{% endfor %}</select>
+    {% call m::err(error, "category_code") %}{% endcall %}</div>
+  <div class="field !mb-0"><label class="label" for="limit_period">{{ page.t("period") }}</label>
+    <select class="input" id="limit_period" name="limit_period"><option value="MONTH">{{ page.t("MONTH") }}</option><option value="WEEK">{{ page.t("WEEK") }}</option><option value="YEAR">{{ page.t("YEAR") }}</option></select></div>
+  <div class="field !mb-0"><label class="label" for="amount">{{ page.t("amount") }}, {{ page.session.base_currency }}</label>
+    <input class="input num w-36" id="amount" name="amount" inputmode="decimal" required{% call m::aria(error, "amount") %}{% endcall %}>{% call m::err(error, "amount") %}{% endcall %}</div>
+  <div class="field !mb-0"><label class="label" for="valid_from">{{ page.t("valid_from") }}</label>
+    <input class="input" type="date" id="valid_from" name="valid_from" value="{{ today }}" required{% call m::aria(error, "valid_from") %}{% endcall %}>{% call m::err(error, "valid_from") %}{% endcall %}</div>
+  <div class="field !mb-0"><span class="label" aria-hidden="true">&nbsp;</span><button class="btn-primary">{{ page.t("add") }}</button></div>
 </form>
 {% endif %}
-<div class="card overflow-x-auto">
-  <table class="w-full">
-    <thead class="border-b border-stone-200"><tr><th class="th">{{ page.t("category") }}</th><th class="th">{{ page.t("period") }}</th><th class="th num">{{ page.t("amount") }}</th><th class="th">{{ page.t("valid_from") }}</th><th class="th"></th></tr></thead>
-    <tbody class="divide-y divide-stone-100">
+<section class="card">
+{% if rows.is_empty() %}
+  {% call m::empty(page, "gauge", page.t("empty_title"), page.t("empty_text"), "", "") %}{% endcall %}
+{% else %}
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr><th scope="col">{{ page.t("category") }}</th><th scope="col">{{ page.t("period") }}</th><th scope="col" class="num">{{ page.t("amount") }}</th><th scope="col">{{ page.t("valid_from") }}</th><th scope="col"><span class="sr-only">{{ page.t("delete") }}</span></th></tr></thead>
+    <tbody>
     {% for r in rows %}
-      <tr class="{% if r.superseded %}opacity-50{% endif %}">
-        <td class="td">{{ r.indent }}{{ r.category }} <span class="text-xs text-stone-400 font-mono">{{ r.dto.category_code }}</span></td>
-        <td class="td">{{ page.t(r.dto.limit_period) }}</td>
-        <td class="td num font-medium">{{ kernel::web::money(r.dto.amount) }} {{ page.session.base_currency }}</td>
-        <td class="td">{{ r.dto.valid_from }} {% if r.superseded %}<span class="chip bg-stone-100 text-stone-500">{{ page.t("superseded") }}</span>{% endif %}</td>
-        <td class="td text-right">{% if page.can_write() %}<form method="post" action="/limits/{{ r.dto.id }}/delete"><button class="btn-danger !py-1 text-xs">{{ page.t("delete") }}</button></form>{% endif %}</td>
+      <tr{% if r.superseded %} class="row-muted"{% endif %}>
+        <td><span class="indent-{{ r.depth }} inline-block">{{ r.category }}</span> <span class="text-xs text-subtle font-mono">{{ r.dto.category_code }}</span></td>
+        <td>{{ page.t(r.dto.limit_period) }}</td>
+        <td class="num font-medium">{% call m::amount(page.money(r.dto.amount), page.session.base_currency) %}{% endcall %}</td>
+        <td class="tabular-nums">{{ page.date(r.dto.valid_from) }} {% if r.superseded %}<span class="badge">{{ page.t("superseded") }}</span>{% endif %}</td>
+        <td class="text-right">{% if page.can_write() %}<form method="post" action="/limits/{{ r.dto.id }}/delete"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+          <button class="btn-ghost btn-sm text-danger" aria-label="{{ page.t("delete") }}: {{ r.category }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("trash-2") }}"></use></svg><span class="hide-sm">{{ page.t("delete") }}</span></button></form>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% if rows.is_empty() %}<p class="p-6 text-center text-stone-500">{{ page.t("empty") }}</p>{% endif %}
-</div>
+  </div>
+{% endif %}
+</section>
 {% endblock %}

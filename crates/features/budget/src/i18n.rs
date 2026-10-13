@@ -3,8 +3,8 @@ use kernel::i18n::Tr;
 
 pub fn dict(key: &str) -> Option<Tr> {
     Some(match key {
-        "nav" => ("Бюджет", "Budget", "งบประมาณ"),
-        "title" => ("Бюджет", "Budget", "งบประมาณ"),
+        "nav" => ("Обзор", "Overview", "ภาพรวม"),
+        "title" => ("Обзор", "Overview", "ภาพรวม"),
         "limit" => ("Лимит", "Limit", "วงเงิน"),
         "fact" => ("Факт", "Actual", "จริง"),
         "plan" => ("План", "Planned", "ตามแผน"),
@@ -23,6 +23,20 @@ pub fn dict(key: &str) -> Option<Tr> {
         "base_currency" => ("Суммы в базовой валюте", "Amounts in base currency", "จำนวนเงินในสกุลหลัก"),
         "expand" => ("Развернуть всё", "Expand all", "ขยายทั้งหมด"),
         "set_limits" => ("Настроить лимиты", "Set limits", "ตั้งวงเงิน"),
+        "period_nav" => ("Выбор периода", "Period navigation", "เลือกช่วงเวลา"),
+        "prev" => ("Предыдущий период", "Previous period", "ช่วงก่อนหน้า"),
+        "next" => ("Следующий период", "Next period", "ช่วงถัดไป"),
+        "view" => ("Период", "Period", "ช่วงเวลา"),
+        "collapse" => ("Свернуть", "Collapse", "ย่อ"),
+        "add_here" => ("Добавить расход в категорию", "Add an expense to this category", "เพิ่มรายจ่ายในหมวดนี้"),
+        "member" => ("Участник", "Member", "สมาชิก"),
+        "income_total" => ("Итого", "Total", "รวม"),
+        "empty_title" => ("Категорий пока нет", "No categories yet", "ยังไม่มีหมวดหมู่"),
+        "empty_text" => ("Бюджет строится по дереву категорий. Добавьте категории и лимиты — и расходы разойдутся по веткам.", "The budget follows the category tree. Add categories and limits, and expenses will spread across branches.", "งบสร้างตามโครงสร้างหมวดหมู่ เพิ่มหมวดหมู่และวงเงินก่อน"),
+        "to_categories" => ("К категориям", "Go to categories", "ไปที่หมวดหมู่"),
+        "fact_hint" => ("Факт — проведённые операции", "Actual — recorded transactions", "จริง — รายการที่บันทึกแล้ว"),
+        "apply" => ("Показать", "Apply", "แสดง"),
+        "nav_rates" => ("Курсы валют", "Exchange rates", "อัตราแลกเปลี่ยน"),
         _ => return None,
     })
 }

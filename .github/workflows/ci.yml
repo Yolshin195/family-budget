@@ -1,0 +1,62 @@
+# Проверки на каждый PR (ТЗ, раздел 13): тесты, уязвимые зависимости (cargo audit, cargo deny),
+# сканирование образа (Trivy), OWASP ZAP baseline — без предупреждений уровней High и Medium.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t family-budget:ci .
+      - uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: family-budget:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+  zap:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Запуск приложения (PostgreSQL + Rauthy + приложение)
+        run: |
+          docker compose up -d --build
+          for i in $(seq 1 60); do curl -fs http://localhost:8080/health && break; sleep 2; done
+        env:
+          APP_ENV: dev
+          GUEST_DEMO: '1'
+      - uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: http://localhost:8080/
+          rules_file_name: .zap/rules.tsv
+          fail_action: true
+          allow_issue_writing: false

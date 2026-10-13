@@ -12,17 +12,37 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::domain::Transaction;
-use crate::dto::{ListQuery, TransactionDto, TransactionInput, TranslationInput};
-use crate::ports::{Deps, FactLine, Filter, Payment, TransactionRepository};
+use crate::dto::{ListQuery, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, TransactionDto, TransactionInput, TranslationInput};
+use crate::ports::{CategoryInfo, Deps, FactLine, Filter, Payment, TransactionRepository};
+
+/// Частых категорий в форме быстрого расхода.
+pub const FREQUENT: usize = 6;
 
 pub struct TransactionService {
     repo: Arc<dyn TransactionRepository>,
     deps: Deps,
+    /// Удалённые операции для «Отменить» в тосте.
+    undo: kernel::undo::UndoBuffer<Transaction>,
+}
+
+/// Частые категории типа `kind`: сначала по привычкам пользователя, затем — корни дерева.
+fn frequent(stats: Vec<String>, cats: &[CategoryInfo], kind: &str) -> Vec<String> {
+    let active = |code: &str| cats.iter().any(|c| c.code == code && c.kind == kind);
+    let mut out: Vec<String> = stats.into_iter().filter(|c| active(c)).take(FREQUENT).collect();
+    for c in cats.iter().filter(|c| c.kind == kind && c.depth == 0) {
+        if out.len() >= FREQUENT {
+            break;
+        }
+        if !out.contains(&c.code) {
+            out.push(c.code.clone());
+        }
+    }
+    out
 }
 
 impl TransactionService {
     pub fn new(repo: Arc<dyn TransactionRepository>, deps: Deps) -> Self {
-        Self { repo, deps }
+        Self { repo, deps, undo: Default::default() }
     }
 
     /// Создать транзакцию. `created_by` — текущий пользователь, не из тела запроса.
@@ -73,6 +93,82 @@ impl TransactionService {
     /// Удаление. Если транзакция оплачивала вхождение плана — оно снова «ожидается».
     pub async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<()> {
         if self.repo.delete(project_id, id).await? { Ok(()) } else { Err(not_found(id)) }
+    }
+
+    /// Удаление из интерфейса: операция запоминается на пару минут — токен для «Отменить».
+    pub async fn delete_with_undo(&self, project_id: Uuid, id: Uuid) -> AppResult<Uuid> {
+        let item = self.load(project_id, id).await?;
+        self.delete(project_id, id).await?;
+        Ok(self.undo.put(project_id, item))
+    }
+
+    /// «Отменить»: вернуть операцию с тем же id и позициями.
+    pub async fn undo_delete(&self, project_id: Uuid, token: Uuid) -> AppResult<TransactionDto> {
+        let item = self.undo.take(project_id, token).ok_or_else(|| AppError::NotFound("отменить уже нельзя".into()))?;
+        self.repo.insert(&item).await.map_err(plan_conflict)?;
+        Ok(item.into())
+    }
+
+    /// Пользователи, внёсшие первую операцию за период — для воронки лендинга (только число).
+    pub async fn first_expenses_between(&self, from: chrono::DateTime<chrono::Utc>, to: chrono::DateTime<chrono::Utc>) -> AppResult<i64> {
+        self.repo.count_first(from, to).await
+    }
+
+    /// Удалить все операции проекта (удаление проекта или аккаунта).
+    pub async fn purge_project(&self, project_id: Uuid) -> AppResult<u64> {
+        self.repo.purge(project_id).await
+    }
+
+    /// Быстрый расход (раздел 10 ТЗ): счёт по умолчанию, частые категории за 30 дней, дерево
+    /// категорий для поиска на трёх языках, остатки лимитов за месяц даты и курсы к базовой валюте.
+    pub async fn quick_defaults(&self, project_id: Uuid, user_id: Uuid, base_currency: &str, lang: Lang, date: NaiveDate) -> AppResult<QuickDefaultsDto> {
+        let since = date - chrono::Days::new(30);
+        let expense = self.repo.quick_stats(project_id, user_id, "EXPENSE", since).await?;
+        let income = self.repo.quick_stats(project_id, user_id, "INCOME", since).await?;
+        let accounts = self.deps.accounts.infos(project_id, lang).await?;
+        let cats = self.deps.categories.infos(project_id, lang).await?;
+        let limits = self.deps.budget.limits(project_id, base_currency, date, lang).await?;
+        let rates = self.deps.budget.rates(project_id, base_currency, date).await?;
+        let rate = |cur: &str| {
+            if cur == base_currency {
+                return Decimal::ONE;
+            }
+            rates.iter().find(|r| r.0 == cur).map(|r| r.1).unwrap_or(Decimal::ONE)
+        };
+        let default_account = expense
+            .last_account
+            .clone()
+            .or(income.last_account.clone())
+            .filter(|a| accounts.iter().any(|x| &x.code == a))
+            .or_else(|| accounts.first().map(|a| a.code.clone()));
+        Ok(QuickDefaultsDto {
+            date,
+            base_currency: base_currency.to_string(),
+            default_account,
+            frequent_expense: frequent(expense.frequent, &cats, "EXPENSE"),
+            frequent_income: frequent(income.frequent, &cats, "INCOME"),
+            accounts: accounts
+                .into_iter()
+                .map(|a| QuickAccountDto { rate_to_base: rate(&a.currency), code: a.code, title: a.title, currency: a.currency, symbol: a.symbol })
+                .collect(),
+            categories: cats
+                .into_iter()
+                .map(|c| {
+                    let l = limits.iter().find(|l| l.code == c.code);
+                    QuickCategoryDto {
+                        limit: l.and_then(|l| l.limit),
+                        forecast: l.map(|l| l.forecast).unwrap_or_default(),
+                        available: l.and_then(|l| l.available),
+                        code: c.code,
+                        parent_code: c.parent_code,
+                        kind: c.kind,
+                        title: c.title,
+                        depth: c.depth,
+                        search: c.names,
+                    }
+                })
+                .collect(),
+        })
     }
 
     // ---- Публичный контракт для других фич (бюджет, планирование) ----

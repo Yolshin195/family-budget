@@ -1,0 +1,24 @@
+# Крейт фичи `site` (сгенерирован как blank, дальше — вручную). Зависит только от kernel.
+[package]
+name = "site"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+# Doc-тестов в эталоне нет — не тратим на них время `cargo test`.
+doctest = false
+
+[dependencies]
+kernel.workspace = true
+anyhow.workspace = true
+askama.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+utoipa.workspace = true
+uuid.workspace = true
+

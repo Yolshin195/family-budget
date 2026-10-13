@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{{ page.t("profile") }}{% endblock %}
+{% block heading %}{{ page.t("profile") }}{% endblock %}
+{% block actions %}<a class="btn-secondary" href="/profile/security"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("shield") }}"></use></svg>{{ page.t("security") }}</a>{% endblock %}
+{% block content %}
+<div class="grid gap-6 lg:grid-cols-[minmax(0,40rem)_1fr] items-start">
+  <section class="card card-pad" aria-labelledby="me">
+    <h2 class="section-title" id="me">{{ page.t("profile") }}</h2>
+    <p class="hint mb-4">{{ page.t("profile_hint") }}</p>
+    {% call m::form_alert(error, "name,confirm") %}{% endcall %}
+    <form method="post" action="/profile" class="space-y-4">
+      <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+      <div class="field"><label class="label" for="name">{{ page.t("your_name") }}</label>
+        <input class="input" id="name" name="name" value="{{ name }}" required maxlength="100" autocomplete="name"{% call m::aria(error, "name") %}{% endcall %}>
+        {% call m::err(error, "name") %}{% endcall %}</div>
+      <div class="field"><span class="label">{{ page.t("email") }}</span><p class="text-muted">{{ email }}</p></div>
+      <fieldset class="field"><legend class="label">{{ page.t("interface_lang") }}</legend>
+        <div class="seg" role="radiogroup">
+          {% for l in page.langs() %}<label class="seg-item"><input type="radio" name="lang" value="{{ l.upper() }}"{% if user_lang == l.upper() %} checked{% endif %}><span lang="{{ l.code() }}">{{ page.t(l.upper()) }}</span></label>{% endfor %}
+        </div></fieldset>
+      <fieldset class="field"><legend class="label">{{ page.t("theme") }}</legend>
+        <div class="seg" role="radiogroup">
+          {% for (th, key) in [("SYSTEM", "theme.SYSTEM"), ("LIGHT", "theme.LIGHT"), ("DARK", "theme.DARK")] %}<label class="seg-item"><input type="radio" name="theme" value="{{ th }}"{% if theme == *th %} checked{% endif %}><span>{{ page.t(key) }}</span></label>{% endfor %}
+        </div></fieldset>
+      <button class="btn-primary">{{ page.t("save") }}</button>
+    </form>
+  </section>
+
+  <section class="card card-pad danger-zone" aria-labelledby="del">
+    <h2 class="section-title text-danger" id="del">{{ page.t("delete_account") }}</h2>
+    <p class="hint mb-4" id="del-hint">{{ page.t("delete_account_hint") }}</p>
+    <form method="post" action="/profile/delete" class="space-y-3">
+      <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+      <div class="field"><label class="label" for="confirm">{{ page.t("email") }}</label>
+        <input class="input" id="confirm" name="confirm" type="email" required autocomplete="off" placeholder="{{ email }}"{% call m::aria(error, "confirm") %}{% endcall %}>
+        {% call m::err(error, "confirm") %}{% endcall %}</div>
+      <button class="btn-danger">{{ page.t("delete_account_btn") }}</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

@@ -14,13 +14,16 @@ fn default_size() -> i64 {
     100
 }
 
+/// Предел страницы API (ТЗ, раздел 13): не больше 200 записей за запрос.
+pub const MAX_PAGE: i64 = 200;
+
 impl Pagination {
     pub fn offset(&self) -> i64 {
         self.page.max(0) * self.limit()
     }
 
     pub fn limit(&self) -> i64 {
-        self.size.clamp(1, 1000)
+        self.size.clamp(1, MAX_PAGE)
     }
 }
 

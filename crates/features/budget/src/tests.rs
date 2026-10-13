@@ -25,9 +25,15 @@ struct Fake {
     partner: Uuid,
 }
 
+/// Проект, в котором у фейковых источников есть данные (остальные проекты пусты).
+const P: Uuid = Uuid::nil();
+
 #[async_trait::async_trait]
 impl CategoriesSource for Fake {
-    async fn nodes(&self, _: Uuid, _: Lang) -> AppResult<Vec<Node>> {
+    async fn nodes(&self, p: Uuid, _: Lang) -> AppResult<Vec<Node>> {
+        if p != P {
+            return Ok(vec![]);
+        }
         let n = |c: &str, p: Option<&str>, k: &str, depth| Node { code: c.into(), parent_code: p.map(Into::into), kind: k.into(), title: c.into(), depth, archived: false };
         Ok(vec![n("FOOD", None, "EXPENSE", 0), n("CAFE", Some("FOOD"), "EXPENSE", 1), n("SALARY", None, "INCOME", 0)])
     }
@@ -35,32 +41,47 @@ impl CategoriesSource for Fake {
 
 #[async_trait::async_trait]
 impl FactsSource for Fake {
-    async fn lines(&self, _: Uuid, _: NaiveDate, _: NaiveDate) -> AppResult<Vec<FactRec>> {
+    async fn lines(&self, p: Uuid, _: NaiveDate, _: NaiveDate) -> AppResult<Vec<FactRec>> {
+        if p != P {
+            return Ok(vec![]);
+        }
         let f = |acc: &str, k: &str, c: &str, a: &str, who| FactRec { date: d(10, 3), account_code: acc.into(), kind: k.into(), category_code: c.into(), amount: dec(a), created_by: who };
         Ok(vec![f("CARD", "EXPENSE", "CAFE", "300", self.me), f("USD_CARD", "EXPENSE", "FOOD", "10", self.partner), f("CARD", "INCOME", "SALARY", "50000", self.me)])
     }
-    async fn turnover(&self, _: Uuid, _: NaiveDate) -> AppResult<Vec<(String, Decimal, Decimal)>> {
+    async fn turnover(&self, p: Uuid, _: NaiveDate) -> AppResult<Vec<(String, Decimal, Decimal)>> {
+        if p != P {
+            return Ok(vec![]);
+        }
         Ok(vec![("CARD".into(), dec("50000"), dec("300"))])
     }
 }
 
 #[async_trait::async_trait]
 impl PlansSource for Fake {
-    async fn open(&self, _: Uuid, _: NaiveDate, _: NaiveDate, _: NaiveDate, _: Lang) -> AppResult<Vec<PlannedRec>> {
+    async fn open(&self, p: Uuid, _: NaiveDate, _: NaiveDate, _: NaiveDate, _: Lang) -> AppResult<Vec<PlannedRec>> {
+        if p != P {
+            return Ok(vec![]);
+        }
         Ok(vec![PlannedRec { plan_id: Uuid::nil(), date: d(10, 20), kind: "EXPENSE".into(), account_code: "CARD".into(), category_code: "FOOD".into(), amount: dec("1000"), title: "x".into(), status: "EXPECTED".into() }])
     }
 }
 
 #[async_trait::async_trait]
 impl LimitsSource for Fake {
-    async fn rules(&self, _: Uuid) -> AppResult<Vec<LimitRule>> {
+    async fn rules(&self, p: Uuid) -> AppResult<Vec<LimitRule>> {
+        if p != P {
+            return Ok(vec![]);
+        }
         Ok(vec![LimitRule { category_code: "FOOD".into(), period: View::Month, amount: dec("2000"), valid_from: d(1, 1) }])
     }
 }
 
 #[async_trait::async_trait]
 impl AccountsSource for Fake {
-    async fn all(&self, _: Uuid, _: Lang) -> AppResult<Vec<AccountRec>> {
+    async fn all(&self, p: Uuid, _: Lang) -> AppResult<Vec<AccountRec>> {
+        if p != P {
+            return Ok(vec![]);
+        }
         Ok(vec![
             AccountRec { code: "CARD".into(), title: "Card".into(), currency: "THB".into(), opening: dec("1000"), archived: false },
             AccountRec { code: "USD_CARD".into(), title: "USD".into(), currency: "USD".into(), opening: dec("0"), archived: false },
@@ -70,7 +91,10 @@ impl AccountsSource for Fake {
 
 #[async_trait::async_trait]
 impl RatesSource for Fake {
-    async fn all(&self, _: Uuid) -> AppResult<Vec<(String, NaiveDate, Decimal)>> {
+    async fn all(&self, p: Uuid) -> AppResult<Vec<(String, NaiveDate, Decimal)>> {
+        if p != P {
+            return Ok(vec![]);
+        }
         Ok(vec![("USD".into(), d(10, 1), dec("33"))])
     }
 }
@@ -95,4 +119,33 @@ async fn report_converts_currency_and_rolls_up() {
     // фильтр по участнику: факт только мои 300
     let mine = svc.report(Uuid::nil(), "THB", period, Lang::Ru, Some(fake.me), d(10, 9)).await.unwrap();
     assert_eq!(mine.expense_fact, dec("300"));
+}
+
+#[test]
+fn templates_are_translated() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
+}
+
+/// ТЗ, раздел 13: отчёт строится только из данных своего проекта.
+#[tokio::test]
+async fn foreign_project_sees_empty_budget() {
+    let fake = Arc::new(Fake { me: Uuid::new_v4(), partner: Uuid::new_v4() });
+    let svc = service(fake);
+    let period = Period::containing(View::Month, d(10, 9));
+    let other = svc.report(Uuid::new_v4(), "THB", period, Lang::Ru, None, d(10, 9)).await.unwrap();
+    assert!(other.expenses.is_empty() && other.accounts.is_empty() && other.upcoming.is_empty());
+    assert_eq!(other.expense_fact, Decimal::ZERO);
+}
+
+/// Остатки лимитов за месяц и курсы — для предупреждения в форме быстрого расхода.
+#[tokio::test]
+async fn month_limits_and_rates_for_quick_expense() {
+    let fake = Arc::new(Fake { me: Uuid::new_v4(), partner: Uuid::new_v4() });
+    let svc = service(fake);
+    let limits = svc.month_limits(P, "THB", d(10, 9), Lang::Ru).await.unwrap();
+    let cafe = limits.iter().find(|l| l.code == "CAFE").unwrap();
+    assert_eq!(cafe.available, Some(dec("370")), "у «Кафе» своего лимита нет — доступно по «Еде»");
+    assert_eq!(svc.rates_on(P, "THB", d(10, 9)).await.unwrap(), vec![("USD".to_string(), dec("33"))]);
 }

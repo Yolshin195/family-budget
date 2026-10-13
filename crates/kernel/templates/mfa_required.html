@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ page.t("mfa.title") }}{% endblock %}
+{% block heading %}{{ page.t("mfa.title") }}{% endblock %}
+{% block content %}
+<section class="card empty max-w-2xl">
+  <span class="empty-icon"><svg class="icon icon-lg" aria-hidden="true"><use href="{{ page.icon("shield-alert") }}"></use></svg></span>
+  <p class="empty-text">{{ page.t("mfa.text") }}</p>
+  <div class="empty-actions">
+    {% if let Some(o) = page.config.oidc %}<a class="btn-primary" href="{{ o.account_url }}" rel="noopener">{{ page.t("mfa.enable") }}</a>{% endif %}
+    <form method="post" action="/auth/logout"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+      <button class="btn-secondary">{{ page.t("mfa.relogin") }}</button></form>
+  </div>
+  {% if !page.other_projects().is_empty() %}
+  <div class="mt-6 w-full">
+    <p class="text-sm text-muted mb-2">{{ page.t("mfa.other_project") }}</p>
+    <ul class="list-plain">
+      {% for p in page.other_projects() %}<li><a class="link" href="/projects/switch/{{ p.id }}">{{ p.name }}</a></li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

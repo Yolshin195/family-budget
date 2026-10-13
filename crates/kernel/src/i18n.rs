@@ -162,6 +162,88 @@ pub fn dict(key: &str) -> Option<Tr> {
         "YEAR" => ("Год", "Year", "ปี"),
         "yes" => ("да", "yes", "ใช่"),
         "no" => ("нет", "no", "ไม่"),
+        "close" => ("Закрыть", "Close", "ปิด"),
+        "undo" => ("Отменить", "Undo", "เลิกทำ"),
+        "loading" => ("Загрузка…", "Loading…", "กำลังโหลด…"),
+        "retry" => ("Повторить", "Retry", "ลองอีกครั้ง"),
+        "search" => ("Поиск", "Search", "ค้นหา"),
+        "optional" => ("необязательно", "optional", "ไม่บังคับ"),
+        "skip_to_content" => ("Перейти к содержимому", "Skip to content", "ข้ามไปยังเนื้อหา"),
+        // каркас: боковое меню и нижняя панель
+        "nav.main" => ("Основное меню", "Main menu", "เมนูหลัก"),
+        "nav.add_expense" => ("Расход", "Expense", "รายจ่าย"),
+        "nav.add_expense_hint" => ("Добавить расход (N)", "Add expense (N)", "เพิ่มรายจ่าย (N)"),
+        "nav.directories" => ("Справочники", "Directories", "ข้อมูลอ้างอิง"),
+        "nav.more" => ("Ещё", "More", "เพิ่มเติม"),
+        "nav.profile" => ("Профиль", "Profile", "โปรไฟล์"),
+        "nav.language" => ("Язык", "Language", "ภาษา"),
+        "nav.collapse" => ("Свернуть меню", "Collapse menu", "ย่อเมนู"),
+        "nav.expand" => ("Развернуть меню", "Expand menu", "ขยายเมนู"),
+        "nav.switch_project" => ("Сменить проект", "Switch project", "สลับโปรเจกต์"),
+        "nav.breadcrumbs" => ("Путь к странице", "Breadcrumbs", "เส้นทาง"),
+        "nav.keys" => ("Горячие клавиши", "Keyboard shortcuts", "แป้นพิมพ์ลัด"),
+        // быстрый расход (раздел 10)
+        "quick.expense" => ("Новый расход", "New expense", "รายจ่ายใหม่"),
+        "quick.income" => ("Новый доход", "New income", "รายรับใหม่"),
+        "quick.amount_hint" => ("Можно считать: 120+45", "You can add up: 120+45", "คำนวณได้: 120+45"),
+        "quick.frequent" => ("Частые", "Frequent", "ใช้บ่อย"),
+        "quick.search" => ("Найти категорию на любом языке", "Find a category in any language", "ค้นหาหมวดหมู่ได้ทุกภาษา"),
+        "quick.no_match" => ("Ничего не нашлось", "No matches", "ไม่พบ"),
+        "quick.yesterday" => ("Вчера", "Yesterday", "เมื่อวาน"),
+        "quick.other_date" => ("Другая…", "Other…", "วันอื่น…"),
+        "quick.split" => ("Разбить на позиции", "Split into items", "แยกเป็นรายการย่อย"),
+        "quick.save_more" => ("Сохранить и ещё", "Save & add another", "บันทึกและเพิ่มอีก"),
+        "quick.available" => ("Доступно", "Available", "ใช้ได้"),
+        "quick.left" => ("Останется доступно", "Will remain", "จะเหลือ"),
+        "quick.over" => ("Превышение лимита", "Over the limit by", "เกินวงเงิน"),
+        "quick.warn" => ("Больше 80 % лимита", "Over 80% of the limit", "เกิน 80% ของวงเงิน"),
+        "quick.saved_anyway" => ("Сохранить можно — это только предупреждение.", "You can still save — it's just a warning.", "บันทึกได้ — เป็นเพียงคำเตือน"),
+        "quick.choose_category" => ("Выберите категорию", "Choose a category", "เลือกหมวดหมู่"),
+        "quick.no_accounts" => ("Сначала добавьте счёт в «Справочники → Счета».", "Add an account first in Directories → Accounts.", "เพิ่มบัญชีก่อนใน ข้อมูลอ้างอิง → บัญชี"),
+        "quick.failed" => ("Не удалось сохранить. Проверьте поля и повторите.", "Couldn't save. Check the fields and try again.", "บันทึกไม่สำเร็จ ตรวจสอบแล้วลองอีกครั้ง"),
+        "quick.load_failed" => ("Не удалось загрузить форму. Проверьте соединение и повторите.", "Couldn't load the form. Check your connection and retry.", "โหลดฟอร์มไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่"),
+        "quick.undone" => ("Операция отменена", "Transaction undone", "ยกเลิกรายการแล้ว"),
+        // горячие клавиши
+        "keys.n" => ("Новый расход", "New expense", "รายจ่ายใหม่"),
+        "keys.i" => ("Новый доход", "New income", "รายรับใหม่"),
+        "keys.esc" => ("Закрыть окно", "Close dialog", "ปิดหน้าต่าง"),
+        "keys.help" => ("Список клавиш", "Shortcut list", "รายการแป้นลัด"),
+        "keys.enter" => ("Сохранить форму", "Save the form", "บันทึกฟอร์ม"),
+        "keys.ctrl_enter" => ("Сохранить и добавить ещё", "Save and add another", "บันทึกและเพิ่มอีก"),
+        // тосты
+        "toast.deleted" => ("Удалено", "Deleted", "ลบแล้ว"),
+        "toast.archived" => ("Перенесено в архив", "Archived", "เก็บถาวรแล้ว"),
+        "toast.restored" => ("Восстановлено", "Restored", "กู้คืนแล้ว"),
+        "toast.saved" => ("Сохранено", "Saved", "บันทึกแล้ว"),
+        "toast.undo_expired" => ("Отменить уже нельзя — прошло слишком много времени", "Too late to undo", "หมดเวลายกเลิกแล้ว"),
+        // состояния списков
+        "state.load_failed" => ("Не удалось загрузить данные", "Couldn't load data", "โหลดข้อมูลไม่สำเร็จ"),
+        "state.load_failed_hint" => ("Проверьте соединение и обновите страницу.", "Check your connection and reload the page.", "ตรวจสอบการเชื่อมต่อแล้วโหลดหน้าใหม่"),
+        // страницы ошибок
+        "error.404" => ("Страница не найдена", "Page not found", "ไม่พบหน้านี้"),
+        "error.404_hint" => ("Адрес устарел или в нём опечатка. Вернитесь на главную.", "The link is outdated or has a typo. Go back to the start page.", "ลิงก์อาจเก่าหรือพิมพ์ผิด กลับไปหน้าแรก"),
+        "error.403" => ("Нет доступа", "Access denied", "ไม่มีสิทธิ์เข้าถึง"),
+        "error.403_hint" => ("У вашей роли нет прав на это действие. Попросите владельца проекта.", "Your role can't do this. Ask the project owner.", "บทบาทของคุณทำสิ่งนี้ไม่ได้ ติดต่อเจ้าของโปรเจกต์"),
+        "error.429" => ("Слишком много запросов", "Too many requests", "คำขอมากเกินไป"),
+        "error.429_hint" => ("Подождите минуту и повторите.", "Wait a minute and try again.", "รอสักครู่แล้วลองอีกครั้ง"),
+        "error.500" => ("Что-то пошло не так", "Something went wrong", "เกิดข้อผิดพลาด"),
+        "error.500_hint" => ("Мы уже знаем об ошибке. Обновите страницу через минуту.", "We've logged the error. Reload the page in a minute.", "เราบันทึกข้อผิดพลาดแล้ว โหลดหน้าใหม่อีกครั้งในอีกสักครู่"),
+        "error.check_hint" => ("Проверьте введённые данные и повторите.", "Check what you entered and try again.", "ตรวจสอบข้อมูลแล้วลองอีกครั้ง"),
+        "error.home" => ("На главную", "Go to start page", "ไปหน้าแรก"),
+        // проект требует 2FA (раздел 13)
+        "mfa.title" => ("Проект требует второй фактор", "This project requires two-factor sign-in", "โปรเจกต์นี้ต้องยืนยันตัวตนสองขั้นตอน"),
+        "mfa.text" => ("Владелец проекта включил обязательную 2FA. Включите код по email или passkey в Rauthy и войдите заново — тогда данные проекта откроются.",
+                       "The owner requires 2FA. Turn on email codes or a passkey in Rauthy and sign in again to see the project.",
+                       "เจ้าของโปรเจกต์กำหนดให้ใช้ 2FA เปิดรหัสทางอีเมลหรือ passkey ใน Rauthy แล้วเข้าสู่ระบบอีกครั้ง"),
+        "mfa.enable" => ("Включить 2FA", "Turn on 2FA", "เปิด 2FA"),
+        "mfa.relogin" => ("Войти заново", "Sign in again", "เข้าสู่ระบบอีกครั้ง"),
+        "mfa.other_project" => ("Или перейдите в другой проект", "Or switch to another project", "หรือสลับไปโปรเจกต์อื่น"),
+        "OWNER" => ("Владелец", "Owner", "เจ้าของ"),
+        "EDITOR" => ("Редактор", "Editor", "ผู้แก้ไข"),
+        "VIEWER" => ("Наблюдатель", "Viewer", "ผู้ชม"),
+        "theme.SYSTEM" => ("Как в системе", "System", "ตามระบบ"),
+        "theme.LIGHT" => ("Светлая", "Light", "สว่าง"),
+        "theme.DARK" => ("Тёмная", "Dark", "มืด"),
         _ => return None,
     })
 }
@@ -218,5 +300,66 @@ pub fn clean(value: Option<String>) -> Option<String> {
 impl From<&Lang> for Lang {
     fn from(l: &Lang) -> Self {
         *l
+    }
+}
+
+/// Для тестов полноты переводов: ключи `t("…")` из шаблонов и кода в `dirs`, которых нет ни
+/// в словаре фичи, ни в словаре ядра (иначе пользователь увидел бы сам ключ).
+pub fn missing_keys(dirs: &[std::path::PathBuf], feature: Option<Dict>) -> Vec<String> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|x| x == "html" || x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    for d in dirs {
+        walk(d, &mut files);
+    }
+    let mut missing = Vec::new();
+    for f in files {
+        let text = std::fs::read_to_string(&f).unwrap_or_default();
+        for (i, _) in text.match_indices("t(\"") {
+            // `.t("…")` и `self.t("…")`, но не `format!("…")` и прочие вызовы, оканчивающиеся на t(.
+            let before = text[..i].chars().last();
+            if before != Some('.') {
+                continue;
+            }
+            let rest = &text[i + 3..];
+            let Some(end) = rest.find('"') else { continue };
+            let key = &rest[..end];
+            if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') {
+                continue;
+            }
+            if feature.and_then(|d| d(key)).or_else(|| dict(key)).is_none() && !missing.contains(&key.to_string()) {
+                missing.push(key.to_string());
+            }
+        }
+    }
+    missing
+}
+
+#[cfg(test)]
+mod completeness {
+    use super::*;
+
+    #[test]
+    fn kernel_templates_are_translated() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let missing = missing_keys(&[root.join("templates"), root.join("src")], None);
+        assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
+    }
+
+    #[test]
+    fn no_empty_translations() {
+        for key in ["app.title", "nav.add_expense", "quick.expense", "error.404", "mfa.title"] {
+            let (ru, en, th) = dict(key).unwrap();
+            assert!(!ru.is_empty() && !en.is_empty() && !th.is_empty(), "{key}");
+        }
     }
 }

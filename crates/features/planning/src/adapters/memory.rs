@@ -62,4 +62,12 @@ impl PlanRepository for InMemoryPlanRepository {
         self.skips.lock().unwrap().retain(|s| *s != (project_id, plan_id, date));
         Ok(())
     }
+
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
+        let mut plans = self.plans.lock().unwrap();
+        let n = plans.len();
+        plans.retain(|p| p.project_id != project_id);
+        self.skips.lock().unwrap().retain(|s| s.0 != project_id);
+        Ok((n - plans.len()) as u64)
+    }
 }

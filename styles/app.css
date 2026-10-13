@@ -1,20 +1,473 @@
+/* Дизайн-система «Семейного бюджета» (ТЗ, раздел 9).
+ * Спокойный и плотный интерфейс рабочего инструмента: нейтральная шкала, один акцент для главных
+ * действий, цвет — только смысл (доход — зелёный, просрочка и превышение — красный, ≥ 80 % — янтарный).
+ * Суммы расходов — обычным цветом текста. Светлая и тёмная тема — токенами ниже. */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Общие компоненты интерфейса: карточки, кнопки, поля, таблицы. */
-@layer components {
-  .card { @apply bg-white rounded-2xl border border-stone-200 shadow-sm; }
-  .btn { @apply inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition; }
-  .btn-primary { @apply btn bg-brand-600 text-white hover:bg-brand-700; }
-  .btn-ghost { @apply btn text-stone-700 hover:bg-stone-100; }
-  .btn-danger { @apply btn text-rose-700 hover:bg-rose-50; }
-  .input { @apply w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100; }
-  .label { @apply block text-xs font-medium uppercase tracking-wide text-stone-500 mb-1; }
-  .th { @apply px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wide text-stone-500; }
-  .td { @apply px-4 py-2.5 text-sm text-stone-800; }
-  .num { @apply text-right tabular-nums whitespace-nowrap; }
-  .chip { @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium; }
+/* ---------------------------------------------------------------- шрифты (свои, без CDN) */
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url('/static/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url('/static/inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'Inter'; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url('/static/inter-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: 'Noto Sans Thai'; font-style: normal; font-display: swap; font-weight: 100 900;
+  src: url('/static/noto-sans-thai.woff2') format('woff2');
+  unicode-range: U+02D7, U+0303, U+0331, U+0E01-0E5B, U+200C-200D, U+25CC; }
+
+/* ---------------------------------------------------------------- токены */
+@layer base {
+  :root {
+    color-scheme: light;
+    --canvas: 250 250 249;      /* фон страницы */
+    --surface: 255 255 255;     /* карточки, меню */
+    --sunken: 245 245 244;      /* полосы, заглушки */
+    --line: 231 229 228;        /* рамки 1 px */
+    --line-strong: 214 211 209;
+    --text: 28 25 23;           /* 16.8:1 на белом */
+    --text-muted: 87 83 78;     /* 7.0:1 */
+    --text-subtle: 112 107 102; /* 5.0:1 */
+    --accent: 67 56 202;        /* главные действия: 7.9:1 с белым */
+    --accent-hover: 55 48 163;
+    --accent-soft: 238 242 255;
+    --accent-text: 67 56 202;
+    --on-accent: 255 255 255;
+    --income: 4 120 87;         /* 5.5:1 */
+    --income-soft: 236 253 245;
+    --danger: 190 18 60;        /* 6.3:1 */
+    --danger-soft: 255 241 242;
+    --warn: 180 83 9;           /* 5.0:1 */
+    --warn-soft: 255 251 235;
+    --warn-bar: 245 158 11;
+    --info: 3 105 161;          /* 5.9:1 */
+    --info-soft: 240 249 255;
+    --focus: 79 70 229;
+    --shadow: 28 25 23;
+  }
+  /* Тёмная тема: по системной настройке, если в профиле не выбрана светлая; или явно. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      color-scheme: dark;
+      --canvas: 12 10 9; --surface: 28 25 23; --sunken: 41 37 36; --line: 50 46 44; --line-strong: 68 64 60;
+      --text: 245 245 244; --text-muted: 214 211 209; --text-subtle: 168 162 158;
+      --accent: 79 70 229; --accent-hover: 99 102 241; --accent-soft: 30 27 75; --accent-text: 165 180 252; --on-accent: 255 255 255;
+      --income: 52 211 153; --income-soft: 6 46 33; --danger: 251 113 133; --danger-soft: 69 10 25;
+      --warn: 251 191 36; --warn-soft: 59 37 6; --warn-bar: 245 158 11; --info: 56 189 248; --info-soft: 8 47 73;
+      --focus: 129 140 248; --shadow: 0 0 0;
+    }
+  }
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --canvas: 12 10 9; --surface: 28 25 23; --sunken: 41 37 36; --line: 50 46 44; --line-strong: 68 64 60;
+    --text: 245 245 244; --text-muted: 214 211 209; --text-subtle: 168 162 158;
+    --accent: 79 70 229; --accent-hover: 99 102 241; --accent-soft: 30 27 75; --accent-text: 165 180 252; --on-accent: 255 255 255;
+    --income: 52 211 153; --income-soft: 6 46 33; --danger: 251 113 133; --danger-soft: 69 10 25;
+    --warn: 251 191 36; --warn-soft: 59 37 6; --warn-bar: 245 158 11; --info: 56 189 248; --info-soft: 8 47 73;
+    --focus: 129 140 248; --shadow: 0 0 0;
+  }
+
+  html { -webkit-text-size-adjust: 100%; }
+  body { @apply bg-canvas text-default font-sans antialiased; font-feature-settings: 'cv11', 'ss01'; }
+  /* Видимый фокус для клавиатуры (WCAG 2.4.7). */
+  :focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; border-radius: 6px; }
+  ::selection { background: rgb(var(--accent) / 0.2); }
+  [hidden] { display: none !important; }
+  h1, h2, h3 { @apply font-semibold; }
+  details > summary { list-style: none; cursor: pointer; }
+  details > summary::-webkit-details-marker { display: none; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 }
 
-details > summary::-webkit-details-marker { display: none; }
+/* ---------------------------------------------------------------- компоненты */
+@layer components {
+  .icon { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .icon-sm { width: 16px; height: 16px; }
+  .icon-xs { width: 12px; height: 12px; }
+  .icon-lg { width: 28px; height: 28px; }
+  .skip-link { @apply sr-only; }
+  .skip-link:focus { @apply not-sr-only fixed left-4 top-4 z-50 rounded-lg bg-surface px-4 py-2 text-sm font-medium shadow-lg; }
+
+  /* кнопки: высота 40 (на телефоне цель ≥ 44 px) */
+  .btn { @apply inline-flex min-h-10 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-transparent px-4 text-sm font-medium transition-colors disabled:opacity-50; }
+  .btn-primary { @apply btn bg-accent text-white hover:bg-accent-hover; }
+  .btn-secondary { @apply btn border-line-strong bg-surface text-default hover:bg-sunken; }
+  .btn-ghost { @apply btn text-muted hover:bg-sunken hover:text-default; }
+  .btn-danger { @apply btn bg-danger text-white hover:opacity-90; }
+  .btn-sm { @apply min-h-8 px-2.5 text-sm; }
+  .btn-lg { @apply min-h-12 px-5 text-base; }
+  .btn-icon { @apply inline-grid h-10 w-10 place-items-center rounded-lg text-muted transition-colors hover:bg-sunken hover:text-default; }
+  .link { @apply text-accent-text underline underline-offset-2 hover:no-underline; }
+  .link-button { @apply inline-flex items-center gap-2 font-medium text-accent-text underline underline-offset-2 hover:no-underline; }
+  .btn-ghost.text-danger:hover { background: rgb(var(--danger-soft)); color: rgb(var(--danger)); }
+
+  /* поля: метка сверху, ошибка под полем */
+  .field { @apply mb-0 flex flex-col gap-1.5; }
+  .label { @apply block text-sm font-medium text-default; }
+  .label-note { @apply font-normal text-subtle; }
+  .hint { @apply text-xs text-subtle; }
+  .field-error { @apply flex items-center gap-1 text-sm font-medium text-danger; }
+  .input { @apply block min-h-10 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-base text-default placeholder:text-subtle sm:text-sm;
+    transition: border-color .15s, box-shadow .15s; }
+  .input:focus { @apply border-accent outline-none; box-shadow: 0 0 0 3px rgb(var(--accent) / 0.2); }
+  .input[aria-invalid='true'] { @apply border-danger; }
+  .input[readonly] { @apply bg-sunken text-muted; }
+  select.input { @apply appearance-none pr-9; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23786f66' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right .6rem center; background-size: 18px; }
+  .input-sm { @apply min-h-8 py-1 text-sm; }
+  .num { @apply text-right tabular-nums; }
+  .checkbox { @apply inline-flex min-h-10 cursor-pointer items-center gap-2 text-sm; }
+  .checkbox input { @apply h-4 w-4 rounded border-line-strong accent-[rgb(var(--accent))]; }
+  .checkbox-sm { @apply min-h-8 rounded-lg border border-line bg-surface px-3; }
+  .form { @apply space-y-5; }
+  .form-actions { @apply flex flex-wrap items-center gap-2 pt-1; }
+  .disclosure { @apply rounded-lg border border-dashed border-line-strong px-3 py-2; }
+  .disclosure > summary { @apply flex min-h-8 items-center gap-2 text-sm text-muted; }
+  .disclosure[open] > summary { @apply text-default; }
+
+  /* сегментированный переключатель (тип операции, период, язык) */
+  .seg { @apply inline-flex w-full rounded-lg border border-line-strong bg-sunken p-0.5 sm:w-auto; }
+  .seg-item, .seg-link { @apply relative flex flex-1 cursor-pointer; }
+  .seg-item input { @apply sr-only; }
+  .seg-item span, .seg-link { @apply flex min-h-9 flex-1 items-center justify-center whitespace-nowrap rounded-md px-3 text-sm text-muted; }
+  .seg-item input:checked + span, .seg-link[aria-current] { @apply bg-surface font-medium text-default shadow-sm; }
+  .seg-item input:focus-visible + span { outline: 2px solid rgb(var(--focus)); outline-offset: 1px; }
+  .seg-sm .seg-item span, .seg-sm.seg .seg-link { @apply min-h-8 px-2.5; }
+
+  /* карточки и таблицы */
+  .card { @apply rounded-xl border border-line bg-surface; }
+  .card-pad { @apply p-5; }
+  .card-head { @apply flex flex-wrap items-center justify-between gap-2 border-b border-line px-5 py-3; }
+  .card-current { box-shadow: 0 0 0 2px rgb(var(--accent)); @apply border-transparent; }
+  .card-dashed { @apply border-dashed border-line-strong; }
+  .card-link { @apply relative transition-colors hover:border-line-strong; }
+  .stretched::after { content: ''; @apply absolute inset-0 rounded-xl; }
+  .section-title { @apply text-base font-semibold; }
+  /* relative: скрытые подписи (sr-only, absolute) остаются внутри прокрутки и не растягивают страницу на телефоне */
+  .table-wrap { @apply relative overflow-x-auto; }
+  .table { @apply w-full border-collapse text-sm; }
+  .table thead th { @apply whitespace-nowrap border-b border-line px-4 py-2.5 text-left text-xs font-medium text-subtle; }
+  .table thead th.num { @apply text-right; }
+  .table tbody th, .table tbody td { @apply border-b border-line px-4 py-2.5 align-middle; }
+  .table tbody tr:last-child > * { @apply border-b-0; }
+  .table tbody th { @apply text-left; }
+  .row-muted { @apply text-subtle; }
+  .amount { @apply inline-flex items-baseline gap-1 whitespace-nowrap tabular-nums; }
+  .amount .cur, .cur { @apply text-xs font-normal text-subtle; }
+  .code { @apply rounded-md bg-sunken px-2 py-1 font-mono text-sm; }
+  .badge { @apply inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-line bg-sunken px-2 py-0.5 text-xs font-medium text-muted; }
+  .badge-accent { @apply border-transparent bg-accent-soft text-accent-text; }
+  .badge-income { @apply border-transparent bg-income-soft text-income; }
+  .badge-danger { @apply border-transparent bg-danger-soft text-danger; }
+  .badge-warn { @apply border-transparent bg-warn-soft text-warn; }
+  .badge-info { @apply border-transparent bg-info-soft text-info; }
+  .alert { @apply flex items-start gap-3 rounded-lg border px-4 py-3 text-sm; }
+  .alert-error { @apply border-danger/30 bg-danger-soft text-danger; }
+  .alert-warn { @apply border-warn/30 bg-warn-soft text-warn; }
+  .alert-ok { @apply border-income/30 bg-income-soft text-default; }
+  .alert-ok > .icon { @apply text-income; }
+  .list-plain { @apply space-y-1; }
+  .quote { @apply rounded-lg border border-line bg-sunken p-4; }
+
+  /* пустое состояние: объяснение + первое действие; скелетон загрузки */
+  .empty { @apply flex flex-col items-center gap-3 px-6 py-12 text-center; }
+  .empty-icon { @apply mb-1 grid h-12 w-12 place-items-center rounded-full bg-sunken text-muted; }
+  .empty-title { @apply text-base font-semibold; }
+  .empty-text { @apply max-w-md text-sm text-muted; }
+  .empty-actions { @apply mt-2 flex flex-wrap justify-center gap-2; }
+  .skeleton { @apply rounded-lg bg-sunken; animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .55; } }
+
+  /* ------------------------------------------------ каркас: меню слева 240 px ↔ 64 px, телефон — панель снизу */
+  .app { @apply min-h-screen md:flex; }
+  .sidebar { @apply sticky top-0 hidden h-screen w-60 flex-none flex-col gap-3 overflow-y-auto border-r border-line bg-surface px-3 py-3 md:flex;
+    transition: width .15s ease; }
+  .sidebar-top { @apply flex items-center justify-between gap-2 px-1; }
+  .logo { @apply flex min-w-0 items-center gap-2.5 rounded-lg font-semibold text-default; }
+  .logo-mark { @apply grid h-9 w-9 flex-none place-items-center rounded-lg bg-accent text-white; }
+  .logo-text { @apply truncate; }
+  .project-switch { @apply relative; }
+  .project-switch > summary { @apply flex min-h-10 items-center gap-2 rounded-lg border border-line px-2 py-1.5 text-sm hover:bg-sunken; }
+  .project-badge { @apply grid h-7 w-7 flex-none place-items-center rounded-md bg-sunken text-xs font-semibold; }
+  .project-name { @apply min-w-0 flex-1 truncate font-medium; }
+  .chevron { @apply text-subtle; }
+  .menu { @apply absolute left-0 right-0 z-30 mt-1 min-w-56 rounded-xl border border-line bg-surface p-1 shadow-lg; }
+  .menu-current { @apply px-3 py-2 text-xs text-subtle; }
+  .menu-item { @apply flex min-h-10 items-center gap-2 rounded-lg px-3 text-sm hover:bg-sunken; }
+  .menu-item-accent { @apply text-accent-text; }
+  .btn-add { @apply w-full justify-start; }
+  .btn-add .kbd-inline { @apply ml-auto rounded border border-white/40 px-1.5 text-xs font-normal text-white/80; }
+  .nav { @apply flex flex-1 flex-col gap-1; }
+  .nav-list { @apply flex flex-col gap-0.5; }
+  .nav-link { @apply relative flex min-h-10 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-muted transition-colors hover:bg-sunken hover:text-default; }
+  .nav-link[aria-current='page'] { @apply bg-accent-soft font-medium text-accent-text; }
+  .nav-group-title { @apply mt-3 px-2.5 pb-1 text-xs font-medium text-subtle; }
+  .sidebar-bottom { @apply flex flex-col gap-1 border-t border-line pt-3; }
+  .lang-switch { @apply inline-flex items-center gap-1 rounded-lg border border-line p-0.5; }
+  .sidebar .lang-switch { @apply mx-1 self-start; }
+  .lang-link { @apply grid min-h-8 min-w-9 place-items-center rounded-md px-2 text-xs font-medium text-muted hover:bg-sunken; }
+  .lang-link[aria-current] { @apply bg-default text-surface hover:bg-default; }
+  .collapsed-only { @apply hidden; }
+  .avatar { @apply grid h-7 w-7 flex-none place-items-center rounded-full bg-accent-soft text-xs font-semibold text-accent-text; }
+  .avatar-sm { @apply h-8 w-8; }
+  .main-col { @apply min-w-0 flex-1; }
+  .readonly-banner { @apply flex items-center justify-center gap-2 border-b border-warn/30 bg-warn-soft px-4 py-1.5 text-sm text-warn; }
+  .page { @apply mx-auto w-full max-w-content px-4 pb-28 pt-5 outline-none md:px-8 md:pb-10 md:pt-7; }
+  .page-head { @apply mb-5 flex flex-wrap items-end justify-between gap-3; }
+  .page-title { @apply text-2xl font-semibold; }
+  .page-actions { @apply flex flex-wrap items-center gap-2; }
+  .page-actions:empty { @apply hidden; }
+  .crumbs ol { @apply mb-1 flex flex-wrap items-center gap-1 text-sm text-subtle; }
+  .crumbs li + li::before { content: '/'; @apply mx-1 text-line-strong; }
+  .crumbs a { @apply hover:text-default hover:underline; }
+
+  /* свёрнутое меню: только иконки с подсказками; подписи остаются для скринридера */
+  [data-sidebar='collapsed'] .sidebar { @apply w-16 items-center px-2; }
+  [data-sidebar='collapsed'] .sidebar .nav-text { @apply sr-only; }
+  [data-sidebar='collapsed'] .sidebar-top { @apply flex-col; }
+  [data-sidebar='collapsed'] .nav-link, [data-sidebar='collapsed'] .btn-add { @apply w-11 justify-center px-0; }
+  [data-sidebar='collapsed'] .nav-group-title { @apply mx-auto h-px w-6 bg-line p-0; }
+  [data-sidebar='collapsed'] .project-switch > summary { @apply justify-center border-transparent px-0; }
+  [data-sidebar='collapsed'] .menu { @apply left-full right-auto top-0 ml-2 mt-0; }
+  [data-sidebar='collapsed'] .lang-switch { @apply mx-0 flex-col border-0; }
+  [data-sidebar='collapsed'] .lang-switch .collapsed-only { @apply hidden; }
+  [data-sidebar='collapsed'] .sidebar .nav-link:hover::after,
+  [data-sidebar='collapsed'] .sidebar .nav-link:focus-visible::after,
+  [data-sidebar='collapsed'] .sidebar .btn-add:hover::after {
+    content: attr(title); @apply pointer-events-none absolute left-full top-1/2 z-40 ml-3 -translate-y-1/2 whitespace-nowrap rounded-md bg-default px-2 py-1 text-xs font-medium text-surface shadow-lg; }
+  [data-sidebar='collapsed'] .btn-add { @apply relative; }
+  /* Без JS: на 768–1279 px меню свёрнуто по умолчанию (ТЗ). */
+  @media (min-width: 768px) and (max-width: 1279px) {
+    html:not([data-sidebar]) .sidebar { @apply w-16 items-center px-2; }
+    html:not([data-sidebar]) .sidebar .nav-text { @apply sr-only; }
+    html:not([data-sidebar]) .nav-link, html:not([data-sidebar]) .btn-add { @apply w-11 justify-center px-0; }
+  }
+
+  /* телефон: нижняя панель из 4 разделов и круглая «+» по центру */
+  .tabbar { @apply fixed inset-x-0 bottom-0 z-30 flex items-center justify-around border-t border-line bg-surface/95 px-1 backdrop-blur md:hidden;
+    padding-bottom: env(safe-area-inset-bottom); }
+  .tab { @apply flex min-h-14 min-w-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] text-muted; }
+  .tab[aria-current='page'] { @apply font-medium text-accent-text; }
+  .fab { @apply -mt-6 grid h-14 w-14 flex-none place-items-center rounded-full bg-accent text-white shadow-lg ring-4 ring-canvas; }
+  .fab .icon { @apply h-7 w-7; stroke-width: 2; }
+  .sheet-wrap { @apply pointer-events-none fixed inset-0 z-40 md:hidden; }
+  .sheet-wrap:target, .sheet-wrap.open { @apply pointer-events-auto; }
+  .sheet-backdrop { @apply absolute inset-0 bg-black/40 opacity-0 transition-opacity; }
+  .sheet-wrap:target .sheet-backdrop, .sheet-wrap.open .sheet-backdrop { @apply opacity-100; }
+  .sheet { @apply absolute inset-x-0 bottom-0 max-h-[85vh] translate-y-full overflow-y-auto rounded-t-xl bg-surface px-3 pb-6 pt-2 shadow-2xl transition-transform; }
+  .sheet-wrap:target .sheet, .sheet-wrap.open .sheet { @apply translate-y-0; }
+  .sheet-handle { @apply mx-auto mb-3 h-1 w-10 rounded-full bg-line-strong; }
+  .sheet-list { @apply flex flex-col gap-0.5; }
+  .sheet-list .nav-link { @apply min-h-12 text-base; }
+  .sheet-row { @apply mt-3 flex items-center justify-between gap-2 border-t border-line pt-3; }
+
+  /* диалоги (быстрый расход на компьютере, лист снизу на телефоне), тосты */
+  .dialog { @apply m-auto w-full max-w-lg rounded-xl border border-line bg-surface p-0 text-default shadow-2xl; }
+  .dialog::backdrop { background: rgb(0 0 0 / .45); }
+  .dialog-sm { @apply max-w-sm; }
+  .dialog-head { @apply flex items-center gap-3 border-b border-line px-5 py-3; }
+  .dialog-title { @apply flex-1 text-base font-semibold; }
+  .dialog-body { @apply space-y-4 px-5 py-4; }
+  .dialog-foot { @apply flex flex-wrap items-center gap-2 border-t border-line px-5 py-3; }
+  .dialog-loading { @apply space-y-3 px-5 py-4; }
+  .dialog-failed { @apply flex flex-col items-center gap-3 px-5 py-10 text-center text-sm text-muted; }
+  @media (max-width: 767px) {
+    .dialog.quick { @apply mb-0 max-h-[92vh] max-w-none rounded-b-none; }
+  }
+  .amount-field { @apply relative; }
+  .input-amount { @apply min-h-14 pr-14 text-3xl font-semibold tabular-nums; }
+  .amount-cur { @apply pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xl text-subtle; }
+  .chips { @apply flex flex-wrap gap-2; }
+  .chip { @apply inline-flex min-h-9 items-center gap-1 rounded-full border border-line-strong bg-surface px-3 text-sm hover:bg-sunken; }
+  .chip[aria-pressed='true'] { @apply border-accent bg-accent-soft font-medium text-accent-text; }
+  .combo { @apply relative; }
+  .combo-icon { @apply pointer-events-none absolute left-3 top-2.5 text-subtle; }
+  .input-search { @apply pl-10; }
+  .combo-list { @apply absolute inset-x-0 top-full z-20 mt-1 max-h-60 overflow-y-auto rounded-lg border border-line bg-surface p-1 shadow-lg; }
+  .combo-list [role='option'] { @apply flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-3 text-sm; }
+  .combo-list [role='option'][aria-selected='true'], .combo-list [role='option']:hover { @apply bg-sunken; }
+  .combo-list .opt-path { @apply truncate text-xs text-subtle; }
+  .limit-note { @apply text-sm text-muted; }
+  .limit-note:empty { @apply hidden; }
+  .limit-note.warn { @apply text-warn; }
+  .limit-note.over { @apply font-medium text-danger; }
+  .grow { flex-grow: 1; }
+  kbd, .kbd { @apply rounded border border-line-strong bg-sunken px-1.5 py-0.5 font-sans text-xs; }
+  .keys { @apply space-y-2 px-5 py-4 text-sm; }
+  .keys > div { @apply flex items-center justify-between gap-4; }
+  .toasts { @apply pointer-events-none fixed inset-x-0 bottom-20 z-50 flex flex-col items-center gap-2 px-4 md:bottom-6 md:left-auto md:right-6 md:items-end; }
+  .toast { @apply pointer-events-auto flex min-h-12 max-w-md items-center gap-3 rounded-xl bg-default py-2 pl-4 pr-2 text-sm text-surface shadow-xl; animation: toast-in .18s ease-out; }
+  .toast-error { @apply bg-danger text-white; }
+  .toast-text { @apply flex-1; }
+  .toast-action { @apply min-h-8 rounded-md px-3 font-semibold text-[rgb(var(--accent-soft))] underline-offset-2 hover:underline; }
+  [data-theme='dark'] .toast-action { @apply text-accent; }
+  .toast-close { @apply grid h-8 w-8 place-items-center rounded-md opacity-70 hover:opacity-100; }
+  @keyframes toast-in { from { transform: translateY(8px); opacity: 0; } }
+
+  /* панели инструментов, листание периодов, сводки */
+  .toolbar { @apply mb-4 flex flex-wrap items-center gap-2; }
+  .pager { @apply inline-flex items-center rounded-lg border border-line bg-surface; }
+  .pager-title { @apply min-w-36 px-2 text-center text-sm font-medium; }
+  .filters { @apply flex flex-wrap items-center gap-2 md:ml-auto; }
+  .filters .input { @apply w-auto; }
+  .stats { @apply mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4; }
+  .stats-3 { @apply grid-cols-1 sm:grid-cols-3 lg:grid-cols-3; }
+  .stat { @apply rounded-xl border border-line bg-surface p-4; }
+  .stat-label { @apply text-xs text-subtle; }
+  .stat-value { @apply mt-1 text-xl font-semibold tabular-nums; }
+  .stat-note { @apply mt-1 text-xs tabular-nums text-subtle; }
+  .stat-list { @apply mt-1 space-y-1 text-sm; }
+  .stat-list li { @apply flex justify-between gap-2; }
+  .legend { @apply mt-1 space-y-1 text-xs text-muted; }
+  .legend li { @apply flex items-center gap-2; }
+
+  /* дерево категорий, бюджет */
+  .tree-row { @apply flex min-h-11 flex-wrap items-center gap-2 border-b border-line px-4 py-2 last:border-b-0; }
+  .tree-branch { @apply h-3 w-3 border-b border-l border-line-strong; margin-top: -6px; border-bottom-left-radius: 3px; }
+  .indent-0 { padding-left: 1rem; } .indent-1 { padding-left: 2.25rem; } .indent-2 { padding-left: 3.5rem; }
+  .indent-3 { padding-left: 4.75rem; } .indent-4 { padding-left: 6rem; } .indent-5 { padding-left: 7.25rem; }
+  td.indent-0, th.indent-0 { padding-left: 1rem; }
+  span.indent-0 { padding-left: 0; } span.indent-1 { padding-left: 1.25rem; } span.indent-2 { padding-left: 2.5rem; }
+  span.indent-3 { padding-left: 3.75rem; } span.indent-4 { padding-left: 5rem; } span.indent-5 { padding-left: 6.25rem; }
+  .row-actions { @apply ml-auto flex items-center gap-1; }
+  @media (hover: hover) and (min-width: 768px) {
+    .tree-row .row-actions, .tx .row-actions { @apply opacity-0 transition-opacity; }
+    .tree-row:hover .row-actions, .tree-row:focus-within .row-actions, .tx:hover .row-actions, .tx:focus-within .row-actions { @apply opacity-100; }
+  }
+  .table-budget tbody th { @apply font-normal; }
+  .tree-cell { @apply flex min-h-7 items-center gap-1 whitespace-nowrap; }
+  .tree-toggle { @apply -ml-1 grid h-7 w-7 place-items-center rounded-md text-subtle hover:bg-sunken; }
+  .tree-toggle .icon { transition: transform .15s; }
+  .tree-toggle[aria-expanded='true'] .icon { transform: rotate(90deg); }
+  .tree-spacer { @apply inline-block w-6; }
+  .row-add { @apply ml-1 grid h-7 w-7 place-items-center rounded-md text-subtle opacity-0 hover:bg-accent-soft hover:text-accent-text focus:opacity-100; }
+  tr:hover .row-add, tr:focus-within .row-add { @apply opacity-100; }
+  @media (hover: none) { .row-add { @apply opacity-100; } }
+  .meter { @apply flex items-center gap-2; }
+  .meter-bar { @apply h-2 w-full min-w-16 flex-1; }
+  .meter-track { fill: rgb(var(--sunken)); }
+  .meter-fill { fill: rgb(var(--income)); }
+  .meter-warn .meter-fill { fill: rgb(var(--warn-bar)); }
+  .meter-over .meter-fill { fill: rgb(var(--danger)); }
+  .meter-text { @apply w-10 text-right text-xs tabular-nums text-subtle; }
+  .meter-warn .meter-text { @apply font-medium text-warn; }
+  .meter-over .meter-text { @apply font-medium text-danger; }
+  .upcoming { @apply -mx-2 space-y-0.5; }
+  .upcoming-item { @apply flex min-h-10 items-center gap-2 rounded-lg px-2 text-sm hover:bg-sunken; }
+
+  /* операции */
+  .day-title { @apply mb-2 mt-6 text-xs font-medium text-subtle first:mt-0; }
+  .tx { @apply flex gap-3 px-4 py-3; }
+  .tx-dot { @apply mt-1.5 h-2.5 w-2.5 flex-none rounded-full; }
+  .tx-expense { @apply bg-line-strong; }
+  .tx-income { @apply bg-income; }
+  .tx-lines { @apply mt-2 max-w-lg space-y-0.5 text-sm text-muted; }
+  .tx-lines li { @apply flex justify-between gap-3; }
+  .tx-side { @apply flex flex-none flex-col items-end gap-1 text-right; }
+  .lines { @apply space-y-2; }
+  .line { @apply grid items-start gap-2; grid-template-columns: minmax(0, 1fr) 8rem 2.5rem; }
+  @media (min-width: 640px) { .line { grid-template-columns: minmax(0, 1fr) 9rem minmax(0, 1fr) 2.5rem; } }
+  .line-note { @apply hidden sm:block; }
+
+  /* календарь: сетка на компьютере, список дней на телефоне */
+  .calendar { @apply hidden overflow-hidden md:block; }
+  .cal-head { @apply grid grid-cols-7 border-b border-line bg-sunken text-center text-xs font-medium text-subtle; }
+  .cal-head > div { @apply py-2; }
+  .cal-week { @apply grid grid-cols-7 border-b border-line last:border-b-0; }
+  .cal-day { @apply min-h-28 space-y-1 border-l border-line p-1.5 first:border-l-0; }
+  .cal-out { @apply bg-sunken/60; }
+  .cal-out .cal-num { @apply text-subtle; }
+  .cal-num { @apply mb-1 text-xs text-muted; }
+  .cal-today .cal-num { @apply inline-grid h-6 w-6 place-items-center rounded-full bg-accent font-semibold text-white; }
+  .occ { @apply block rounded-md border px-1.5 py-1 text-[11px] leading-tight transition hover:border-line-strong; }
+  .occ-title { @apply flex items-center gap-1 truncate; }
+  .occ-amount { @apply font-medium tabular-nums; }
+  .occ-expected { @apply border-line bg-surface text-default; }
+  .occ-overdue { @apply border-danger/40 bg-danger-soft text-danger; }
+  .occ-paid { @apply border-income/30 bg-income-soft text-default; }
+  .occ-skipped { @apply border-line bg-sunken text-subtle line-through; }
+  .occ-dot { @apply inline-block h-2.5 w-2.5 flex-none rounded-sm border; }
+  .occ-dot.occ-expected { @apply border-line-strong bg-sunken; }
+  .occ-dot.occ-overdue { @apply border-danger bg-danger; }
+  .occ-dot.occ-paid { @apply border-income bg-income; }
+  .occ-dot.occ-skipped { @apply border-line bg-surface; }
+  .agenda { @apply md:hidden; }
+  .agenda-day { @apply mb-2 mt-5 text-sm font-medium first:mt-0; }
+  .agenda-item { @apply flex min-h-12 items-center gap-3 px-4 py-2; }
+
+  /* настройки и опасные действия */
+  .toggle-row { @apply flex items-start justify-between gap-4; }
+  .switch { @apply relative h-6 w-11 flex-none rounded-full bg-line-strong transition-colors; }
+  .switch[aria-checked='true'] { @apply bg-accent; }
+  .switch-knob { @apply absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform; }
+  .switch[aria-checked='true'] .switch-knob { @apply translate-x-5; }
+  .danger-zone { @apply rounded-lg border border-danger/30 p-4; }
+  .card.danger-zone { @apply border-danger/30; }
+
+  /* вход, онбординг, ошибки */
+  .public-body { @apply min-h-screen; }
+  .auth-wrap { @apply grid min-h-screen place-items-center p-4; }
+  .auth-card { @apply w-full max-w-md rounded-xl border border-line bg-surface p-6 sm:p-8; }
+  .auth-top { @apply mb-8 flex items-center justify-between gap-3; }
+  .auth-title { @apply mb-2 text-2xl font-semibold; }
+  .error-wrap { @apply grid min-h-screen place-items-center p-4; }
+  .error-card { @apply w-full max-w-md text-center; }
+  .logo-center { @apply mb-10 inline-flex; }
+  .error-code { @apply text-sm font-semibold tabular-nums text-accent-text; }
+  .error-title { @apply mt-2 text-3xl font-semibold; }
+  .error-hint { @apply mt-3 text-muted; }
+  .error-actions { @apply mt-8 flex justify-center gap-2; }
+
+  /* лендинг и правовые страницы */
+  .site-wrap { @apply mx-auto w-full max-w-content px-4 md:px-8; }
+  .site-narrow { @apply max-w-3xl; }
+  .site-header { @apply sticky top-0 z-30 border-b border-line bg-canvas/90 backdrop-blur; }
+  .site-header-row { @apply flex min-h-16 items-center justify-between gap-3; }
+  .site-nav { @apply flex items-center gap-2; }
+  .hero { @apply py-10 md:py-16; }
+  .hero-grid { @apply grid items-center gap-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]; }
+  .hero-title { @apply text-3xl font-semibold leading-tight md:text-[2.75rem] md:leading-[1.15]; letter-spacing: -0.02em; }
+  .hero-subtitle { @apply mt-4 max-w-xl text-base text-muted md:text-xl; }
+  .hero-actions { @apply mt-8 flex flex-wrap gap-3; }
+  .hero-demo { @apply mt-5 flex flex-wrap items-center gap-2; }
+  .hero-shot { @apply overflow-hidden rounded-xl border border-line bg-surface shadow-2xl; }
+  .hero-shot img { @apply block h-auto w-full; }
+  .site-section { @apply py-14 md:py-20; }
+  .site-section-alt { @apply border-y border-line bg-surface; }
+  .site-h1 { @apply mb-4 text-3xl font-semibold; }
+  .site-h2 { @apply mb-8 text-2xl font-semibold md:text-3xl; }
+  .benefits { @apply grid gap-4 sm:grid-cols-2 lg:grid-cols-3; }
+  .benefit { @apply rounded-xl border border-line bg-surface p-5; }
+  .benefit-icon { @apply mb-4 grid h-10 w-10 place-items-center rounded-lg bg-accent-soft text-accent-text; }
+  .benefit-title { @apply text-base font-semibold; }
+  .benefit-text { @apply mt-1 text-sm text-muted; }
+  .steps { @apply grid gap-6 md:grid-cols-3; counter-reset: step; }
+  .step { counter-increment: step; }
+  .step::before { content: counter(step); @apply mb-3 grid h-9 w-9 place-items-center rounded-full bg-accent font-semibold text-white; }
+  .step-title { @apply mb-1 text-xl font-semibold; }
+  .demo-box { @apply flex flex-col items-start justify-between gap-6 rounded-xl border border-line bg-surface p-6 md:flex-row md:items-center md:p-8; }
+  .faq { @apply divide-y divide-line rounded-xl border border-line bg-surface; }
+  .faq-item > summary { @apply flex min-h-14 items-center justify-between gap-4 px-5 py-3 font-medium; }
+  .faq-item > p { @apply px-5 pb-5 text-muted; }
+  .faq-chevron { transition: transform .15s; }
+  .faq-item[open] .faq-chevron { transform: rotate(180deg); }
+  .final-cta { @apply border-t border-line; }
+  .site-footer { @apply border-t border-line py-8; }
+  .site-footer-row { @apply flex flex-col gap-4 md:flex-row md:items-center md:justify-between; }
+  .footer-links { @apply flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted; }
+  .footer-links a { @apply hover:text-default hover:underline; }
+  .legal { @apply py-10; }
+  .legal .lead { @apply mb-8 text-xl text-muted; }
+  .legal section { @apply mb-6; }
+  .legal h2 { @apply mb-2 text-xl font-semibold; }
+  .legal p { @apply text-muted; }
+
+  /* служебное */
+  /* Сетка по умолчанию — одна сжимаемая колонка: широкая таблица прокручивается внутри карточки, а не вся страница. */
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .hide-sm { @apply hidden sm:inline-flex; }
+  .js .js-hide { @apply hidden; }
+}

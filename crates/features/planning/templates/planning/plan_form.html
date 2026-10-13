@@ -1,43 +1,45 @@
 {% extends "base.html" %}
 {% import "macros.html" as m %}
-{% block title %}{% if id.is_some() %}{{ page.t("edit") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
+{% block title %}{% if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
+{% block heading %}{% if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
 {% block content %}
-<a href="/planning/plans" class="text-sm text-stone-500 hover:text-stone-900">← {{ page.t("plans") }}</a>
-<h1 class="text-2xl font-semibold mt-1 mb-4">{% if id.is_some() %}{{ page.t("edit") }}{% else %}{{ page.t("new") }}{% endif %}</h1>
-{% if let Some(err) = error %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ err }}</div>{% endif %}
-<form method="post" class="card p-5 space-y-4 max-w-2xl" id="plan">
-  {% call m::i18n_fields(page, "name", page.t("name"), f.name, f.name_lang, f.name_ru, f.name_en, f.name_th) %}{% endcall %}
-  <div class="grid gap-3 sm:grid-cols-3">
-    <div><label class="label">{{ page.t("kind") }}</label>
-      <select class="input" name="tx_kind" id="kind">
+{% call m::form_alert(error, "name,tx_kind,account_code,amount,category_code,recurrence,interval,start_on,end_on") %}{% endcall %}
+<form method="post" class="card card-pad form max-w-2xl" data-form>
+  <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+  {% call m::i18n_fields(page, "name", page.t("name"), f.name, f.name_lang, f.name_ru, f.name_en, f.name_th, error) %}{% endcall %}
+  <div class="grid gap-4 sm:grid-cols-3">
+    <div class="field"><label class="label" for="kind">{{ page.t("kind") }}</label>
+      <select class="input" name="tx_kind" id="kind" data-filter-target="#cat">
         <option value="EXPENSE" {% if f.tx_kind == "EXPENSE" %}selected{% endif %}>{{ page.t("expense") }}</option>
         <option value="INCOME" {% if f.tx_kind == "INCOME" %}selected{% endif %}>{{ page.t("income") }}</option>
       </select></div>
-    <div><label class="label">{{ page.t("account") }}</label>
-      <select class="input" name="account_code">{% for a in accounts %}<option value="{{ a.code }}" {% if f.account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}</select></div>
-    <div><label class="label">{{ page.t("expected_amount") }}</label><input class="input tabular-nums" name="amount" value="{{ f.amount }}" inputmode="decimal" required></div>
+    <div class="field"><label class="label" for="account_code">{{ page.t("account") }}</label>
+      <select class="input" id="account_code" name="account_code"{% call m::aria(error, "account_code") %}{% endcall %}>{% for a in accounts %}<option value="{{ a.code }}" {% if f.account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}</select>
+      {% call m::err(error, "account_code") %}{% endcall %}</div>
+    <div class="field"><label class="label" for="amount">{{ page.t("expected_amount") }}</label>
+      <input class="input num" id="amount" name="amount" value="{{ f.amount }}" inputmode="decimal" required{% call m::aria(error, "amount") %}{% endcall %}>{% call m::err(error, "amount") %}{% endcall %}</div>
   </div>
-  <div><label class="label">{{ page.t("category") }}</label>
-    <select class="input" name="category_code" id="cat" required><option value=""></option>
+  <div class="field"><label class="label" for="cat">{{ page.t("category") }}</label>
+    <select class="input" name="category_code" id="cat" required{% call m::aria(error, "category_code") %}{% endcall %}><option value=""></option>
       {% for c in categories %}<option value="{{ c.code }}" data-kind="{{ c.tag }}" {% if f.category_code == c.code %}selected{% endif %}>{{ c.indent() }}{{ c.label }}</option>{% endfor %}
-    </select></div>
-  <div class="grid gap-3 sm:grid-cols-4">
-    <div class="sm:col-span-2"><label class="label">{{ page.t("recurrence") }}</label>
-      <select class="input" name="recurrence">{% for r in recurrences %}<option value="{{ r }}" {% if f.recurrence == **r %}selected{% endif %}>{{ page.t(r) }}</option>{% endfor %}</select></div>
-    <div class="sm:col-span-2"><label class="label">{{ page.t("interval") }}</label><input class="input" type="number" min="1" max="366" name="interval" value="{{ f.interval }}"></div>
-    <div class="sm:col-span-2"><label class="label">{{ page.t("start_on") }}</label><input class="input" type="date" name="start_on" value="{{ f.start_on }}" required></div>
-    <div class="sm:col-span-2"><label class="label">{{ page.t("end_on") }}</label><input class="input" type="date" name="end_on" value="{{ f.end_on }}"></div>
+    </select>{% call m::err(error, "category_code") %}{% endcall %}</div>
+  <div class="grid gap-4 sm:grid-cols-2">
+    <div class="field"><label class="label" for="recurrence">{{ page.t("recurrence") }}</label>
+      <select class="input" id="recurrence" name="recurrence">{% for r in recurrences %}<option value="{{ r }}" {% if f.recurrence == **r %}selected{% endif %}>{{ page.t(r) }}</option>{% endfor %}</select></div>
+    <div class="field"><label class="label" for="interval">{{ page.t("interval") }}</label>
+      <input class="input" type="number" min="1" max="366" id="interval" name="interval" value="{{ f.interval }}" aria-describedby="interval-hint interval-err">
+      <p class="hint" id="interval-hint">{{ page.t("interval_hint") }}</p>{% call m::err(error, "interval") %}{% endcall %}</div>
+    <div class="field"><label class="label" for="start_on">{{ page.t("start_on") }}</label>
+      <input class="input" type="date" id="start_on" name="start_on" value="{{ f.start_on }}" required{% call m::aria(error, "start_on") %}{% endcall %}>{% call m::err(error, "start_on") %}{% endcall %}</div>
+    <div class="field"><label class="label" for="end_on">{{ page.t("end_on") }} <span class="label-note">· {{ page.t("optional") }}</span></label>
+      <input class="input" type="date" id="end_on" name="end_on" value="{{ f.end_on }}"{% call m::aria(error, "end_on") %}{% endcall %}>{% call m::err(error, "end_on") %}{% endcall %}</div>
   </div>
-  <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="active" {% if !f.active.is_empty() %}checked{% endif %}> {{ page.t("active") }}</label>
-  <div class="flex gap-2 pt-2">
+  <label class="checkbox"><input type="checkbox" name="active" {% if !f.active.is_empty() %}checked{% endif %}><span>{{ page.t("active") }}</span></label>
+  <div class="form-actions">
     <button class="btn-primary">{{ page.t("save") }}</button>
     <a href="/planning/plans" class="btn-ghost">{{ page.t("cancel") }}</a>
-    {% if let Some(pid) = id %}<button formaction="/planning/plans/{{ pid }}/delete" formnovalidate class="btn-danger ml-auto">{{ page.t("delete") }}</button>{% endif %}
+    {% if let Some(pid) = id %}<button formaction="/planning/plans/{{ pid }}/delete" formnovalidate class="btn-ghost text-danger ml-auto">
+      <svg class="icon" aria-hidden="true"><use href="{{ page.icon("trash-2") }}"></use></svg>{{ page.t("delete") }}</button>{% endif %}
   </div>
 </form>
-<script>
-  const kind = document.getElementById('kind'), cat = document.getElementById('cat');
-  function sync() { for (const o of cat.options) { const ok = !o.dataset.kind || o.dataset.kind === kind.value; o.hidden = !ok; if (!ok && o.selected) cat.value = ''; } }
-  kind.addEventListener('change', sync); sync();
-</script>
 {% endblock %}

@@ -1,100 +1,79 @@
 {% extends "base.html" %}
-{% block title %}{% if id.is_some() %}{{ page.t("edit") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
+{% import "macros.html" as m %}
+{% block title %}{% if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
+{% block heading %}{% if !f.plan_id.is_empty() %}{{ page.t("paid_plan") }}{% else if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
 {% block content %}
-<a href="/transactions" class="text-sm text-stone-500 hover:text-stone-900">← {{ page.t("title") }}</a>
-<h1 class="text-2xl font-semibold mt-1 mb-4">{% if !f.plan_id.is_empty() %}📅 {{ page.t("paid_plan") }}{% else if id.is_some() %}{{ page.t("edit") }}{% else %}{{ page.t("new") }}{% endif %}</h1>
-{% if let Some(err) = error %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ err }}</div>{% endif %}
-<form method="post" class="card p-5 space-y-5 max-w-3xl" id="tx">
+{% call m::form_alert(error, "occurred_on,account_code,tx_kind,line_category_code,line_amount,description") %}{% endcall %}
+<form method="post" class="card card-pad form max-w-3xl" id="tx" data-tx-form data-limit-warn>
+  <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
   <input type="hidden" name="plan_id" value="{{ f.plan_id }}">
   <input type="hidden" name="plan_date" value="{{ f.plan_date }}">
   <input type="hidden" name="back" value="{{ f.back }}">
-  <div class="grid gap-3 sm:grid-cols-3">
-    <div>
-      <label class="label">{{ page.t("kind") }}</label>
-      <div class="grid grid-cols-2 rounded-lg border border-stone-300 overflow-hidden text-sm">
-        <label class="cursor-pointer"><input type="radio" class="peer sr-only" name="tx_kind" value="EXPENSE" {% if f.tx_kind != "INCOME" %}checked{% endif %}>
-          <span class="block text-center py-2 peer-checked:bg-rose-600 peer-checked:text-white">{{ page.t("expense") }}</span></label>
-        <label class="cursor-pointer"><input type="radio" class="peer sr-only" name="tx_kind" value="INCOME" {% if f.tx_kind == "INCOME" %}checked{% endif %}>
-          <span class="block text-center py-2 peer-checked:bg-brand-600 peer-checked:text-white">{{ page.t("income") }}</span></label>
+  <div class="grid gap-4 sm:grid-cols-3">
+    <fieldset class="field">
+      <legend class="label">{{ page.t("kind") }}</legend>
+      <div class="seg" role="radiogroup">
+        <label class="seg-item"><input type="radio" name="tx_kind" value="EXPENSE" {% if f.tx_kind != "INCOME" %}checked{% endif %}><span>{{ page.t("expense") }}</span></label>
+        <label class="seg-item"><input type="radio" name="tx_kind" value="INCOME" {% if f.tx_kind == "INCOME" %}checked{% endif %}><span>{{ page.t("income") }}</span></label>
       </div>
-    </div>
-    <div><label class="label">{{ page.t("date") }}</label><input class="input" type="date" name="occurred_on" value="{{ f.occurred_on }}" required></div>
-    <div><label class="label">{{ page.t("account") }}</label>
-      <select class="input" name="account_code" required>
+    </fieldset>
+    <div class="field"><label class="label" for="occurred_on">{{ page.t("date") }}</label>
+      <input class="input" type="date" id="occurred_on" name="occurred_on" value="{{ f.occurred_on }}" required{% call m::aria(error, "occurred_on") %}{% endcall %}>{% call m::err(error, "occurred_on") %}{% endcall %}</div>
+    <div class="field"><label class="label" for="account_code">{{ page.t("account") }}</label>
+      <select class="input" id="account_code" name="account_code" required{% call m::aria(error, "account_code") %}{% endcall %}>
         {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" {% if f.account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
-      </select></div>
+      </select>{% call m::err(error, "account_code") %}{% endcall %}</div>
   </div>
 
-  <div>
-    <div class="flex items-center justify-between mb-1">
-      <span class="label !mb-0">{{ page.t("lines") }}</span>
-      <span class="text-sm text-stone-500">{{ page.t("total") }}: <b class="tabular-nums text-stone-900" id="total">0.00</b> <span id="cur"></span></span>
+  <fieldset class="field">
+    <div class="flex items-center justify-between mb-2">
+      <legend class="label !mb-0">{{ page.t("lines") }}</legend>
+      <p class="text-sm text-muted" aria-live="polite">{{ page.t("total") }}: <b class="amount text-default" data-total>0.00</b> <span data-cur></span></p>
     </div>
-    <div id="lines" class="space-y-2">
+    <div class="lines" data-lines>
       {% for l in lines %}
-      <div class="line grid gap-2 grid-cols-[1fr_8rem_2.5rem] sm:grid-cols-[1fr_9rem_1fr_2.5rem] items-start">
-        <select class="input cat" name="line_category" required>
+      <div class="line" data-line>
+        <label class="sr-only" for="lc-{{ loop.index }}">{{ page.t("category") }} {{ loop.index }}</label>
+        <select class="input" id="lc-{{ loop.index }}" name="line_category" required data-kind-filtered{% if loop.first %}{% call m::aria(error, "line_category_code") %}{% endcall %}{% endif %}>
           <option value=""></option>
           {% for c in categories %}<option value="{{ c.code }}" data-kind="{{ c.tag }}" {% if l.category == c.code %}selected{% endif %}>{{ c.indent() }}{{ c.label }}</option>{% endfor %}
         </select>
-        <input class="input amount tabular-nums text-right" name="line_amount" value="{{ l.amount }}" inputmode="decimal" placeholder="0.00" required>
-        <input class="input hidden sm:block" name="line_note" value="{{ l.note }}" placeholder="{{ page.t("note") }}">
-        <button type="button" class="btn-ghost remove !px-2" title="{{ page.t("remove") }}">✕</button>
+        <label class="sr-only" for="la-{{ loop.index }}">{{ page.t("amount") }} {{ loop.index }}</label>
+        <input class="input num" id="la-{{ loop.index }}" name="line_amount" value="{{ l.amount }}" inputmode="decimal" placeholder="0.00" required data-amount{% if loop.first && f.plan_id.is_empty() && id.is_none() %} autofocus{% endif %}>
+        <label class="sr-only" for="ln-{{ loop.index }}">{{ page.t("note") }} {{ loop.index }}</label>
+        <input class="input line-note" id="ln-{{ loop.index }}" name="line_note" value="{{ l.note }}" placeholder="{{ page.t("note") }}" maxlength="200">
+        <button type="button" class="btn-icon" data-remove-line aria-label="{{ page.t("remove") }}" title="{{ page.t("remove") }}"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("x") }}"></use></svg></button>
       </div>
       {% endfor %}
     </div>
-    <button type="button" id="add" class="btn-ghost mt-2 text-brand-700">{{ page.t("add_line") }}</button>
-  </div>
+    {% call m::err(error, "line_category_code") %}{% endcall %}{% call m::err(error, "line_amount") %}{% endcall %}
+    <p class="limit-note" data-limit-note aria-live="polite"></p>
+    <button type="button" class="btn-ghost btn-sm mt-2" data-add-line><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("add_line") }}</button>
+  </fieldset>
 
   <div>
-    <div class="grid gap-3 sm:grid-cols-[1fr_10rem]">
-      <div><label class="label">{{ page.t("description") }}</label><input class="input" name="description" value="{{ f.description }}"></div>
-      <div><label class="label">{{ page.t("lang.original") }}</label>
-        <select class="input" name="description_lang">
+    <div class="grid gap-4 sm:grid-cols-[1fr_11rem]">
+      <div class="field"><label class="label" for="description">{{ page.t("description") }} <span class="label-note">· {{ page.t("optional") }}</span></label>
+        <input class="input" id="description" name="description" value="{{ f.description }}" maxlength="300" aria-describedby="desc-hint"></div>
+      <div class="field"><label class="label" for="description_lang">{{ page.t("lang.original") }}</label>
+        <select class="input" id="description_lang" name="description_lang">
           {% for l in page.langs() %}<option value="{{ l.upper() }}" {% if f.description_lang == l.upper() %}selected{% endif %}>{{ l.upper() }} · {{ page.t(l.upper()) }}</option>{% endfor %}
         </select></div>
     </div>
-    <p class="text-xs text-stone-400 mt-1">{{ page.t("desc_hint") }}</p>
-    <details class="mt-2 rounded-lg border border-dashed border-stone-300 px-3 py-2" {% if !f.description_ru.is_empty() || !f.description_en.is_empty() || !f.description_th.is_empty() %}open{% endif %}>
-      <summary class="cursor-pointer text-sm text-stone-600">🌐 {{ page.t("lang.translations") }}</summary>
-      <div class="grid gap-3 sm:grid-cols-3 mt-2">
-        <div><label class="label">RU</label><input class="input" name="description_ru" value="{{ f.description_ru }}"></div>
-        <div><label class="label">EN</label><input class="input" name="description_en" value="{{ f.description_en }}"></div>
-        <div><label class="label">TH</label><input class="input" name="description_th" value="{{ f.description_th }}"></div>
+    <p class="hint" id="desc-hint">{{ page.t("desc_hint") }}</p>
+    <details class="disclosure mt-2"{% if !f.description_ru.is_empty() || !f.description_en.is_empty() || !f.description_th.is_empty() %} open{% endif %}>
+      <summary><svg class="icon" aria-hidden="true"><use href="{{ page.icon("languages") }}"></use></svg>{{ page.t("lang.translations") }}</summary>
+      <div class="grid gap-4 sm:grid-cols-3 mt-3">
+        <div class="field"><label class="label" for="d-ru">RU</label><input class="input" id="d-ru" name="description_ru" value="{{ f.description_ru }}" lang="ru" maxlength="300"></div>
+        <div class="field"><label class="label" for="d-en">EN</label><input class="input" id="d-en" name="description_en" value="{{ f.description_en }}" lang="en" maxlength="300"></div>
+        <div class="field"><label class="label" for="d-th">TH</label><input class="input" id="d-th" name="description_th" value="{{ f.description_th }}" lang="th" maxlength="300"></div>
       </div>
     </details>
   </div>
 
-  <div class="flex gap-2 pt-1">
+  <div class="form-actions">
     <button class="btn-primary">{{ page.t("save") }}</button>
     <a href="{% if f.back.is_empty() %}/transactions{% else %}{{ f.back }}{% endif %}" class="btn-ghost">{{ page.t("cancel") }}</a>
   </div>
 </form>
-<script>
-(() => {
-  const form = document.getElementById('tx'), lines = document.getElementById('lines');
-  const kind = () => form.querySelector('[name=tx_kind]:checked').value;
-  // Категории только того же типа, что и операция.
-  function filterCats() {
-    for (const sel of lines.querySelectorAll('select.cat'))
-      for (const o of sel.options) { const ok = !o.dataset.kind || o.dataset.kind === kind(); o.hidden = !ok; if (!ok && o.selected) sel.value = ''; }
-  }
-  function total() {
-    let s = 0;
-    for (const i of lines.querySelectorAll('.amount')) { const v = parseFloat(i.value.replace(/\s/g, '').replace(',', '.')); if (!isNaN(v)) s += v; }
-    document.getElementById('total').textContent = s.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const acc = form.querySelector('[name=account_code]'); document.getElementById('cur').textContent = acc.selectedOptions[0]?.dataset.cur || '';
-  }
-  document.getElementById('add').onclick = () => {
-    const row = lines.querySelector('.line').cloneNode(true);
-    row.querySelectorAll('input').forEach(i => i.value = ''); row.querySelector('select').value = '';
-    lines.appendChild(row); filterCats(); row.querySelector('select').focus();
-  };
-  lines.addEventListener('click', e => {
-    if (e.target.closest('.remove') && lines.querySelectorAll('.line').length > 1) { e.target.closest('.line').remove(); total(); }
-  });
-  form.addEventListener('input', total); form.addEventListener('change', () => { filterCats(); total(); });
-  filterCats(); total();
-})();
-</script>
 {% endblock %}

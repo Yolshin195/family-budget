@@ -131,3 +131,35 @@ async fn inactive_plan_hides_open_occurrences() {
     svc.create(p, u, input).await.unwrap();
     assert!(svc.occurrences(p, d(1, 1), d(12, 31), d(10, 9)).await.unwrap().is_empty());
 }
+
+#[test]
+fn templates_are_translated() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
+}
+
+/// ТЗ, раздел 13: чужой проект → 404; удаление плана и пропуск отменяются; проект очищается.
+#[tokio::test]
+async fn foreign_project_undo_and_purge() {
+    let (svc, _) = setup();
+    let (mine, other, user) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let plan = svc.create(mine, user, rent()).await.unwrap();
+    assert!(matches!(svc.get(other, plan.id).await.unwrap_err(), AppError::NotFound(_)));
+    assert!(matches!(svc.update(other, plan.id, rent()).await.unwrap_err(), AppError::NotFound(_)));
+    assert!(matches!(svc.delete_with_undo(other, plan.id).await.unwrap_err(), AppError::NotFound(_)));
+    assert!(matches!(svc.skip(other, user, plan.id, d(1, 5)).await.unwrap_err(), AppError::NotFound(_)));
+    assert!(svc.occurrences(other, d(1, 1), d(12, 31), d(1, 1)).await.unwrap().is_empty());
+
+    svc.skip(mine, user, plan.id, d(2, 5)).await.unwrap();
+    let token = svc.delete_with_undo(mine, plan.id).await.unwrap();
+    assert!(svc.get(mine, plan.id).await.is_err());
+    svc.undo_delete(mine, user, token).await.unwrap();
+    let feb = svc.occurrences(mine, d(2, 1), d(2, 28), d(1, 1)).await.unwrap();
+    assert_eq!(feb[0].status, "SKIPPED", "пропуски вернулись вместе с планом");
+
+    svc.set_active(mine, plan.id, false).await.unwrap();
+    assert!(!svc.get(mine, plan.id).await.unwrap().active);
+    assert_eq!(svc.purge_project(mine).await.unwrap(), 1);
+    assert!(svc.list(mine).await.unwrap().is_empty());
+}

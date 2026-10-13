@@ -9,7 +9,7 @@ use sqlx::{PgPool, Postgres, Transaction as SqlTx};
 use uuid::Uuid;
 
 use crate::domain::{Description, Line, Transaction, TxKind};
-use crate::ports::{FactLine, Filter, Payment, TransactionRepository};
+use crate::ports::{FactLine, Filter, Payment, QuickStats, TransactionRepository};
 
 const COLUMNS: &str = "id, project_id, occurred_on, account_code, tx_kind, description, description_lang, \
                        description_ru, description_en, description_th, created_by, plan_id, plan_date";
@@ -273,5 +273,45 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(to)
         .fetch_all(&self.pool)
         .await?)
+    }
+
+    async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate) -> AppResult<QuickStats> {
+        let last: Option<(String,)> = sqlx::query_as(
+            "SELECT account_code FROM fb_transactions WHERE project_id = $1 AND created_by = $2 ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(project_id)
+        .bind(user_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let frequent: Vec<(String,)> = sqlx::query_as(
+            "SELECT l.category_code FROM fb_transaction_lines l JOIN fb_transactions t ON t.id = l.transaction_id \
+             WHERE t.project_id = $1 AND t.created_by = $2 AND t.tx_kind = $3 AND t.occurred_on >= $4 \
+             GROUP BY l.category_code ORDER BY count(*) DESC, max(t.occurred_on) DESC LIMIT 12",
+        )
+        .bind(project_id)
+        .bind(user_id)
+        .bind(kind)
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(QuickStats { last_account: last.map(|r| r.0), frequent: frequent.into_iter().map(|r| r.0).collect() })
+    }
+
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
+        // Позиции удаляются каскадом (FK внутри фичи).
+        let r = sqlx::query("DELETE FROM fb_transactions WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        Ok(r.rows_affected())
+    }
+
+    async fn count_first(&self, from: chrono::DateTime<chrono::Utc>, to: chrono::DateTime<chrono::Utc>) -> AppResult<i64> {
+        let (n,): (i64,) = sqlx::query_as(
+            "SELECT count(*) FROM (SELECT created_by, min(created_at) AS first FROM fb_transactions GROUP BY created_by) x \
+             WHERE x.first >= $1 AND x.first < $2",
+        )
+        .bind(from)
+        .bind(to)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(n)
     }
 }

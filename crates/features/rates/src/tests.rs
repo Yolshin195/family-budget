@@ -94,3 +94,33 @@ async fn update_then_delete() {
     svc.delete(user, created.id).await.unwrap();
     assert!(matches!(svc.delete(user, created.id).await.unwrap_err(), AppError::NotFound(_)));
 }
+
+#[test]
+fn templates_are_translated() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
+}
+
+/// ТЗ, раздел 13: чужой проект → 404; удаление отменяется из тоста; проект очищается целиком.
+#[tokio::test]
+async fn foreign_project_undo_and_purge() {
+    let svc = service();
+    let (mine, other) = (Uuid::new_v4(), Uuid::new_v4());
+    let created = svc.create(mine, input(1)).await.unwrap();
+    assert!(matches!(svc.get(other, created.id).await.unwrap_err(), AppError::NotFound(_)));
+    assert!(matches!(svc.update(other, created.id, input(2)).await.unwrap_err(), AppError::NotFound(_)));
+    assert!(matches!(svc.delete(other, created.id).await.unwrap_err(), AppError::NotFound(_)));
+    assert!(matches!(svc.delete_with_undo(other, created.id).await.unwrap_err(), AppError::NotFound(_)));
+
+    let token = svc.delete_with_undo(mine, created.id).await.unwrap();
+    assert!(svc.get(mine, created.id).await.is_err());
+    assert!(matches!(svc.undo_delete(other, token).await.unwrap_err(), AppError::NotFound(_)), "чужой проект не может отменить");
+    svc.undo_delete(mine, token).await.unwrap();
+    assert_eq!(svc.get(mine, created.id).await.unwrap().id, created.id, "тот же id");
+    assert!(svc.undo_delete(mine, token).await.is_err(), "второй раз не отменить");
+
+    svc.create(other, input(3)).await.unwrap();
+    assert_eq!(svc.purge_project(mine).await.unwrap(), 1);
+    assert_eq!(svc.all(other).await.unwrap().len(), 1);
+}

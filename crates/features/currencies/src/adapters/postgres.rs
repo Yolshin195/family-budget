@@ -137,4 +137,9 @@ impl CurrencyRepository for PostgresCurrencyRepository {
             .await?;
         Ok(n)
     }
+
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
+        let r = sqlx::query("DELETE FROM fb_currencies WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        Ok(r.rows_affected())
+    }
 }

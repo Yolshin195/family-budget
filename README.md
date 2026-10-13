@@ -1,80 +1,118 @@
-# Семейная бухгалтерия — демо
+# Семейная бухгалтерия
 
 Общий и раздельный бюджет нескольких людей: проекты с участниками, справочники (валюты, счета, дерево категорий)
-на трёх языках, транзакции с позициями, лимиты по дереву, календарь плановых платежей и бюджет за неделю / месяц / год.
+на трёх языках, транзакции с позициями, лимиты по дереву, календарь плановых платежей, бюджет за неделю / месяц / год,
+быстрый расход за 5 секунд с любой страницы, лендинг, вход через Rauthy (email, GitHub, Facebook, код 2FA по email).
 
-Стек: Rust 2024, Axum 0.8, Askama 0.16, sqlx 0.8 (PostgreSQL), Tailwind CSS 3, utoipa (Swagger).
-Архитектура — эталон `rust-hex-api` v1: Cargo workspace, одна фича = один крейт, порты и адаптеры, связки в `crates/app/src/wiring`.
+Стек: Rust 2024, Axum 0.8, Askama 0.16, sqlx 0.8 (PostgreSQL), Tailwind CSS 3, htmx 2, utoipa (Swagger),
+`openidconnect` (вход через Rauthy 0.37). Архитектура — эталон `rust-hex-api` v1: Cargo workspace, одна фича = один
+крейт, порты и адаптеры, связки в `crates/app/src/wiring`.
+
+Что сделано по ТЗ v3 (разделы 9–13) и что осталось — [docs/tz-v3.md](docs/tz-v3.md).
 
 ## Запуск
 
-Одной командой в Podman (приложение + PostgreSQL 16):
+Одной командой в Podman (приложение + PostgreSQL 16 + Rauthy):
 
 ```bash
-make            # = make up: собрать образ и запустить в фоне
-make logs       # логи приложения
-make down       # остановить; make clean — ещё и удалить данные БД
-make help       # все команды
+cp .env.example .env    # секреты и адреса; для локального запуска значения по умолчанию рабочие
+make                    # собрать образ и запустить всё в фоне
+make rauthy-secrets     # секрет клиента family-budget и пароли демо-пользователей Rauthy
+                        # → OIDC_CLIENT_SECRET в .env, затем:
+make restart
 ```
 
-Нужен `podman compose` (Podman 4+ с установленным `podman-compose` или `docker-compose`). С Docker: `make ENGINE=docker`.
-Параметры в `.env` рядом с `compose.yaml`: `APP_PORT`, `DB_PASSWORD`, `JWT_SECRET`, `SEED_DEMO`.
+Откройте http://localhost:8080 — лендинг. «Посмотреть демо» — вход гостем в демо-семью (только просмотр).
+«Войти» ведёт в Rauthy (http://localhost:8443): демо-пользователи `aleksey@demo.local` (OWNER) и `anna@demo.local`
+(EDITOR, тайский) с паролями из `make rauthy-secrets`. Админка Rauthy: http://localhost:8443/auth/v1/admin
+(`admin@localhost`, пароль — в логах Rauthy при первом старте).
 
-Без контейнера для приложения:
+| Команда | Что делает |
+| --- | --- |
+| `make logs` / `make ps` | логи приложения / состояние контейнеров |
+| `make down` / `make clean` | остановить / остановить и удалить данные |
+| `make dev` | PostgreSQL и Rauthy в контейнерах + `cargo run` локально (Swagger: http://localhost:8080/docs) |
+| `make db-roles` | пользователи БД без суперправ для базы, созданной до обновления (см. ниже) |
+| `make assets` | пересобрать CSS, htmx, шрифты, иконки Lucide, favicon (Node — в контейнере) |
+| `make test` | тесты, БД не нужна |
+| `make audit` | `cargo audit` + `cargo deny` |
+| `make backup` / `make restore-check` | зашифрованные копии баз `family_budget` и `rauthy` / проверка восстановления |
 
-```bash
-make dev        # PostgreSQL в контейнере + cargo run локально
-```
+С Docker: `make ENGINE=docker`.
 
-Откройте http://localhost:8080 — при пустой БД создаются демо-данные (отключить: `SEED_DEMO=0`):
+### Без Rauthy (только разработка)
 
-| Пользователь | Пароль | Язык | Роль в проекте «Семья» |
-| --- | --- | --- | --- |
-| aleksey@demo.local | demo123 | ru | OWNER |
-| anna@demo.local | demo123 | th | EDITOR |
+При `APP_ENV=dev` и пустом `OIDC_ISSUER` страница `/auth/login` предлагает «Вход для разработки» под демо-пользователями.
+В продакшене (`APP_ENV=prod`) этот вход выключен, а приложение не стартует без `SESSION_SECRET`, OIDC-клиента и HTTPS.
 
-Swagger: http://localhost:8080/docs. Токен для API: `POST /api/auth/login`, затем `Authorization: Bearer …`
-и `X-Project-Id: <id проекта>` (без заголовка — личный проект).
+### Обновление существующей установки (до ТЗ v3)
 
-## Стили
+1. `make down && git pull && make` — миграция `projects` добавит `rauthy_sub`, сессии, токены, журнал и удалит пароли.
+   Пользователи, созданные до Rauthy, получают `rauthy_sub = legacy:<id>`; демо-пользователи переносятся автоматически.
+   Реальному пользователю нужно проставить `sub` из Rauthy вручную (Rauthy → Users → id):
+   `UPDATE fb_users SET rauthy_sub = '<id>' WHERE email = '<email>';`
+2. `make db-roles` — пользователи PostgreSQL `fb_app` и `rauthy` без прав суперпользователя, база `rauthy`,
+   передача таблиц приложения пользователю `fb_app`.
 
-Скомпилированный `crates/app/static/app.css` лежит в репозитории и вшит в бинарник — Node для запуска не нужен.
-После правки шаблонов или классов:
+## Продакшен
 
-```bash
-npm install
-npm run css        # или npm run css:watch
-```
+- Секреты — только из окружения или файлов секретов (`NAME_FILE=/run/secrets/...`): `SESSION_SECRET`,
+  `OIDC_CLIENT_SECRET`, `RAUTHY_*`, SMTP. `APP_ENV=prod`, `SEED_DEMO=0`, Swagger выключен.
+- Приложение и Rauthy (`auth.<домен>`) — за обратным прокси с TLS 1.2+; `TRUST_PROXY=1`, `RAUTHY_PROXY_MODE=true`,
+  `RAUTHY_COOKIE_MODE=host`, redirect `https://<домен>/auth/callback` в клиенте Rauthy.
+- Админка Rauthy — только администратору, с passkey. GitHub и Facebook — Upstream Auth Providers в админке Rauthy.
+- Резервные копии: `make backup` по cron ежедневно (age-шифрование, 30 дней), `make restore-check` раз в месяц.
+
+## Безопасность (ТЗ, раздел 13)
+
+Серверные сессии (`__Host-session`, в БД — хеш), CSRF-токен в каждой форме и htmx-запросе + проверка `Origin`,
+CSP без `unsafe-inline`/`unsafe-eval` (все скрипты — файлы со своего домена), HSTS, `frame-ancestors 'none'`,
+`nosniff`, `Referrer-Policy`, `Permissions-Policy`, CORS только для своего домена, тело ≤ 64 КБ, таймаут 15 с,
+лимит запросов на сессию и токен, личные API-токены с правами, журнал безопасности (1 год), требование 2FA от
+участников проекта (по `amr`), «чужой проект → 404» во всех фичах. CI: тесты, `cargo audit`, `cargo deny`, Trivy,
+OWASP ZAP baseline (`.github/workflows/ci.yml`), Renovate (`renovate.json`).
+
+API: личный токен из «Профиль → Безопасность» → `Authorization: Bearer fbt_…` (проект фиксирован токеном).
+Вход по паролю через API (`POST /api/auth/login`) убран.
+
+## Интерфейс (ТЗ, раздел 9)
+
+Боковое меню 240 px (сворачивается до 64 px, на 768–1279 px свёрнуто по умолчанию), на телефоне — нижняя панель из
+4 разделов и круглая «+». Дизайн-токены — CSS-переменные в `styles/app.css` (светлая и тёмная тема), иконки Lucide,
+свои шрифты Inter и Noto Sans Thai. Горячие клавиши: N — расход, I — доход, Esc — закрыть, ? — список клавиш.
+Удаление и архив — без «Вы уверены?»: тост 5 секунд с «Отменить».
+
+Скомпилированная статика (`crates/app/static`) лежит в репозитории и вшита в бинарник (адреса с хешем, кэш на год) —
+Node для запуска не нужен. После правки шаблонов: `make css`; скриншот «Обзора» для лендинга: `npm run screenshot`.
 
 ## Структура
 
 ```
-crates/kernel            ядро: ошибки, auth (JWT + проект + роль), i18n (ru/en/th), web (PageCtx, base.html, макросы)
+crates/kernel            ядро: ошибки, auth (сессия / API-токен → проект → роль, CSRF, лимиты), config,
+                         crypto, i18n (ru/en/th), web (PageCtx, каркас, тосты, статика, заголовки, 404/500)
 crates/features/
-  projects               пользователи, проекты, участники, вход/регистрация        (вручную)
+  projects               пользователи (Rauthy), проекты, участники, сессии, API-токены, журнал, профиль (вручную)
   currencies             валюты                                                    (directory)
   rates                  курсы к базовой валюте по датам                           (journal)
   accounts               счета                                                     (directory)
   categories             дерево категорий: цикл, тип, глубина ≤ 5                  (directory + правила)
-  transactions           транзакции с позициями, переводы описания, оплата планов  (вручную)
+  transactions           транзакции с позициями, переводы, быстрый расход          (вручную)
   limits                 лимиты WEEK/MONTH/YEAR на поддерево                       (journal)
   planning               планы, правила повторения, календарь, пропуски           (вручную)
   budget                 отчёт план/факт/лимит по дереву, без своих таблиц         (вручную)
-crates/app               main, wiring (адаптеры портов), seed (демо-данные), static/app.css
+  site                   лендинг, правовые страницы, sitemap, robots, без таблиц   (blank → вручную)
+crates/app               main, wiring (адаптеры портов), seed (демо-данные), assets, static/
+deploy/                  postgres/init-roles.sh, rauthy/bootstrap (клиент и демо-пользователи стенда)
+scripts/                 build-assets.mjs, screenshot.mjs, backup.sh, restore-check.sh
 ```
 
-У каждой фичи: `adapters/http.rs` (REST под `/api/<фича>`), `adapters/web.rs` + `templates/` (страницы под `/<фича>`).
-Фичи `projects`, `transactions`, `planning`, `budget` написаны вручную (нет `feature.json`) — `arch.py upgrade` их пропускает.
-
-## Отличия от эталона v1 (кандидаты в v2)
-
-- Данные изолированы по **проекту** (`project_id`), а не по пользователю: `kernel::auth::Scope { user_id, project_id, role }`.
-- У `Feature` есть веб-часть `web: Option<Web>` (страницы, публичные страницы, пункт меню); REST смонтирован под `/api`.
-- Переводимые поля справочников: `name` + `name_lang` + `name_ru/en/th`.
-- Порты справочников умеют `choices` (выпадающие списки), не только `exists`.
+У каждой фичи: `adapters/http.rs` (REST под `/api/<фича>`), `adapters/web.rs` + `templates/` (страницы).
 
 ## Тесты
 
 ```bash
-cargo test --workspace     # без БД: in-memory адаптеры и фейковые порты
+cargo test --workspace     # без БД: in-memory адаптеры и фейковые порты; 134 теста
 ```
+
+Покрыто: правила домена, «чужой проект → 404» и «Отменить» в каждой фиче, вход через OIDC (state, nonce, aud, iss,
+срок, подпись), сессии и API-токены, CSRF и Origin, 2FA, быстрый расход, полнота переводов шаблонов.

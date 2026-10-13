@@ -9,20 +9,25 @@ edition = "2024"
 [workspace.dependencies]
 kernel = { path = "crates/kernel" }
 anyhow = "1"
-argon2 = "0.5"
 askama = "0.16"
 axum-extra = { version = "0.12", features = ["form"] }
 async-trait = "0.1"
+base64 = "0.22"
 axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
-jsonwebtoken = "9"
+hex = "0.4"
+hmac = "0.12"
+openidconnect = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
+rand = "0.8"
 rust_decimal = { version = "1", features = ["serde-with-float"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "migrate", "chrono", "uuid", "rust_decimal"] }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["trace", "cors"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "limit", "timeout", "compression-gzip", "compression-br"] }
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid", "decimal"] }
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
 uuid = { version = "1", features = ["serde", "v4"] }

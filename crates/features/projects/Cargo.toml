@@ -9,18 +9,18 @@ edition.workspace = true
 doctest = false
 
 [dependencies]
+tokio.workspace = true
 kernel.workspace = true
 anyhow.workspace = true
-argon2.workspace = true
+openidconnect.workspace = true
+serde_json.workspace = true
 askama.workspace = true
+axum-extra.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 chrono.workspace = true
-rust_decimal.workspace = true
 serde.workspace = true
 sqlx.workspace = true
 utoipa.workspace = true
 uuid.workspace = true
 
-[dev-dependencies]
-tokio.workspace = true

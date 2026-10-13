@@ -135,3 +135,35 @@ impl BudgetService {
         })
     }
 }
+
+/// Лимит категории за месяц даты — для предупреждения в форме расхода (суммы в базовой валюте).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CategoryLimit {
+    pub code: String,
+    pub limit: Option<Decimal>,
+    pub forecast: Decimal,
+    pub available: Option<Decimal>,
+}
+
+impl BudgetService {
+    /// Остатки лимитов по всем категориям за месяц, содержащий `date` (все участники).
+    pub async fn month_limits(&self, project_id: Uuid, base_currency: &str, date: NaiveDate, lang: Lang) -> AppResult<Vec<CategoryLimit>> {
+        let today = chrono::Local::now().date_naive();
+        let period = Period::containing(crate::domain::View::Month, date);
+        let r = self.report(project_id, base_currency, period, lang, None, today).await?;
+        Ok(r.expenses
+            .into_iter()
+            .chain(r.incomes)
+            .map(|x| CategoryLimit { code: x.code, limit: x.limit, forecast: x.forecast, available: x.available })
+            .collect())
+    }
+
+    /// Курсы валют к базовой на дату (ближайший предыдущий) — для пересчёта суммы в форме.
+    pub async fn rates_on(&self, project_id: Uuid, base_currency: &str, date: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
+        let rates = self.deps.rates.all(project_id).await?;
+        let mut currencies: Vec<String> = rates.iter().map(|r| r.0.clone()).collect();
+        currencies.sort();
+        currencies.dedup();
+        Ok(currencies.into_iter().filter_map(|c| rate_on(&rates, &c, base_currency, date).map(|r| (c, r))).collect())
+    }
+}

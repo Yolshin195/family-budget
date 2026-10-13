@@ -1,38 +1,41 @@
 {% extends "base.html" %}
 {% import "macros.html" as m %}
-{% block title %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit") }} {{ f.code }}{% endif %}{% endblock %}
+{% block title %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit_title") }} {{ f.code }}{% endif %}{% endblock %}
+{% block heading %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit_title") }} <span class="font-mono">{{ f.code }}</span>{% endif %}{% endblock %}
 {% block content %}
-<a href="/accounts" class="text-sm text-stone-500 hover:text-stone-900">← {{ page.t("title") }}</a>
-<h1 class="text-2xl font-semibold mt-1 mb-4">{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit") }} <span class="font-mono">{{ f.code }}</span>{% endif %}</h1>
-{% if let Some(err) = error %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ err }}</div>{% endif %}
-<form method="post" class="card p-5 space-y-4 max-w-2xl">
-  <div>
-    <label class="label">{{ page.t("code") }}</label>
-    <input class="input font-mono uppercase max-w-xs" name="code" value="{{ f.code }}" {% if !is_new %}readonly{% endif %} required placeholder="CARD_KBANK">
-    <p class="text-xs text-stone-400 mt-1">{{ page.t("code_hint") }}</p>
+{% call m::form_alert(error, "code,name,account_kind,currency_code,opening_balance,holder_user_id") %}{% endcall %}
+<form method="post" class="card card-pad form max-w-2xl" data-form>
+  <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+  <div class="field">
+    <label class="label" for="code">{{ page.t("code") }}</label>
+    <input class="input font-mono uppercase max-w-xs" id="code" name="code" value="{{ f.code }}"{% if !is_new %} readonly{% else %} autofocus{% endif %} required maxlength="40" placeholder="CARD_KBANK" aria-describedby="code-hint code-err"{% if kernel::web::field_error(error, "code").is_some() %} aria-invalid="true"{% endif %}>
+    <p class="hint" id="code-hint">{{ page.t("code_hint") }}</p>{% call m::err(error, "code") %}{% endcall %}
   </div>
-  {% call m::i18n_fields(page, "name", page.t("name"), f.name, f.name_lang, f.name_ru, f.name_en, f.name_th) %}{% endcall %}
-  <div class="grid gap-3 sm:grid-cols-2">
-    <div><label class="label">{{ page.t("account_kind") }}</label>
-      <select class="input" name="account_kind">
+  {% call m::i18n_fields(page, "name", page.t("name"), f.name, f.name_lang, f.name_ru, f.name_en, f.name_th, error) %}{% endcall %}
+  <div class="grid gap-4 sm:grid-cols-2">
+    <div class="field"><label class="label" for="account_kind">{{ page.t("account_kind") }}</label>
+      <select class="input" id="account_kind" name="account_kind">
         {% for k in kinds %}<option value="{{ k }}" {% if f.account_kind == **k %}selected{% endif %}>{{ page.t(k) }}</option>{% endfor %}
       </select></div>
-    <div><label class="label">{{ page.t("currency") }}</label>
-      <select class="input" name="currency_code" required>
-        {% for c in currencies %}<option value="{{ c.code }}" {% if f.currency_code == c.code %}selected{% endif %}>{{ c.label }}</option>{% endfor %}
-      </select></div>
-    <div><label class="label">{{ page.t("opening_balance") }}</label>
-      <input class="input tabular-nums" name="opening_balance" value="{{ f.opening_balance }}" inputmode="decimal" required></div>
-    <div><label class="label">{{ page.t("holder") }}</label>
-      <select class="input" name="holder_user_id">
+    <div class="field"><label class="label" for="currency_code">{{ page.t("currency") }}</label>
+      <select class="input" id="currency_code" name="currency_code" required{% call m::aria(error, "currency_code") %}{% endcall %}>
+        {% for c in currencies %}<option value="{{ c.code }}" {% if f.currency_code == c.code %}selected{% endif %}>{{ c.code }} · {{ c.label }}</option>{% endfor %}
+      </select>{% call m::err(error, "currency_code") %}{% endcall %}</div>
+    <div class="field"><label class="label" for="opening_balance">{{ page.t("opening_balance") }}</label>
+      <input class="input num" id="opening_balance" name="opening_balance" value="{{ f.opening_balance }}" inputmode="decimal" required{% call m::aria(error, "opening_balance") %}{% endcall %}>
+      {% call m::err(error, "opening_balance") %}{% endcall %}</div>
+    <div class="field"><label class="label" for="holder_user_id">{{ page.t("holder") }}</label>
+      <select class="input" id="holder_user_id" name="holder_user_id">
         <option value="">{{ page.t("nobody") }}</option>
         {% for mbr in page.session.members %}<option value="{{ mbr.user_id }}" {% if f.holder_user_id == mbr.user_id.to_string() %}selected{% endif %}>{{ mbr.name }}</option>{% endfor %}
-      </select></div>
+      </select>
+      <p class="hint">{{ page.t("holder_hint") }}</p></div>
   </div>
-  <div class="flex items-center gap-2 pt-2">
+  <div class="form-actions">
     <button class="btn-primary">{{ page.t("save") }}</button>
     <a href="/accounts" class="btn-ghost">{{ page.t("cancel") }}</a>
-    {% if !is_new %}<button formaction="/accounts/{{ f.code }}/archive" formnovalidate class="btn-danger ml-auto">{{ page.t("archive") }}</button>{% endif %}
+    {% if !is_new %}<button formaction="/accounts/{{ f.code }}/archive" formnovalidate class="btn-ghost text-danger ml-auto">
+      <svg class="icon" aria-hidden="true"><use href="{{ page.icon("archive") }}"></use></svg>{{ page.t("archive") }}</button>{% endif %}
   </div>
 </form>
 {% endblock %}

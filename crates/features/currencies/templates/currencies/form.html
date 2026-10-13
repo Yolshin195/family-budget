@@ -1,27 +1,28 @@
 {% extends "base.html" %}
 {% import "macros.html" as m %}
-{% block title %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit") }} {{ f.code }}{% endif %}{% endblock %}
+{% block title %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit_title") }} {{ f.code }}{% endif %}{% endblock %}
+{% block heading %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit_title") }} <span class="font-mono">{{ f.code }}</span>{% endif %}{% endblock %}
 {% block content %}
-<a href="/currencies" class="text-sm text-stone-500 hover:text-stone-900">← {{ page.t("title") }}</a>
-<h1 class="text-2xl font-semibold mt-1 mb-4">{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit") }} <span class="font-mono">{{ f.code }}</span>{% endif %}</h1>
-{% if let Some(err) = error %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ err }}</div>{% endif %}
-<form method="post" class="card p-5 space-y-4 max-w-2xl">
-  <div class="grid gap-3 sm:grid-cols-3">
-    <div>
-      <label class="label">{{ page.t("code") }}</label>
-      <input class="input font-mono uppercase" name="code" value="{{ f.code }}" {% if !is_new %}readonly{% endif %} required placeholder="THB">
-      <p class="text-xs text-stone-400 mt-1">{{ page.t("code_hint") }}</p>
+{% call m::form_alert(error, "code,symbol,minor_units,name") %}{% endcall %}
+<form method="post" class="card card-pad form max-w-2xl" data-form>
+  <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+  <div class="grid gap-4 sm:grid-cols-3">
+    <div class="field">
+      <label class="label" for="code">{{ page.t("code") }}</label>
+      <input class="input font-mono uppercase" id="code" name="code" value="{{ f.code }}"{% if !is_new %} readonly{% else %} autofocus{% endif %} required maxlength="3" placeholder="THB" aria-describedby="code-hint code-err"{% if kernel::web::field_error(error, "code").is_some() %} aria-invalid="true"{% endif %}>
+      <p class="hint" id="code-hint">{{ page.t("code_hint") }}</p>{% call m::err(error, "code") %}{% endcall %}
     </div>
-    <div><label class="label">{{ page.t("symbol") }}</label><input class="input" name="symbol" value="{{ f.symbol }}" required></div>
-    <div><label class="label">{{ page.t("minor_units") }}</label><input class="input" type="number" min="0" max="4" name="minor_units" value="{{ f.minor_units }}" required></div>
+    <div class="field"><label class="label" for="symbol">{{ page.t("symbol") }}</label>
+      <input class="input" id="symbol" name="symbol" value="{{ f.symbol }}" required maxlength="5"{% if !is_new %} autofocus{% endif %}{% call m::aria(error, "symbol") %}{% endcall %}>{% call m::err(error, "symbol") %}{% endcall %}</div>
+    <div class="field"><label class="label" for="minor_units">{{ page.t("minor_units") }}</label>
+      <input class="input" type="number" min="0" max="4" id="minor_units" name="minor_units" value="{{ f.minor_units }}" required{% call m::aria(error, "minor_units") %}{% endcall %}>{% call m::err(error, "minor_units") %}{% endcall %}</div>
   </div>
-  {% call m::i18n_fields(page, "name", page.t("name"), f.name, f.name_lang, f.name_ru, f.name_en, f.name_th) %}{% endcall %}
-  <div class="flex items-center gap-2 pt-2">
+  {% call m::i18n_fields(page, "name", page.t("name"), f.name, f.name_lang, f.name_ru, f.name_en, f.name_th, error) %}{% endcall %}
+  <div class="form-actions">
     <button class="btn-primary">{{ page.t("save") }}</button>
     <a href="/currencies" class="btn-ghost">{{ page.t("cancel") }}</a>
-    {% if !is_new %}
-      <button formaction="/currencies/{{ f.code }}/archive" class="btn-danger ml-auto" formnovalidate>{{ page.t("archive") }}</button>
-    {% endif %}
+    {% if !is_new %}<button formaction="/currencies/{{ f.code }}/archive" formnovalidate class="btn-ghost text-danger ml-auto">
+      <svg class="icon" aria-hidden="true"><use href="{{ page.icon("archive") }}"></use></svg>{{ page.t("archive") }}</button>{% endif %}
   </div>
 </form>
 {% endblock %}

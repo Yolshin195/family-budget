@@ -24,6 +24,8 @@ pub trait PlanRepository: Send + Sync {
     async fn skips(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<(Uuid, NaiveDate)>>;
     async fn add_skip(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate, by: Uuid) -> AppResult<()>;
     async fn remove_skip(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<()>;
+    /// Удалить все планы и пропуски проекта (удаление проекта или аккаунта).
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
 }
 
 /// Оплата вхождения плана (её хранит транзакция).

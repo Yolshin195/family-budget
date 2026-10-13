@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommitsDisabled"],
+  "description": "Обновления зависимостей: Cargo, npm (сборка статики), образы контейнеров (включая Rauthy), GitHub Actions.",
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "matchManagers": ["docker-compose", "dockerfile"],
+      "matchPackageNames": ["ghcr.io/sebadob/rauthy"],
+      "groupName": "Rauthy",
+      "description": "Перед обновлением Rauthy — прочитать release notes (breaking changes конфига) и проверить вход на стенде."
+    },
+    {
+      "matchManagers": ["cargo"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "Rust (minor/patch)"
+    },
+    {
+      "matchManagers": ["npm"],
+      "groupName": "Сборка статики (npm)"
+    }
+  ],
+  "vulnerabilityAlerts": { "enabled": true, "labels": ["security"] }
+}

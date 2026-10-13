@@ -6,7 +6,7 @@ pub fn dict(key: &str) -> Option<Tr> {
         "nav" => ("Категории", "Categories", "หมวดหมู่"),
         "title" => ("Категории", "Categories", "หมวดหมู่"),
         "new" => ("Новая категория", "New category", "หมวดหมู่ใหม่"),
-        "edit" => ("Категория", "Category", "หมวดหมู่"),
+        "edit_title" => ("Категория", "Category", "หมวดหมู่"),
         "expenses" => ("Расходы", "Expenses", "รายจ่าย"),
         "incomes" => ("Доходы", "Income", "รายรับ"),
         "parent" => ("Родитель", "Parent", "หมวดหมู่หลัก"),
@@ -17,6 +17,8 @@ pub fn dict(key: &str) -> Option<Tr> {
         "tree_hint" => ("Лимиты и бюджет учитывают дерево: расход в подкатегории входит в сумму родителя.",
                         "Limits and budget follow the tree: spending in a subcategory counts toward its parent.",
                         "งบและวงเงินคิดตามโครงสร้าง: รายจ่ายในหมวดย่อยนับรวมในหมวดหลัก"),
+        "empty_title" => ("Категорий пока нет", "No categories yet", "ยังไม่มีหมวดหมู่"),
+        "empty_text" => ("Категории — дерево до 5 уровней: «Еда → Кафе». Лимит на родителя учитывает все подкатегории.", "Categories form a tree up to 5 levels: Food → Cafe. A parent's limit covers all subcategories.", "หมวดหมู่เป็นโครงสร้างได้ถึง 5 ระดับ วงเงินของหมวดหลักครอบคลุมหมวดย่อยทั้งหมด"),
         _ => return None,
     })
 }

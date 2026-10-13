@@ -12,7 +12,7 @@ use chrono::{Datelike, Months, NaiveDate};
 use kernel::error::AppError;
 use kernel::i18n::{Lang, month_name, weekdays};
 use kernel::pagination::Pagination;
-use kernel::web::{Choice, PageCtx, PageError, PageResult, money, parse_money, render, see_other};
+use kernel::web::{Choice, Flash, PageCtx, PageError, PageResult, money_in, parse_money, render, see_other_flash};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -28,12 +28,20 @@ pub fn router(service: Arc<TransactionService>) -> Router {
         .route("/new", get(new_form).post(create))
         .route("/{id}/edit", get(edit_form).post(update))
         .route("/{id}/delete", post(delete))
+        .route("/undo/{token}", post(undo))
         .route("/{id}/translate", get(translate_form).post(translate))
         .with_state(service)
 }
 
 fn ctx(page: PageCtx) -> PageCtx {
     page.for_feature(crate::NAME, crate::i18n::dict)
+}
+
+/// Вложенная страница: хлебная крошка на «Операции».
+fn nested(page: PageCtx) -> PageCtx {
+    let page = ctx(page);
+    let title = page.t("title");
+    page.crumb(title, crate::MOUNT)
 }
 
 fn today() -> NaiveDate {
@@ -92,6 +100,8 @@ struct ListPage {
     days: Vec<DayGroup>,
     /// Итоги по валютам счетов: (валюта, доходы, расходы, итог, итог < 0).
     totals: Vec<(String, String, String, String, bool)>,
+    /// Включён фильтр (пустой список — «ничего не найдено», а не «операций нет»).
+    filtered: bool,
 }
 
 fn month_start(s: &str) -> NaiveDate {
@@ -110,7 +120,17 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
         created_by: Uuid::parse_str(&params.member).ok(),
         untranslated: (params.untranslated == "1").then(|| lang.code().to_string()),
     };
-    let items = svc.list(p, query, Pagination { page: 0, size: 1000 }).await?.content;
+    // Месяц целиком: страницы API по 200 записей (предел 25 страниц — защита от бесконечного цикла).
+    let mut items = Vec::new();
+    for page_no in 0..25 {
+        let q = ListQuery { from: query.from, to: query.to, account_code: query.account_code.clone(), created_by: query.created_by, untranslated: query.untranslated.clone() };
+        let chunk = svc.list(p, q, Pagination { page: page_no, size: kernel::pagination::MAX_PAGE }).await?;
+        let last = chunk.page.number + 1 >= chunk.page.total_pages;
+        items.extend(chunk.content);
+        if last {
+            break;
+        }
+    }
     let cats: HashMap<String, String> = svc.category_titles(p, lang).await?.into_iter().collect();
     let accs: HashMap<String, String> = svc.account_titles(p, lang).await?.into_iter().collect();
     let accounts = svc.account_choices(p, lang).await?;
@@ -135,7 +155,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             .iter()
             .map(|l| LineView {
                 category: cats.get(&l.category_code).cloned().unwrap_or_else(|| l.category_code.clone()),
-                amount: money(l.amount),
+                amount: money_in(lang, l.amount),
                 note: l.note.clone().unwrap_or_default(),
             })
             .collect();
@@ -149,7 +169,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             missing: t.missing_tr(lang),
             account: accs.get(&t.account_code).cloned().unwrap_or_else(|| t.account_code.clone()),
             author: page.session.member_name(&t.created_by),
-            total: format!("{}{}", if t.is_expense() { "−" } else { "+" }, money(t.total)),
+            total: format!("{}{}", if t.is_expense() { "−" } else { "+" }, money_in(lang, t.total)),
             lines,
             dto: t,
         };
@@ -166,9 +186,11 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
     }
     // Базовая валюта первой.
     sums.sort_by_key(|x| x.0 != page.session.base_currency);
-    let totals = sums.into_iter().map(|(c, i, e)| (c, money(i), money(e), money(i - e), i < e)).collect();
+    let totals = sums.into_iter().map(|(c, i, e)| (c, money_in(lang, i), money_in(lang, e), money_in(lang, i - e), i < e)).collect();
     let fmt = |d: NaiveDate| format!("{}-{:02}", d.year(), d.month());
+    let filtered = !params.account.is_empty() || !params.member.is_empty() || params.untranslated == "1";
     render(&ListPage {
+        filtered,
         month_title: format!("{} {}", month_name(lang, from.month()), from.year()),
         month: fmt(from),
         prev: fmt(from.checked_sub_months(Months::new(1)).unwrap_or(from)),
@@ -214,6 +236,8 @@ struct Prefill {
     kind: String,
     desc: String,
     desc_lang: String,
+    /// Дата операции (из быстрого расхода: «Разбить на позиции»).
+    date: String,
     back: String,
 }
 
@@ -314,12 +338,13 @@ async fn form_page(svc: &TransactionService, page: PageCtx, id: Option<Uuid>, f:
     let accounts = svc.account_choices(p, page.lang).await?;
     let categories = svc.category_choices(p, page.lang).await?;
     let lines = f.lines();
-    render(&FormPage { page: ctx(page), id, f, lines, accounts, categories, error })
+    render(&FormPage { page: nested(page), id, f, lines, accounts, categories, error })
 }
 
 async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Query<Prefill>) -> PageResult {
+    let date = q.date.parse::<NaiveDate>().unwrap_or_else(|_| today());
     let f = TxForm {
-        occurred_on: today().to_string(),
+        occurred_on: date.to_string(),
         account_code: q.account,
         tx_kind: if q.kind == "INCOME" { "INCOME".into() } else { "EXPENSE".into() },
         description: q.desc,
@@ -339,7 +364,7 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): F
     let s = page.session.scope();
     let result = async { svc.create(s.project_id, s.user_id, f.to_input()?).await }.await;
     match result {
-        Ok(_) => Ok(see_other(&back_or_list(&f.back))),
+        Ok(_) => Ok(see_other_flash(&page.config, &back_or_list(&f.back), Flash::ok(page.t("toast.saved")))),
         Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, None, f, Some(m)).await,
         Err(e) => Err(PageError(e)),
     }
@@ -354,7 +379,7 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): 
     let p = page.session.project_id;
     let result = async { svc.update(p, id, f.to_input()?).await }.await;
     match result {
-        Ok(_) => Ok(see_other(&back_or_list(&f.back))),
+        Ok(_) => Ok(see_other_flash(&page.config, &back_or_list(&f.back), Flash::ok(page.t("toast.saved")))),
         Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, Some(id), f, Some(m)).await,
         Err(e) => Err(PageError(e)),
     }
@@ -366,9 +391,23 @@ struct BackForm {
     back: String,
 }
 
+/// Удаление без «Вы уверены?»: тост с «Отменить» на 5 секунд. Удаление оплаты плана возвращает
+/// вхождение в «ожидается», «Отменить» — снова в «оплачено».
 async fn delete(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>, Form(f): Form<BackForm>) -> PageResult {
-    svc.delete(page.session.project_id, id).await?;
-    Ok(see_other(&back_or_list(&f.back)))
+    let token = svc.delete_with_undo(page.session.project_id, id).await?;
+    let back = back_or_list(&f.back);
+    let undo = format!("/transactions/undo/{token}?back={}", kernel::web::url_encode(&back));
+    Ok(see_other_flash(&page.config, &back, Flash::with_undo(page.t("toast.deleted"), undo)))
+}
+
+async fn undo(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(token): Path<Uuid>, Query(q): Query<BackForm>) -> PageResult {
+    let flash = match svc.undo_delete(page.session.project_id, token).await {
+        Ok(_) => Flash::ok(page.t("toast.restored")),
+        Err(AppError::NotFound(_)) => Flash::error(page.t("toast.undo_expired")),
+        Err(AppError::Conflict(m)) => Flash::error(m),
+        Err(e) => return Err(PageError(e)),
+    };
+    Ok(see_other_flash(&page.config, &back_or_list(&q.back), flash))
 }
 
 // ---------------------------------------------------------------- перевод
@@ -389,7 +428,7 @@ fn translate_page(page: PageCtx, t: TransactionDto, error: Option<String>) -> Pa
         .filter(|(code, _, _)| *code != t.description_lang)
         .map(|(code, name, v)| (code, name, v.clone().unwrap_or_default()))
         .collect();
-    render(&TranslatePage { page: ctx(page), t, fields, error })
+    render(&TranslatePage { page: nested(page), t, fields, error })
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -408,7 +447,7 @@ async fn translate_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Pa
 async fn translate(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>, Form(f): Form<TranslateForm>) -> PageResult {
     let input = TranslationInput { description_ru: opt(&f.description_ru), description_en: opt(&f.description_en), description_th: opt(&f.description_th) };
     match svc.translate(page.session.project_id, id, input).await {
-        Ok(_) => Ok(see_other("/transactions")),
+        Ok(_) => Ok(see_other_flash(&page.config, "/transactions", Flash::ok(page.t("toast.saved")))),
         Err(AppError::Validation(m)) => {
             let t = svc.get(page.session.project_id, id).await?;
             translate_page(page, t, Some(m))

@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{{ page.t("security") }}{% endblock %}
+{% block heading %}{{ page.t("security") }}{% endblock %}
+{% block content %}
+<div class="space-y-6 max-w-4xl">
+  <section class="card card-pad" aria-labelledby="rauthy">
+    <div class="flex flex-wrap items-start gap-4">
+      <span class="empty-icon !m-0"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("key-round") }}"></use></svg></span>
+      <div class="grow min-w-60">
+        <h2 class="section-title" id="rauthy">{{ page.t("rauthy_account") }}</h2>
+        <p class="hint">{{ page.t("rauthy_account_hint") }}</p>
+      </div>
+      {% if !account_url.is_empty() %}<a class="btn-secondary" href="{{ account_url }}" rel="noopener">{{ page.t("open_rauthy") }}<svg class="icon" aria-hidden="true"><use href="{{ page.icon("external-link") }}"></use></svg></a>{% endif %}
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="devices">
+    <div class="card-head">
+      <h2 class="section-title" id="devices">{{ page.t("devices") }}</h2>
+      {% if devices.len() > 1 && !guest %}
+      <form method="post" action="/profile/security/logout-all"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+        <button class="btn-secondary btn-sm">{{ page.t("logout_all") }}</button></form>
+      {% endif %}
+    </div>
+    <ul class="divide-y divide-line">
+      {% for d in devices %}
+      <li class="flex flex-wrap items-center gap-3 px-5 py-3">
+        <svg class="icon text-subtle" aria-hidden="true"><use href="{{ page.icon("monitor-smartphone") }}"></use></svg>
+        <div class="grow min-w-0">
+          <p class="font-medium">{{ d.browser }}{% if d.current %} <span class="badge badge-accent">{{ page.t("this_device") }}</span>{% endif %}
+            {% if d.mfa %}<span class="badge badge-income"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("shield-check") }}"></use></svg>{{ page.t("with_2fa") }}</span>{% endif %}</p>
+          <p class="text-xs text-subtle">{{ page.t("signed_in") }} {{ d.created }} · {{ page.t("last_seen") }} {{ d.last_seen }}{% if !d.ip.is_empty() %} · {{ d.ip }}{% endif %}</p>
+        </div>
+        {% if !d.current %}
+        <form method="post" action="/profile/security/sessions/{{ d.hash }}/revoke"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+          <button class="btn-ghost btn-sm">{{ page.t("revoke") }}</button></form>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  {% if !guest %}
+  <section class="card" aria-labelledby="tokens">
+    <div class="card-head"><h2 class="section-title" id="tokens">{{ page.t("tokens") }}</h2></div>
+    <div class="px-5 pb-5">
+      <p class="hint mb-4">{{ page.t("tokens_hint") }}</p>
+      {% if let Some(raw) = new_token %}
+      <div class="alert alert-ok mb-4" role="status">
+        <svg class="icon" aria-hidden="true"><use href="{{ page.icon("circle-check") }}"></use></svg>
+        <div class="min-w-0 grow">
+          <p class="font-medium">{{ page.t("token_created") }}</p>
+          <div class="flex gap-2 mt-2 items-center"><code class="code grow break-all" id="new-token">{{ raw }}</code>
+            <button type="button" class="btn-secondary btn-sm" data-copy="#new-token" data-copied="{{ page.t("copied") }}">{{ page.t("copy") }}</button></div>
+          <p class="hint mt-2">{{ page.t("token_usage") }}: <code>Authorization: Bearer {{ raw }}</code></p>
+        </div>
+      </div>
+      {% endif %}
+      {% call m::form_alert(error, "name,scopes,expires") %}{% endcall %}
+      <form method="post" action="/profile/security/tokens" class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 items-end">
+        <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+        <div class="field !mb-0"><label class="label" for="tk-name">{{ page.t("token_name") }}</label>
+          <input class="input" id="tk-name" name="name" required maxlength="100" placeholder="Telegram bot"{% call m::aria(error, "name") %}{% endcall %}>{% call m::err(error, "name") %}{% endcall %}</div>
+        <div class="field !mb-0"><label class="label" for="tk-project">{{ page.t("token_project") }}</label>
+          <select class="input" id="tk-project" name="project">{% for (id, name) in projects %}<option value="{{ id }}"{% if *id == page.session.project_id %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></div>
+        <div class="field !mb-0"><label class="label" for="tk-scope">{{ page.t("token_scopes") }}</label>
+          <select class="input" id="tk-scope" name="scope">
+            <option value="transactions:write">{{ page.t("scope_transactions_write") }}</option>
+            <option value="read">{{ page.t("scope_read") }}</option>
+            <option value="write">{{ page.t("scope_write") }}</option>
+          </select></div>
+        <div class="field !mb-0"><label class="label" for="tk-days">{{ page.t("token_expires") }}</label>
+          <select class="input" id="tk-days" name="days">{% for d in terms %}<option value="{{ d }}"{% if *d == 90 %} selected{% endif %}>{{ self.term_label(d) }}</option>{% endfor %}</select></div>
+        <div class="sm:col-span-2 lg:col-span-4"><button class="btn-primary">{{ page.t("create_token") }}</button></div>
+      </form>
+    </div>
+    {% if tokens.is_empty() %}
+      <p class="px-5 pb-5 text-muted text-sm">{{ page.t("no_tokens") }}</p>
+    {% else %}
+    <div class="table-wrap border-t border-line">
+      <table class="table">
+        <thead><tr><th scope="col">{{ page.t("token_name") }}</th><th scope="col">{{ page.t("token_project") }}</th><th scope="col">{{ page.t("token_scopes") }}</th>
+          <th scope="col">{{ page.t("token_expires") }}</th><th scope="col">{{ page.t("last_seen") }}</th><th scope="col"><span class="sr-only">{{ page.t("revoke_token") }}</span></th></tr></thead>
+        <tbody>
+        {% for tk in tokens %}
+          <tr{% if tk.status != "active" %} class="row-muted"{% endif %}>
+            <td class="font-medium">{{ tk.name }}{% if tk.status != "active" %} <span class="badge">{{ page.t(tk.status) }}</span>{% endif %}</td>
+            <td>{{ tk.project }}</td><td><code class="text-xs">{{ tk.scopes }}</code></td><td>{{ tk.expires }}</td><td class="text-subtle">{{ tk.last_used }}</td>
+            <td class="text-right">{% if tk.status == "active" %}<form method="post" action="/profile/security/tokens/{{ tk.id }}/revoke"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+              <button class="btn-ghost btn-sm text-danger">{{ page.t("revoke_token") }}</button></form>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="audit">
+    <div class="card-head"><div><h2 class="section-title" id="audit">{{ page.t("audit") }}</h2><p class="hint">{{ page.t("audit_hint") }}</p></div></div>
+    {% if events.is_empty() %}
+      <p class="px-5 pb-5 text-muted text-sm">{{ page.t("no_events") }}</p>
+    {% else %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th scope="col">{{ page.t("date") }}</th><th scope="col">{{ page.t("kind") }}</th><th scope="col">{{ page.t("token_project") }}</th><th scope="col">IP</th></tr></thead>
+        <tbody>{% for e in events %}<tr><td class="whitespace-nowrap tabular-nums">{{ e.at }}</td><td>{{ e.action }}</td><td>{{ e.project }}</td><td class="text-subtle tabular-nums">{{ e.ip }}</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

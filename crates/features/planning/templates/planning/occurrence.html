@@ -1,37 +1,36 @@
 {% extends "base.html" %}
 {% import "macros.html" as m %}
 {% block title %}{{ o.plan.title(page.lang) }}{% endblock %}
+{% block heading %}{{ o.plan.title(page.lang) }}{% endblock %}
 {% block content %}
-<a href="{{ back }}" class="text-sm text-stone-500 hover:text-stone-900">← {{ page.t("title") }}</a>
-<div class="card p-6 mt-2 max-w-xl">
+<section class="card card-pad max-w-xl">
   <div class="flex items-start justify-between gap-3">
-    <div>
-      <h1 class="text-xl font-semibold">{{ o.plan.title(page.lang) }} {% call m::no_tr(page, o.plan.missing_tr(page.lang)) %}{% endcall %}</h1>
-      <div class="text-sm text-stone-500 mt-0.5">{{ category }} · {{ o.plan.account_code }} · {{ page.t(o.plan.recurrence) }}</div>
-    </div>
-    <span class="chip {% if o.status == "PAID" %}bg-brand-50 text-brand-700{% else if o.status == "OVERDUE" %}bg-rose-50 text-rose-700{% else %}bg-stone-100 text-stone-600{% endif %}">{{ page.t(o.status) }}</span>
+    <p class="text-muted">{{ category }} · {{ o.plan.account_code }} · {{ page.t(o.plan.recurrence) }} {% call m::no_tr(page, o.plan.missing_tr(page.lang)) %}{% endcall %}</p>
+    <span class="badge {% if o.status == "PAID" %}badge-income{% else if o.status == "OVERDUE" %}badge-danger{% endif %}">{{ page.t(o.status) }}</span>
   </div>
-  <dl class="grid grid-cols-2 gap-4 mt-5 text-sm">
-    <div><dt class="label">{{ page.t("due") }}</dt><dd class="font-medium">{{ o.date }}</dd></div>
-    <div><dt class="label">{{ page.t("expected_amount") }}</dt><dd class="font-medium tabular-nums">{{ kernel::web::money(o.plan.amount) }}</dd></div>
+  <dl class="grid grid-cols-2 gap-4 mt-5">
+    <div><dt class="label">{{ page.t("due") }}</dt><dd class="font-medium tabular-nums">{{ page.date(o.date) }}</dd></div>
+    <div><dt class="label">{{ page.t("expected_amount") }}</dt><dd class="font-medium">{{ page.money(o.plan.amount) }}</dd></div>
     {% if let Some(paid) = o.paid_amount %}
-    <div><dt class="label">{{ page.t("paid_on") }}</dt><dd class="font-medium">{% if let Some(d) = o.paid_on %}{{ d }}{% endif %}</dd></div>
-    <div><dt class="label">{{ page.t("amount") }}</dt><dd class="font-medium tabular-nums text-brand-700">{{ kernel::web::money(paid) }}</dd></div>
+    <div><dt class="label">{{ page.t("paid_on") }}</dt><dd class="font-medium tabular-nums">{% if let Some(d) = o.paid_on %}{{ page.date(d) }}{% endif %}</dd></div>
+    <div><dt class="label">{{ page.t("amount") }}</dt><dd class="font-medium text-income">{{ page.money(paid) }}</dd></div>
     {% endif %}
   </dl>
   {% if page.can_write() %}
-  <div class="flex flex-wrap gap-2 mt-6 pt-4 border-t border-stone-100">
+  <div class="form-actions mt-6 pt-4 border-t border-line">
     {% if o.is_open() %}
-      <a class="btn-primary" href="{{ pay_href }}">✓ {{ page.t("pay") }}</a>
-      <form method="post" action="/planning/occurrence/{{ o.plan.id }}/{{ o.date }}/skip"><input type="hidden" name="back" value="{{ back }}"><button class="btn-ghost">{{ page.t("skip") }}</button></form>
+      <a class="btn-primary" href="{{ pay_href }}" autofocus><svg class="icon" aria-hidden="true"><use href="{{ page.icon("check") }}"></use></svg>{{ page.t("pay") }}</a>
+      <form method="post" action="/planning/occurrence/{{ o.plan.id }}/{{ o.date }}/skip"><input type="hidden" name="_csrf" value="{{ page.csrf() }}"><input type="hidden" name="back" value="{{ back }}">
+        <button class="btn-secondary"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("skip-forward") }}"></use></svg>{{ page.t("skip") }}</button></form>
     {% else if o.status == "SKIPPED" %}
-      <form method="post" action="/planning/occurrence/{{ o.plan.id }}/{{ o.date }}/unskip"><input type="hidden" name="back" value="{{ back }}"><button class="btn-ghost">↺ {{ page.t("unskip") }}</button></form>
+      <form method="post" action="/planning/occurrence/{{ o.plan.id }}/{{ o.date }}/unskip"><input type="hidden" name="_csrf" value="{{ page.csrf() }}"><input type="hidden" name="back" value="{{ back }}">
+        <button class="btn-secondary"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("undo-2") }}"></use></svg>{{ page.t("unskip") }}</button></form>
     {% else if let Some(tx) = o.transaction_id %}
-      <a class="btn-ghost" href="/transactions/{{ tx }}/edit">{{ page.t("open_tx") }} →</a>
+      <a class="btn-secondary" href="/transactions/{{ tx }}/edit">{{ page.t("open_tx") }}<svg class="icon" aria-hidden="true"><use href="{{ page.icon("arrow-right") }}"></use></svg></a>
     {% endif %}
     <a class="btn-ghost ml-auto" href="/planning/plans/{{ o.plan.id }}/edit">{{ page.t("edit") }}</a>
   </div>
-  {% if o.is_open() %}<p class="text-xs text-stone-400 mt-3">{{ page.t("pay_hint") }}</p>{% endif %}
+  {% if o.is_open() %}<p class="hint mt-3">{{ page.t("pay_hint") }}</p>{% endif %}
   {% endif %}
-</div>
+</section>
 {% endblock %}

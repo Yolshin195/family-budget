@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use kernel::context::AppContext;
 use kernel::feature::Feature;
-use kernel::web::{NavItem, Web};
+use kernel::web::{NavGroup, NavItem, Web};
 use utoipa::OpenApi;
 
 pub use ports::Deps;
@@ -45,7 +45,9 @@ pub fn feature(api: Arc<Service>) -> Feature {
         web: Some(Web {
             pages: adapters::web::router(api),
             public: None,
-            nav: Some(NavItem { feature: NAME, href: MOUNT, label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)), order: 50 }),
+            nav: Some(NavItem { feature: NAME, href: MOUNT, label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)), icon: "folder-tree", group: NavGroup::Directory, order: 10, mobile: false }),
+            root: None,
+            account: None,
         }),
     }
 }

@@ -1,31 +1,37 @@
 {% extends "base.html" %}
 {% import "macros.html" as m %}
 {% block title %}{{ page.t("plans") }}{% endblock %}
+{% block heading %}{{ page.t("plans") }}{% endblock %}
+{% block actions %}{% if page.can_write() %}<a class="btn-primary" href="/planning/plans/new"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("add") }}</a>{% endif %}{% endblock %}
 {% block content %}
-<a href="/planning" class="text-sm text-stone-500 hover:text-stone-900">← {{ page.t("title") }}</a>
-<div class="flex items-center justify-between mt-1 mb-4">
-  <h1 class="text-2xl font-semibold">{{ page.t("plans") }}</h1>
-  {% if page.can_write() %}<a class="btn-primary" href="/planning/plans/new">+ {{ page.t("add") }}</a>{% endif %}
-</div>
-<div class="card overflow-x-auto">
-  <table class="w-full">
-    <thead class="border-b border-stone-200"><tr>
-      <th class="th">{{ page.t("name") }}</th><th class="th">{{ page.t("category") }}</th><th class="th">{{ page.t("recurrence") }}</th>
-      <th class="th">{{ page.t("start_on") }}</th><th class="th num">{{ page.t("amount") }}</th><th class="th"></th></tr></thead>
-    <tbody class="divide-y divide-stone-100">
+<section class="card">
+{% if plans.is_empty() %}
+  {% call m::empty(page, "calendar-days", page.t("empty_title"), page.t("empty_text"), "/planning/plans/new", page.t("add")) %}{% endcall %}
+{% else %}
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr>
+      <th scope="col">{{ page.t("name") }}</th><th scope="col">{{ page.t("category") }}</th><th scope="col">{{ page.t("recurrence") }}</th>
+      <th scope="col">{{ page.t("start_on") }}</th><th scope="col" class="num">{{ page.t("amount") }}</th><th scope="col"><span class="sr-only">{{ page.t("edit") }}</span></th></tr></thead>
+    <tbody>
     {% for (p, cat, amount) in plans %}
-      <tr class="{% if !p.active %}opacity-50{% endif %}">
-        <td class="td"><span class="font-medium">{{ p.title(page.lang) }}</span> {% call m::no_tr(page, p.missing_tr(page.lang)) %}{% endcall %}
-          {% if !p.active %}<span class="chip bg-stone-100 text-stone-500">{{ page.t("stopped") }}</span>{% endif %}</td>
-        <td class="td text-stone-600">{{ cat }}</td>
-        <td class="td text-stone-600">{{ page.t(p.recurrence) }}{% if p.interval > 1 %} × {{ p.interval }}{% endif %}</td>
-        <td class="td text-stone-600">{{ p.start_on }}{% if let Some(e) = p.end_on %} — {{ e }}{% endif %}</td>
-        <td class="td num font-medium {% if p.is_expense() %}text-rose-700{% else %}text-brand-700{% endif %}">{% if p.is_expense() %}−{% else %}+{% endif %}{{ amount }}</td>
-        <td class="td text-right">{% if page.can_write() %}<a class="btn-ghost" href="/planning/plans/{{ p.id }}/edit">{{ page.t("edit") }}</a>{% endif %}</td>
+      <tr{% if !p.active %} class="row-muted"{% endif %}>
+        <td><span class="font-medium">{{ p.title(page.lang) }}</span> {% call m::no_tr(page, p.missing_tr(page.lang)) %}{% endcall %}
+          {% if !p.active %}<span class="badge">{{ page.t("stopped") }}</span>{% endif %}</td>
+        <td class="text-muted">{{ cat }}</td>
+        <td class="text-muted">{{ page.t(p.recurrence) }}{% if p.interval > 1 %} × {{ p.interval }}{% endif %}</td>
+        <td class="text-muted tabular-nums whitespace-nowrap">{{ page.date(p.start_on) }}{% if let Some(e) = p.end_on %} — {{ page.date(e) }}{% endif %}</td>
+        <td class="num font-medium{% if !p.is_expense() %} text-income{% endif %}">{% if p.is_expense() %}−{% else %}+{% endif %}{{ amount }}</td>
+        <td class="text-right whitespace-nowrap">{% if page.can_write() %}
+          <form method="post" action="/planning/plans/{{ p.id }}/toggle" class="inline"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+            <input type="hidden" name="active" value="{% if p.active %}0{% else %}1{% endif %}">
+            <button class="btn-ghost btn-sm">{% if p.active %}{{ page.t("stop") }}{% else %}{{ page.t("resume") }}{% endif %}</button></form>
+          <a class="btn-ghost btn-sm" href="/planning/plans/{{ p.id }}/edit" aria-label="{{ page.t("edit") }}: {{ p.title(page.lang) }}">{{ page.t("edit") }}</a>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% if plans.is_empty() %}<p class="p-6 text-center text-stone-500">{{ page.t("empty") }}</p>{% endif %}
-</div>
+  </div>
+{% endif %}
+</section>
 {% endblock %}
