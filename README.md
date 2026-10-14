@@ -69,10 +69,12 @@ make restart
 
 ### Готовый образ (GitHub Container Registry)
 
-Каждый пуш в `main` собирает образ для linux/amd64 и linux/arm64 и публикует его в
+Пуш в `main`, меняющий код или сборку (`crates/`, `Cargo.toml`, `Cargo.lock`, `Dockerfile`), собирает образ для
+linux/amd64 и linux/arm64 и публикует его в
 [ghcr.io/yolshin195/family-budget](https://github.com/Yolshin195/family-budget/pkgs/container/family-budget)
 (`.github/workflows/docker-publish.yml`). Теги: `latest`, версия из `Cargo.toml` и неизменяемый `sha-<коммит>` — для
-отката на конкретную сборку. Теги ставятся, только если прошли тесты. Образ другой ветки — «Run workflow» в Actions:
+отката на конкретную сборку. Теги ставятся, только если прошли тесты. Пересобрать без изменений кода (например, ради
+свежих исправлений безопасности Debian) — «Run workflow» в Actions. Образ другой ветки — тоже «Run workflow»:
 тег `<ветка>`, `latest` не меняется.
 
 ```bash
@@ -90,8 +92,9 @@ gh attestation verify oci://ghcr.io/yolshin195/family-budget:latest -R Yolshin19
 CSP без `unsafe-inline`/`unsafe-eval` (все скрипты — файлы со своего домена), HSTS, `frame-ancestors 'none'`,
 `nosniff`, `Referrer-Policy`, `Permissions-Policy`, CORS только для своего домена, тело ≤ 64 КБ, таймаут 15 с,
 лимит запросов на сессию и токен, личные API-токены с правами, журнал безопасности (1 год), требование 2FA от
-участников проекта (по `amr`), «чужой проект → 404» во всех фичах. CI: тесты, `cargo audit`, `cargo deny`, Trivy,
-OWASP ZAP baseline (`.github/workflows/ci.yml`), Renovate (`renovate.json`).
+участников проекта (по `amr`), «чужой проект → 404» во всех фичах. CI на каждый PR: тесты, `cargo audit`,
+`cargo deny`, Trivy, OWASP ZAP baseline (`.github/workflows/ci.yml`); раз в неделю — `cargo audit`, `cargo deny` и
+Trivy по опубликованному образу (`.github/workflows/security-scan.yml`); Renovate (`renovate.json`).
 
 API: личный токен из «Профиль → Безопасность» → `Authorization: Bearer fbt_…` (проект фиксирован токеном).
 Вход по паролю через API (`POST /api/auth/login`) убран.

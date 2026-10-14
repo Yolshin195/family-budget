@@ -1,0 +1,48 @@
+# Еженедельная проверка безопасности того, что уже опубликовано. CI (ci.yml) проверяет только PR, поэтому новая
+# уязвимость в зависимостях Rust или в пакетах Debian опубликованного образа без этой проверки всплыла бы лишь
+# со следующим PR.
+#
+# Красный прогон:
+# - audit (RUSTSEC) — обновить крейт в Cargo.lock (или смержить PR от Renovate); принятый риск — в
+#   .cargo/audit.toml и deny.toml с обоснованием.
+# - image (Trivy) — исправление уже вышло в Debian (ignore-unfixed): пересобрать образ —
+#   Actions → Docker build and publish → Run workflow (стадия runtime делает apt-get upgrade без кэша).
+#
+# GitHub отключает расписание, если в репозитории 60 дней не было активности: тогда — Enable workflow в Actions.
+name: Security scan
+
+on:
+  schedule:
+    - cron: '23 2 * * 1' # понедельник, 09:23 по Бангкоку
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+
+  image:
+    name: Published image scan (Trivy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Пакет публичный — вход в реестр не нужен. Платформа — linux/amd64 (как у раннера).
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/yolshin195/family-budget:latest
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
