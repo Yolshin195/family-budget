@@ -11,7 +11,7 @@ APP_ROLE=${APP_DB_USER:-fb_app}
 APP_PASSWORD=${APP_DB_PASSWORD:?APP_DB_PASSWORD не задан}
 RAUTHY_ROLE=${RAUTHY_DB_USER:-rauthy}
 RAUTHY_PASSWORD=${RAUTHY_DB_PASSWORD:?RAUTHY_DB_PASSWORD не задан}
-PSQL="psql -v ON_ERROR_STOP=1 --username ${POSTGRES_USER:-postgres} --no-password"
+PSQL="psql -q -v ON_ERROR_STOP=1 --username ${POSTGRES_USER:-postgres} --no-password"
 
 $PSQL --dbname postgres \
   -v app_role="$APP_ROLE" -v app_password="$APP_PASSWORD" \

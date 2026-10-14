@@ -205,7 +205,8 @@ async fn main() -> anyhow::Result<()> {
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http());
 
-    let addr = env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into());
+    // По умолчанию — только эта машина: в dev открыт «Вход для разработки». В контейнере BIND_ADDR задан явно.
+    let addr = env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".into());
     println!("Server starting on http://{addr}  ({}; {})", if config.is_prod() { "production" } else { "development" }, config.base_url);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;

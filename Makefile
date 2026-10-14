@@ -42,7 +42,10 @@ clean: ## Остановить и удалить данные БД и Rauthy (д
 	$(COMPOSE) down -v
 
 db: ## Только PostgreSQL и Rauthy — для локальной разработки (make dev)
-	$(COMPOSE) up -d db rauthy
+	$(COMPOSE) up -d db
+	@until $(COMPOSE) exec -T db pg_isready -q -h 127.0.0.1 -U budget -d family_budget 2>/dev/null; do sleep 1; done
+	@$(COMPOSE) exec -T db sh /docker-entrypoint-initdb.d/10-roles.sh
+	$(COMPOSE) up -d rauthy
 
 db-roles: ## Пользователи БД без прав суперпользователя (для базы, созданной до обновления)
 	$(COMPOSE) exec -T db sh /docker-entrypoint-initdb.d/10-roles.sh
@@ -51,7 +54,7 @@ rauthy-secrets: ## Сгенерированный секрет клиента fa
 	@$(COMPOSE) exec -T rauthy /app/rauthy bootstrap get --format env
 
 dev: db ## cargo run локально против PostgreSQL и Rauthy в контейнерах
-	APP_ENV=dev DATABASE_URL=postgres://fb_app:$${APP_DB_PASSWORD:-fb_app_dev}@localhost:5432/family_budget cargo run -p family_budget
+	APP_ENV=dev BIND_ADDR=127.0.0.1:$(APP_PORT) DATABASE_URL=postgres://fb_app:$${APP_DB_PASSWORD:-fb_app_dev}@localhost:5432/family_budget cargo run -p family_budget
 
 test: ## Тесты (БД не нужна)
 	cargo test --workspace

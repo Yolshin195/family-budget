@@ -72,7 +72,7 @@ services:
       OTP_EMAIL_ENABLE: "true"
       # Письма (регистрация, сброс пароля, код 2FA).
       SMTP_URL: ${SMTP_URL:-}
-      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_TLS_MODE: ${SMTP_TLS_MODE:-tls}
       SMTP_FROM: ${SMTP_FROM:-Семейный бюджет <no-reply@localhost>}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
