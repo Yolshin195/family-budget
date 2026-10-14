@@ -63,6 +63,23 @@ make restart
 - Админка Rauthy — только администратору, с passkey. GitHub и Facebook — Upstream Auth Providers в админке Rauthy.
 - Резервные копии: `make backup` по cron ежедневно (age-шифрование, 30 дней), `make restore-check` раз в месяц.
 
+### Готовый образ (GitHub Container Registry)
+
+Каждый пуш в `main` собирает образ для linux/amd64 и linux/arm64 и публикует его в
+[ghcr.io/yolshin195/family-budget](https://github.com/Yolshin195/family-budget/pkgs/container/family-budget)
+(`.github/workflows/docker-publish.yml`). Теги: `latest`, версия из `Cargo.toml` и неизменяемый `sha-<коммит>` — для
+отката на конкретную сборку. Теги ставятся, только если прошли тесты. Образ другой ветки — «Run workflow» в Actions:
+тег `<ветка>`, `latest` не меняется.
+
+```bash
+podman pull ghcr.io/yolshin195/family-budget:latest
+# образ собран этим репозиторием (подписанная аттестация происхождения):
+gh attestation verify oci://ghcr.io/yolshin195/family-budget:latest -R Yolshin195/family-budget
+```
+
+Чтобы запускать готовый образ вместо локальной сборки, у сервиса `app` в `compose.yaml` уберите `build: .` и укажите
+`image: ghcr.io/yolshin195/family-budget:<тег>`.
+
 ## Безопасность (ТЗ, раздел 13)
 
 Серверные сессии (`__Host-session`, в БД — хеш), CSRF-токен в каждой форме и htmx-запросе + проверка `Origin`,

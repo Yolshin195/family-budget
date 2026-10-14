@@ -1,15 +1,30 @@
 # syntax=docker/dockerfile:1
 # Семейная бухгалтерия: сборка бинарника и минимальный runtime-образ.
 # Работает с Podman/Buildah и Docker. Имена образов полные — Podman не спрашивает реестр.
+#
+# Зависимости (~380 крейтов) собираются отдельным слоем через cargo-chef: он пересобирается только при
+# изменении Cargo.toml / Cargo.lock, а не при каждой правке кода. Это обычный слой, поэтому он попадает и в
+# кэш Podman/Docker на машине, и в кэш GitHub Actions (type=gha) — в отличие от RUN --mount=type=cache,
+# содержимое которого с CI-раннера никуда не сохраняется.
+
+# ---------- инструменты сборки ----------
+FROM docker.io/library/rust:1-slim-bookworm AS chef
+# renovate: datasource=crate depName=cargo-chef
+ARG CARGO_CHEF_VERSION=0.1.78
+RUN cargo install cargo-chef --locked --version "${CARGO_CHEF_VERSION}"
+WORKDIR /src
+
+# ---------- рецепт зависимостей (только манифесты и Cargo.lock) ----------
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
 # ---------- сборка ----------
-FROM docker.io/library/rust:1-slim-bookworm AS build
-WORKDIR /src
-# Кэш реестра crates.io и target между сборками (BuildKit / Buildah ≥ 1.24).
+FROM chef AS build
+COPY --from=planner /src/recipe.json recipe.json
+RUN cargo chef cook --release -p family_budget --locked --recipe-path recipe.json
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    cargo build --release -p family_budget --locked \
+RUN cargo build --release -p family_budget --locked \
  && cp target/release/family_budget /usr/local/bin/family_budget
 
 # ---------- запуск ----------
