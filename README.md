@@ -56,6 +56,9 @@ make restart
 
 ## Продакшен
 
+Пошаговое развёртывание на одном VDS (Docker, Caddy с HTTPS, Rauthy, резервные копии, обновление и откат) —
+[docs/deploy-vds.md](docs/deploy-vds.md).
+
 - Секреты — только из окружения или файлов секретов (`NAME_FILE=/run/secrets/...`): `SESSION_SECRET`,
   `OIDC_CLIENT_SECRET`, `RAUTHY_*`, SMTP. `APP_ENV=prod`, `SEED_DEMO=0`, Swagger выключен.
 - Приложение и Rauthy (`auth.<домен>`) — за обратным прокси с TLS 1.2+; `TRUST_PROXY=1`, `RAUTHY_PROXY_MODE=true`,
