@@ -66,8 +66,14 @@ impl<'c> AsyncHttpClient<'c> for RewritingHttp {
     }
 }
 
+/// Rauthy не ответил или ответил не так: временный сбой (503), подробности — в журнал.
 fn unavailable(e: impl std::fmt::Display) -> AppError {
-    AppError::Internal(anyhow::anyhow!("Rauthy недоступен: {e}"))
+    AppError::Unavailable(anyhow::anyhow!("Rauthy недоступен: {e}"))
+}
+
+/// Неверный адрес в настройках OIDC: ошибка конфигурации (500), а не недоступность Rauthy.
+fn misconfigured(e: impl std::fmt::Display) -> AppError {
+    AppError::Internal(anyhow::anyhow!("OIDC: неверный адрес в настройках: {e}"))
 }
 
 impl RauthyProvider {
@@ -94,7 +100,7 @@ impl RauthyProvider {
                 return Ok((d.metadata.clone(), d.end_session.clone()));
             }
         }
-        let issuer = IssuerUrl::new(self.cfg.issuer.clone()).map_err(unavailable)?;
+        let issuer = IssuerUrl::new(self.cfg.issuer.clone()).map_err(misconfigured)?;
         let metadata = CoreProviderMetadata::discover_async(issuer, &self.oidc_http).await.map_err(unavailable)?;
         // end_session_endpoint нет в стандартных метаданных крейта — читаем из того же документа.
         let end_session = self
@@ -163,7 +169,7 @@ impl IdentityProvider for RauthyProvider {
     async fn authorize(&self, lang: Lang) -> AppResult<AuthRequest> {
         let (metadata, _) = self.discovered(false).await?;
         let client = CoreClient::from_provider_metadata(metadata, ClientId::new(self.cfg.client_id.clone()), Some(ClientSecret::new(self.cfg.client_secret.clone())))
-            .set_redirect_uri(RedirectUrl::new(self.cfg.redirect_url.clone()).map_err(unavailable)?);
+            .set_redirect_uri(RedirectUrl::new(self.cfg.redirect_url.clone()).map_err(misconfigured)?);
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
         let (url, state, nonce) = client
             .authorize_url(CoreAuthenticationFlow::AuthorizationCode, CsrfToken::new_random, Nonce::new_random)
@@ -178,7 +184,7 @@ impl IdentityProvider for RauthyProvider {
     async fn exchange(&self, code: &str, pkce_verifier: &str, nonce: &str) -> AppResult<VerifiedLogin> {
         let (metadata, _) = self.discovered(false).await?;
         let client = CoreClient::from_provider_metadata(metadata.clone(), ClientId::new(self.cfg.client_id.clone()), Some(ClientSecret::new(self.cfg.client_secret.clone())))
-            .set_redirect_uri(RedirectUrl::new(self.cfg.redirect_url.clone()).map_err(unavailable)?);
+            .set_redirect_uri(RedirectUrl::new(self.cfg.redirect_url.clone()).map_err(misconfigured)?);
         let response = client
             .exchange_code(AuthorizationCode::new(code.to_string()))
             .map_err(unavailable)?
@@ -343,5 +349,25 @@ mod rewrite_tests {
         let p = RauthyProvider::new(cfg);
         assert_eq!(p.internal("http://localhost:8443/auth/v1/oidc/token"), "http://rauthy:8443/auth/v1/oidc/token");
         assert_eq!(p.internal("https://other.example/x"), "https://other.example/x", "чужие адреса не трогаем");
+    }
+
+    /// Rauthy остановлен: вход отвечает 503 (временно недоступен), а не 500.
+    #[tokio::test]
+    async fn stopped_rauthy_is_unavailable() {
+        // Свободный порт: заняли и сразу отпустили — соединение будет отклонено.
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let cfg = Oidc {
+            issuer: format!("http://127.0.0.1:{port}/auth/v1"),
+            client_id: "family-budget".into(),
+            client_secret: "s".into(),
+            redirect_url: "http://localhost:8080/auth/callback".into(),
+            register_url: String::new(),
+            account_url: String::new(),
+            admin_api_key: None,
+            internal_url: None,
+        };
+        let err = RauthyProvider::new(cfg).authorize(Lang::Ru).await.unwrap_err();
+        assert!(matches!(err, AppError::Unavailable(_)), "{err:?}");
+        assert_eq!(err.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
     }
 }
