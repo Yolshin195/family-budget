@@ -46,7 +46,8 @@
           <a class="btn-secondary btn-lg" href="/auth/login"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("brand-facebook") }}"></use></svg>{{ self.t("cta.facebook") }}</a>
         </div>
         {% if guest_demo %}
-        <form method="post" action="/demo" class="hero-demo">
+        {# Сессии ещё нет — токена _csrf тоже: POST /demo защищён проверкой Origin. name="demo" — исключение для ZAP (ci.yml). #}
+        <form method="post" action="/demo" name="demo" class="hero-demo">
           <button class="link-button"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("eye") }}"></use></svg>{{ self.t("cta.demo") }}</button>
           <span class="text-subtle text-sm">· {{ self.t("cta.demo_hint") }}</span>
         </form>
@@ -94,7 +95,7 @@
         <h2 class="site-h2 !mb-2" id="demo">{{ self.t("demo.title") }}</h2>
         <p class="text-muted max-w-2xl">{{ self.t("demo.text") }}</p>
       </div>
-      <form method="post" action="/demo"><button class="btn-secondary btn-lg"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("eye") }}"></use></svg>{{ self.t("cta.demo") }}</button></form>
+      <form method="post" action="/demo" name="demo"><button class="btn-secondary btn-lg"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("eye") }}"></use></svg>{{ self.t("cta.demo") }}</button></form>
     </div>
   </section>
   {% endif %}

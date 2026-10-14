@@ -1,5 +1,16 @@
-# ZAP baseline: правила, которые для этого приложения не являются уязвимостью (уровень → IGNORE/WARN/FAIL).
+# ZAP baseline: правила, которые для этого приложения не являются уязвимостью (уровень → IGNORE/INFO/WARN/FAIL).
+# Правило не из списка — WARN и валит CI. INFO остаётся в отчёте (артефакт zap_scan), но CI не валит.
+# ТЗ (раздел 13): без предупреждений High и Medium — поэтому в INFO переведены только Low и Informational.
+#
 # 10049 — «не кэшируемое содержимое»: страницы приложения намеренно no-store.
 10049	IGNORE	(Non-Storable Content)
 # 10109 — «современное веб-приложение»: информационное сообщение.
 10109	IGNORE	(Modern Web Application)
+# 10112 (Informational) — ZAP нашёл cookie сессии (/auth/login, /demo): сообщение, а не находка.
+10112	INFO	(Session Management Response Identified)
+# 10029, 10031 (Informational) — ?lang= попадает в cookie и атрибут lang только после Lang::parse: ru, en или th.
+10029	INFO	(Cookie Poisoning)
+10031	INFO	(User Controllable HTML Element Attribute)
+# 90004 (Low) — COEP нужен для cross-origin isolation (SharedArrayBuffer и т. п.), её приложение не использует;
+# чужих ресурсов на страницах нет (CSP default-src 'self').
+90004	INFO	(Cross-Origin-Embedder-Policy Header Missing or Invalid)

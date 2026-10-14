@@ -5,6 +5,8 @@ members = ["crates/kernel", "crates/app", "crates/features/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+# Внутренние крейты не публикуются: cargo deny не требует от них лицензии и версий у path-зависимостей.
+publish = false
 
 [workspace.dependencies]
 kernel = { path = "crates/kernel" }

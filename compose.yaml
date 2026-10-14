@@ -107,6 +107,8 @@ services:
       RAUTHY_ADMIN_API_KEY: ${RAUTHY_ADMIN_API_KEY:-}
       SEED_DEMO: ${SEED_DEMO:-1}
       GUEST_DEMO: ${GUEST_DEMO:-1}
+      # Swagger UI (/docs). Не задан — по APP_ENV: в dev включён, в prod выключен (SWAGGER=1 там запрещён).
+      SWAGGER:
       CONTACT_EMAIL: ${CONTACT_EMAIL:-}
       TRUST_PROXY: ${TRUST_PROXY:-0}
       BIND_ADDR: 0.0.0.0:8080
