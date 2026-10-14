@@ -35,7 +35,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t family-budget:ci .
-      - uses: aquasecurity/trivy-action@0.28.0
+      # Закреплено по коммиту, а не по тегу: в марте 2026 теги trivy-action подменяли (CVE-2026-33634),
+      # теги без «v» (0.28.0 и др.) из репозитория удалены. Renovate обновляет коммит вместе с версией.
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: family-budget:ci
           severity: CRITICAL,HIGH
@@ -54,9 +56,14 @@ jobs:
         env:
           APP_ENV: dev
           GUEST_DEMO: '1'
+          # Сканируем то, что уходит в продакшен: Swagger UI (/docs) там запрещён (Config::validate).
+          SWAGGER: '0'
       - uses: zaproxy/action-baseline@v0.14.0
         with:
           target: http://localhost:8080/
           rules_file_name: .zap/rules.tsv
+          # Формы name="demo" (POST /demo, сессии ещё нет) защищены проверкой Origin, а не токеном _csrf —
+          # ZAP не ищет в них токен. Остальные формы проверяются как обычно (Absence of Anti-CSRF Tokens).
+          cmd_options: '-z "-config rules.csrf.ignorelist=demo"'
           fail_action: true
           allow_issue_writing: false

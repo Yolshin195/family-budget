@@ -29,7 +29,9 @@ RUN cargo build --release -p family_budget --locked \
 
 # ---------- запуск ----------
 FROM docker.io/library/debian:bookworm-slim
+# upgrade — исправления безопасности, вышедшие после сборки базового образа (Trivy в CI падает на них).
 RUN apt-get update \
+ && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends ca-certificates tzdata \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 --no-create-home app

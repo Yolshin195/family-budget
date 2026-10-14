@@ -3,6 +3,7 @@
 name = "limits"
 version.workspace = true
 edition.workspace = true
+publish.workspace = true
 
 [lib]
 # Doc-тестов в эталоне нет — не тратим на них время `cargo test`.
