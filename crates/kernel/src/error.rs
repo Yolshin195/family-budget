@@ -15,6 +15,9 @@ pub enum AppError {
     Unauthorized(String),
     /// Превышен лимит запросов.
     TooManyRequests(String),
+    /// Внешний сервис, без которого запрос не выполнить (провайдер входа Rauthy), временно недоступен.
+    /// Это сбой окружения, а не ошибка приложения: 503, подробности — только в журнале сервера.
+    Unavailable(anyhow::Error),
     Internal(anyhow::Error),
 }
 
@@ -29,7 +32,7 @@ impl std::fmt::Display for AppError {
             | AppError::Forbidden(m)
             | AppError::Unauthorized(m)
             | AppError::TooManyRequests(m) => f.write_str(m),
-            AppError::Internal(e) => write!(f, "{e}"),
+            AppError::Unavailable(e) | AppError::Internal(e) => write!(f, "{e}"),
         }
     }
 }
@@ -63,6 +66,7 @@ impl AppError {
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
+            AppError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -75,13 +79,19 @@ impl AppError {
             AppError::Forbidden(_) => "FORBIDDEN",
             AppError::Unauthorized(_) => "UNAUTHORIZED",
             AppError::TooManyRequests(_) => "TOO_MANY_REQUESTS",
+            AppError::Unavailable(_) => "UNAVAILABLE",
             AppError::Internal(_) => "INTERNAL",
         }
     }
 
-    /// Текст для пользователя: у внутренних ошибок подробности не раскрываются (они — в журнале сервера).
+    /// Текст для пользователя: у внутренних ошибок и недоступных сервисов подробности не раскрываются
+    /// (они — в журнале сервера).
     pub fn public_message(&self) -> String {
         match self {
+            AppError::Unavailable(e) => {
+                eprintln!("service unavailable: {e:?}");
+                "сервис временно недоступен, попробуйте позже".to_string()
+            }
             AppError::Internal(e) => {
                 eprintln!("internal error: {e:?}");
                 "внутренняя ошибка сервера".to_string()
@@ -103,5 +113,27 @@ impl IntoResponse for AppError {
         let error = self.code();
         let message = self.public_message();
         (status, Json(ErrorBody { error, message })).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unavailable_is_503_without_details() {
+        let e = AppError::Unavailable(anyhow::anyhow!("Rauthy недоступен: connection refused (rauthy:8443)"));
+        assert_eq!(e.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(e.code(), "UNAVAILABLE");
+        let message = e.public_message();
+        assert!(!message.contains("Rauthy") && !message.contains("rauthy:8443"), "подробности не уходят клиенту: {message}");
+        assert_eq!(e.into_response().status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn internal_stays_500() {
+        let e = AppError::Internal(anyhow::anyhow!("pool timed out"));
+        assert_eq!((e.status(), e.code()), (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL"));
+        assert_eq!(e.public_message(), "внутренняя ошибка сервера");
     }
 }

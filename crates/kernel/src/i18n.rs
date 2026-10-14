@@ -228,6 +228,8 @@ pub fn dict(key: &str) -> Option<Tr> {
         "error.429_hint" => ("Подождите минуту и повторите.", "Wait a minute and try again.", "รอสักครู่แล้วลองอีกครั้ง"),
         "error.500" => ("Что-то пошло не так", "Something went wrong", "เกิดข้อผิดพลาด"),
         "error.500_hint" => ("Мы уже знаем об ошибке. Обновите страницу через минуту.", "We've logged the error. Reload the page in a minute.", "เราบันทึกข้อผิดพลาดแล้ว โหลดหน้าใหม่อีกครั้งในอีกสักครู่"),
+        "error.503" => ("Вход временно недоступен", "Sign-in is temporarily unavailable", "เข้าสู่ระบบไม่ได้ชั่วคราว"),
+        "error.503_hint" => ("Сервис входа не отвечает. Попробуйте позже — обычно это несколько минут.", "The sign-in service isn't responding. Try again later — usually it takes a few minutes.", "บริการเข้าสู่ระบบไม่ตอบสนอง โปรดลองใหม่ภายหลัง โดยปกติใช้เวลาไม่กี่นาที"),
         "error.check_hint" => ("Проверьте введённые данные и повторите.", "Check what you entered and try again.", "ตรวจสอบข้อมูลแล้วลองอีกครั้ง"),
         "error.home" => ("На главную", "Go to start page", "ไปหน้าแรก"),
         // проект требует 2FA (раздел 13)

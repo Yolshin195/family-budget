@@ -374,6 +374,7 @@ impl ErrorPage {
             404 => self.t("error.404"),
             403 => self.t("error.403"),
             429 => self.t("error.429"),
+            503 => self.t("error.503"),
             s if s >= 500 => self.t("error.500"),
             _ => self.t("error.title"),
         }
@@ -384,6 +385,7 @@ impl ErrorPage {
             404 => self.t("error.404_hint"),
             403 => self.t("error.403_hint"),
             429 => self.t("error.429_hint"),
+            503 => self.t("error.503_hint"),
             s if s >= 500 => self.t("error.500_hint"),
             _ => self.t("error.check_hint"),
         }
@@ -805,5 +807,18 @@ mod tests {
         assert_ne!(hashed_name("app.css", b"x"), hashed_name("app.css", b"y"));
         assert!(content_security_policy(&Config::test()).contains("frame-ancestors 'none'"));
         assert!(!content_security_policy(&Config::test()).contains("unsafe-inline"));
+    }
+
+    #[test]
+    fn unavailable_page_is_friendly_and_hides_details() {
+        let status = PageError(AppError::Unavailable(anyhow::anyhow!("Rauthy недоступен: connection refused"))).into_response().status();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        for lang in Lang::ALL {
+            let page = ErrorPage { lang, status: status.as_u16(), message: "Rauthy недоступен: connection refused".into(), signed_in: false };
+            let html = page.render().unwrap();
+            assert!(html.contains(&crate::i18n::t(lang, None, "error.503")), "{lang:?}");
+            assert!(!html.contains(&crate::i18n::t(lang, None, "error.500")), "{lang:?}: не «что-то пошло не так»");
+            assert!(!html.contains("connection refused"), "{lang:?}: внутренний текст ошибки не показываем");
+        }
     }
 }
