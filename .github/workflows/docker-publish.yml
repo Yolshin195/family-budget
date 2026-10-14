@@ -6,8 +6,14 @@
 # - Платформы пушатся по digest, без тегов. Job publish собирает из них один multi-arch манифест и только
 #   тогда ставит теги — и только если прошли тесты (job test идёт параллельно со сборкой и времени не
 #   добавляет). Поэтому latest не укажет ни на образ с упавшими тестами, ни на образ без одной из платформ.
+# - Запускается, только если менялось то, из чего собирается образ (on.push.paths; новый вход сборки — добавить
+#   туда). Документация, скрипты, CI не дают ни новой сборки, ни нового тега sha-. Пересобрать без изменений
+#   кода (например, чтобы подтянуть свежие исправления безопасности Debian) — Actions → Run workflow.
 # - Кэш слоёв — в кэше GitHub Actions (type=gha), отдельно на платформу. Зависимости Rust — отдельный слой
-#   (cargo-chef в Dockerfile): правка кода не пересобирает ~380 крейтов.
+#   (cargo-chef в Dockerfile): правка кода не пересобирает ~380 крейтов. Кэш amd64 читает и ci.yml в PR.
+# - Стадия runtime собирается без кэша (no-cache-filters): apt-get upgrade каждый раз берёт текущие исправления,
+#   а не слой, закэшированный до выхода новой версии debian:bookworm-slim.
+# - Кэш Rust job test (shared-key: test) пишется здесь, на main; PR в ci.yml его только читают.
 # - На опубликованный образ выписывается подписанная аттестация происхождения (SLSA provenance), проверка:
 #   gh attestation verify oci://ghcr.io/yolshin195/family-budget:latest -R Yolshin195/family-budget
 #
@@ -19,6 +25,18 @@ name: Docker build and publish
 on:
   push:
     branches: [main]
+    # Всё, что читают docker build и cargo build. .cargo/config.toml и rust-toolchain.toml пока нет, но cargo
+    # подхватит их из контекста сборки. FEATURE.md и прочие *.md в crates/ в бинарник не попадают.
+    paths:
+      - 'crates/**'
+      - '!**.md'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - '.cargo/config.toml'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/docker-publish.yml'
   workflow_dispatch: {}
 
 permissions:
@@ -89,6 +107,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
       - run: cargo test --workspace --locked
 
   build:
@@ -128,6 +148,7 @@ jobs:
           labels: ${{ needs.prepare.outputs.labels }}
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          no-cache-filters: runtime
           # Сбой записи кэша не должен валить публикацию.
           cache-to: type=gha,scope=docker-${{ matrix.arch }},mode=max,ignore-error=true
 

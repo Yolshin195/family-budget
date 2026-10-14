@@ -28,8 +28,9 @@ RUN cargo build --release -p family_budget --locked \
  && cp target/release/family_budget /usr/local/bin/family_budget
 
 # ---------- запуск ----------
-FROM docker.io/library/debian:bookworm-slim
+FROM docker.io/library/debian:bookworm-slim AS runtime
 # upgrade — исправления безопасности, вышедшие после сборки базового образа (Trivy в CI падает на них).
+# В CI эта стадия собирается без кэша слоёв (no-cache-filters: runtime), иначе upgrade взялся бы из старого кэша.
 RUN apt-get update \
  && apt-get upgrade -y \
  && apt-get install -y --no-install-recommends ca-certificates tzdata \
