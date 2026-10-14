@@ -1,82 +1,94 @@
 {% extends "base.html" %}
 {% import "macros.html" as m %}
 {% block title %}{{ page.t("title") }}{% endblock %}
+{% block heading %}{{ page.t("title") }}{% endblock %}
+{% block actions %}{% if page.can_write() %}
+  <a href="/transactions/new?kind=INCOME&amp;back={{ page.back() }}" class="btn-secondary" data-quick="INCOME" title="I"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg><span class="hide-sm">{{ page.t("income") }}</span></a>
+  <a href="/transactions/new?back={{ page.back() }}" class="btn-primary" data-quick="EXPENSE" title="N"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("expense") }}</a>
+{% endif %}{% endblock %}
 {% block content %}
-<div class="flex flex-wrap items-center gap-3 mb-4">
-  <h1 class="text-2xl font-semibold mr-2">{{ page.t("title") }}</h1>
-  <div class="flex items-center rounded-lg border border-stone-200 bg-white">
-    <a class="px-3 py-1.5 hover:bg-stone-100 rounded-l-lg" href="?month={{ prev }}&account={{ params.account }}&member={{ params.member }}&untranslated={{ params.untranslated }}">←</a>
-    <span class="px-3 py-1.5 font-medium min-w-36 text-center">{{ month_title }}</span>
-    <a class="px-3 py-1.5 hover:bg-stone-100 rounded-r-lg" href="?month={{ next }}&account={{ params.account }}&member={{ params.member }}&untranslated={{ params.untranslated }}">→</a>
-  </div>
-  {% if page.can_write() %}<a href="/transactions/new?back={{ page.back() }}" class="btn-primary ml-auto">+ {{ page.t("add") }}</a>{% endif %}
+<div class="toolbar">
+  <nav class="pager" aria-label="{{ page.t("month_nav") }}">
+    <a class="btn-icon" href="?month={{ prev }}&amp;account={{ params.account }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("prev_month") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
+    <span class="pager-title" aria-live="polite">{{ month_title }}</span>
+    <a class="btn-icon" href="?month={{ next }}&amp;account={{ params.account }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("next_month") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
+  </nav>
+  <form class="filters" method="get" data-autosubmit>
+    <input type="hidden" name="month" value="{{ month }}">
+    <label class="sr-only" for="f-account">{{ page.t("account") }}</label>
+    <select class="input input-sm" id="f-account" name="account">
+      <option value="">{{ page.t("all_accounts") }}</option>
+      {% for a in accounts %}<option value="{{ a.code }}" {% if params.account == a.code %}selected{% endif %}>{{ a.label }}</option>{% endfor %}
+    </select>
+    {% if page.session.members.len() > 1 %}
+    <label class="sr-only" for="f-member">{{ page.t("author") }}</label>
+    <select class="input input-sm" id="f-member" name="member">
+      <option value="">{{ page.t("all_members") }}</option>
+      {% for mbr in page.session.members %}<option value="{{ mbr.user_id }}" {% if params.member == mbr.user_id.to_string() %}selected{% endif %}>{{ mbr.name }}</option>{% endfor %}
+    </select>
+    {% endif %}
+    <label class="checkbox checkbox-sm">
+      <input type="checkbox" name="untranslated" value="1" {% if params.untranslated == "1" %}checked{% endif %}>
+      <span>{{ page.t("untranslated") }} ({{ page.lang.upper() }})</span>
+    </label>
+    <button class="btn-secondary btn-sm js-hide">{{ page.t("apply") }}</button>
+  </form>
 </div>
 
-<form class="flex flex-wrap items-center gap-2 mb-4 text-sm" method="get">
-  <input type="hidden" name="month" value="{{ month }}">
-  <select class="input !w-auto" name="account" onchange="this.form.submit()">
-    <option value="">{{ page.t("all_accounts") }}</option>
-    {% for a in accounts %}<option value="{{ a.code }}" {% if params.account == a.code %}selected{% endif %}>{{ a.label }}</option>{% endfor %}
-  </select>
-  {% if page.session.members.len() > 1 %}
-  <select class="input !w-auto" name="member" onchange="this.form.submit()">
-    <option value="">{{ page.t("all_members") }}</option>
-    {% for mbr in page.session.members %}<option value="{{ mbr.user_id }}" {% if params.member == mbr.user_id.to_string() %}selected{% endif %}>{{ mbr.name }}</option>{% endfor %}
-  </select>
-  {% endif %}
-  <label class="inline-flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2">
-    <input type="checkbox" name="untranslated" value="1" {% if params.untranslated == "1" %}checked{% endif %} onchange="this.form.submit()">
-    🌐 {{ page.t("untranslated") }} ({{ page.lang.upper() }})
-  </label>
-</form>
-
-<div class="grid grid-cols-3 gap-3 mb-5">
-  <div class="card p-4"><div class="text-xs text-stone-500">{{ page.t("income_total") }}</div>
-    {% for (cur, inc, _exp, _net, _neg) in totals %}<div class="text-lg font-semibold text-brand-700 tabular-nums">+{{ inc }} <span class="text-xs font-normal text-stone-400">{{ cur }}</span></div>{% endfor %}</div>
-  <div class="card p-4"><div class="text-xs text-stone-500">{{ page.t("expense_total") }}</div>
-    {% for (cur, _inc, exp, _net, _neg) in totals %}<div class="text-lg font-semibold text-rose-700 tabular-nums">−{{ exp }} <span class="text-xs font-normal text-stone-400">{{ cur }}</span></div>{% endfor %}</div>
-  <div class="card p-4"><div class="text-xs text-stone-500">{{ page.t("net") }}</div>
-    {% for (cur, _inc, _exp, net, neg) in totals %}<div class="text-lg font-semibold tabular-nums {% if *neg %}text-rose-700{% endif %}">{{ net }} <span class="text-xs font-normal text-stone-400">{{ cur }}</span></div>{% endfor %}</div>
+<div class="stats stats-3" id="tx-totals">
+  <div class="stat"><p class="stat-label">{{ page.t("income_total") }}</p>
+    {% for (cur, inc, _exp, _net, _neg) in totals %}<p class="stat-value text-income">{% call m::amount(format!("+{}", inc), cur) %}{% endcall %}</p>{% endfor %}</div>
+  <div class="stat"><p class="stat-label">{{ page.t("expense_total") }}</p>
+    {% for (cur, _inc, exp, _net, _neg) in totals %}<p class="stat-value">{% call m::amount(format!("−{}", exp), cur) %}{% endcall %}</p>{% endfor %}</div>
+  <div class="stat"><p class="stat-label">{{ page.t("net") }}</p>
+    {% for (cur, _inc, _exp, net, neg) in totals %}<p class="stat-value{% if *neg %} text-danger{% endif %}">{% call m::amount(net, cur) %}{% endcall %}</p>{% endfor %}</div>
 </div>
 
 {% for g in days %}
-  <h2 class="text-xs font-semibold uppercase tracking-wide text-stone-500 mt-5 mb-2">{{ g.label }}</h2>
-  <div class="card divide-y divide-stone-100">
+  <h2 class="day-title">{{ g.label }}</h2>
+  <ul class="card divide-y divide-line" role="list">
   {% for t in g.items %}
-    <div class="p-4 flex gap-4 group">
-      <div class="mt-1 h-2.5 w-2.5 shrink-0 rounded-full {% if t.dto.is_expense() %}bg-rose-400{% else %}bg-brand-500{% endif %}"></div>
-      <div class="min-w-0 flex-1">
-        <div class="flex flex-wrap items-center gap-2">
+    <li class="tx">
+      <span class="tx-dot {% if t.dto.is_expense() %}tx-expense{% else %}tx-income{% endif %}" aria-hidden="true"></span>
+      <div class="min-w-0 grow">
+        <p class="flex flex-wrap items-center gap-2">
           <span class="font-medium">{{ t.desc }}</span>
           {% call m::no_tr(page, t.missing) %}{% endcall %}
-          {% if t.dto.plan_id.is_some() %}<span class="chip bg-sky-50 text-sky-700">📅 {{ page.t("from_plan") }}</span>{% endif %}
-        </div>
-        <div class="text-xs text-stone-500 mt-0.5">{{ t.account }} · {{ t.author }}</div>
+          {% if t.dto.plan_id.is_some() %}<span class="badge badge-info"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("calendar-check") }}"></use></svg>{{ page.t("from_plan") }}</span>{% endif %}
+        </p>
+        <p class="text-xs text-subtle mt-0.5">{{ t.account }} · {{ t.author }}</p>
         {% if t.lines.len() > 1 || !t.lines[0].note.is_empty() %}
-        <ul class="mt-2 space-y-0.5 text-sm text-stone-600 max-w-lg">
+        <ul class="tx-lines">
           {% for l in t.lines %}
-            <li class="flex gap-2"><span class="text-stone-300">•</span><span>{{ l.category }}{% if !l.note.is_empty() %} <span class="text-stone-400">— {{ l.note }}</span>{% endif %}</span>
-              <span class="ml-auto tabular-nums">{{ l.amount }}</span></li>
+            <li><span>{{ l.category }}{% if !l.note.is_empty() %} <span class="text-subtle">— {{ l.note }}</span>{% endif %}</span><span class="amount">{{ l.amount }}</span></li>
           {% endfor %}
         </ul>
         {% else %}
-          <div class="text-sm text-stone-600 mt-1">{{ t.lines[0].category }}</div>
+          <p class="text-sm text-muted mt-1">{{ t.lines[0].category }}</p>
         {% endif %}
       </div>
-      <div class="text-right shrink-0">
-        <div class="font-semibold tabular-nums {% if t.dto.is_expense() %}text-rose-700{% else %}text-brand-700{% endif %}">{{ t.total }} <span class="text-xs font-normal text-stone-400">{{ t.currency }}</span></div>
+      <div class="tx-side">
+        <p class="font-semibold{% if !t.dto.is_expense() %} text-income{% endif %}">{% call m::amount(t.total, t.currency) %}{% endcall %}</p>
         {% if page.can_write() %}
-        <div class="mt-2 flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition text-xs">
-          {% if t.dto.description.is_some() %}<a class="btn-ghost !px-2 !py-1" href="/transactions/{{ t.dto.id }}/translate">🌐 {{ page.t("translate") }}</a>{% endif %}
-          <a class="btn-ghost !px-2 !py-1" href="/transactions/{{ t.dto.id }}/edit">{{ page.t("edit") }}</a>
-          <form method="post" action="/transactions/{{ t.dto.id }}/delete" onsubmit="return confirm('{{ page.t("confirm_delete") }}')">
-            <input type="hidden" name="back" value="{{ page.path }}"><button class="btn-danger !px-2 !py-1">{{ page.t("delete") }}</button></form>
+        <div class="row-actions">
+          {% if t.dto.description.is_some() %}<a class="btn-ghost btn-sm" href="/transactions/{{ t.dto.id }}/translate" aria-label="{{ page.t("translate") }}: {{ t.desc }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("languages") }}"></use></svg><span class="hide-sm">{{ page.t("translate") }}</span></a>{% endif %}
+          <a class="btn-ghost btn-sm" href="/transactions/{{ t.dto.id }}/edit?back={{ page.back() }}" aria-label="{{ page.t("edit") }}: {{ t.desc }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("pencil") }}"></use></svg><span class="hide-sm">{{ page.t("edit") }}</span></a>
+          <form method="post" action="/transactions/{{ t.dto.id }}/delete"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+            <input type="hidden" name="back" value="{{ page.path }}"><button class="btn-ghost btn-sm text-danger" aria-label="{{ page.t("delete") }}: {{ t.desc }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("trash-2") }}"></use></svg><span class="hide-sm">{{ page.t("delete") }}</span></button></form>
         </div>
         {% endif %}
       </div>
-    </div>
+    </li>
   {% endfor %}
-  </div>
+  </ul>
 {% endfor %}
-{% if days.is_empty() %}<p class="card p-8 text-center text-stone-500">{{ page.t("empty") }}</p>{% endif %}
+{% if days.is_empty() %}
+<section class="card">
+  {% if filtered %}
+    {% call m::empty(page, "search-x", page.t("empty_filtered"), page.t("empty_filtered_text"), "", "") %}{% endcall %}
+  {% else %}
+    {% call m::empty(page, "receipt-text", page.t("empty_title"), page.t("empty_text"), "/transactions/new", page.t("add_first")) %}{% endcall %}
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}

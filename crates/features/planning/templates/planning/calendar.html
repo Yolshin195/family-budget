@@ -1,56 +1,69 @@
 {% extends "base.html" %}
+{% import "macros.html" as m %}
 {% block title %}{{ page.t("title") }}{% endblock %}
+{% block heading %}{{ page.t("title") }}{% endblock %}
+{% block actions %}
+  <a class="btn-secondary" href="/planning/plans"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("list-checks") }}"></use></svg><span class="hide-sm">{{ page.t("manage") }}</span></a>
+  {% if page.can_write() %}<a class="btn-primary" href="/planning/plans/new"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg><span class="hide-sm">{{ page.t("add") }}</span></a>{% endif %}
+{% endblock %}
 {% block content %}
-<div class="flex flex-wrap items-center gap-3 mb-4">
-  <h1 class="text-2xl font-semibold mr-2">{{ page.t("title") }}</h1>
-  <div class="flex items-center rounded-lg border border-stone-200 bg-white">
-    <a class="px-3 py-1.5 hover:bg-stone-100 rounded-l-lg" href="?month={{ prev }}">←</a>
-    <span class="px-3 py-1.5 font-medium min-w-36 text-center">{{ month_title }}</span>
-    <a class="px-3 py-1.5 hover:bg-stone-100 rounded-r-lg" href="?month={{ next }}">→</a>
-  </div>
-  <a class="btn-ghost" href="?month={{ this_month }}">{{ page.t("today") }}</a>
-  <a class="btn-ghost ml-auto" href="/planning/plans">⚙ {{ page.t("manage") }}</a>
-  {% if page.can_write() %}<a class="btn-primary" href="/planning/plans/new">+ {{ page.t("add") }}</a>{% endif %}
+<div class="toolbar">
+  <nav class="pager" aria-label="{{ page.t("month_nav") }}">
+    <a class="btn-icon" href="?month={{ prev }}" aria-label="{{ page.t("prev_month") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
+    <span class="pager-title" aria-live="polite">{{ month_title }}</span>
+    <a class="btn-icon" href="?month={{ next }}" aria-label="{{ page.t("next_month") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
+  </nav>
+  <a class="btn-ghost btn-sm" href="?month={{ this_month }}">{{ page.t("today") }}</a>
 </div>
 
-<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-  <div class="card p-4"><div class="text-xs text-stone-500">{{ page.t("planned_exp") }}</div><div class="text-lg font-semibold tabular-nums">{{ still_to_pay }}</div>
-    {% if overdue > 0 %}<div class="text-xs text-rose-600 mt-0.5">{{ page.t("OVERDUE") }}: {{ overdue }}</div>{% endif %}</div>
-  <div class="card p-4"><div class="text-xs text-stone-500">{{ page.t("paid_exp") }}</div><div class="text-lg font-semibold tabular-nums text-stone-600">{{ paid }}</div></div>
-  <div class="card p-4"><div class="text-xs text-stone-500">{{ page.t("planned_inc") }}</div><div class="text-lg font-semibold tabular-nums text-brand-700">{{ income }}</div></div>
-  <div class="card p-4 text-xs text-stone-500 space-y-1">
-    <div><span class="inline-block w-2.5 h-2.5 rounded-sm bg-stone-300 mr-1"></span>{{ page.t("EXPECTED") }}</div>
-    <div><span class="inline-block w-2.5 h-2.5 rounded-sm bg-rose-500 mr-1"></span>{{ page.t("OVERDUE") }}</div>
-    <div><span class="inline-block w-2.5 h-2.5 rounded-sm bg-brand-500 mr-1"></span>{{ page.t("PAID") }}</div>
-    <div><span class="inline-block w-2.5 h-2.5 rounded-sm bg-stone-200 mr-1"></span><s>{{ page.t("SKIPPED") }}</s></div>
-  </div>
+<div class="stats">
+  <div class="stat"><p class="stat-label">{{ page.t("planned_exp") }}</p><p class="stat-value">{% call m::amount(still_to_pay, page.session.base_currency) %}{% endcall %}</p>
+    {% if overdue > 0 %}<p class="stat-note text-danger">{{ page.t("OVERDUE") }}: {{ overdue }}</p>{% endif %}</div>
+  <div class="stat"><p class="stat-label">{{ page.t("paid_exp") }}</p><p class="stat-value">{% call m::amount(paid, page.session.base_currency) %}{% endcall %}</p></div>
+  <div class="stat"><p class="stat-label">{{ page.t("planned_inc") }}</p><p class="stat-value text-income">{% call m::amount(income, page.session.base_currency) %}{% endcall %}</p></div>
+  <div class="stat"><p class="stat-label">{{ page.t("legend") }}</p>
+    <ul class="legend">
+      <li><span class="occ-dot occ-expected" aria-hidden="true"></span>{{ page.t("EXPECTED") }}</li>
+      <li><span class="occ-dot occ-overdue" aria-hidden="true"></span>{{ page.t("OVERDUE") }}</li>
+      <li><span class="occ-dot occ-paid" aria-hidden="true"></span>{{ page.t("PAID") }}</li>
+      <li><span class="occ-dot occ-skipped" aria-hidden="true"></span><s>{{ page.t("SKIPPED") }}</s></li>
+    </ul></div>
 </div>
 
-<div class="card overflow-hidden">
-  <div class="grid grid-cols-7 border-b border-stone-200 bg-stone-50">
-    {% for w in weekdays %}<div class="px-2 py-2 text-xs font-medium text-stone-500 text-center">{{ w }}</div>{% endfor %}
-  </div>
+<section class="card calendar" aria-label="{{ month_title }}">
+  <div class="cal-head" aria-hidden="true">{% for w in weekdays %}<div>{{ w }}</div>{% endfor %}</div>
   {% for week in weeks %}
-  <div class="grid grid-cols-7 divide-x divide-stone-100 border-b border-stone-100 last:border-b-0">
+  <div class="cal-week">
     {% for c in week %}
-    <div class="min-h-28 p-1.5 {% if !c.in_month %}bg-stone-50/70{% endif %}">
-      <div class="text-xs mb-1 {% if c.is_today %}inline-grid place-items-center w-6 h-6 rounded-full bg-stone-900 text-white{% else if c.in_month %}text-stone-700{% else %}text-stone-300{% endif %}">{{ c.day }}</div>
-      <div class="space-y-1">
+    <div class="cal-day{% if !c.in_month %} cal-out{% endif %}{% if c.is_today %} cal-today{% endif %}">
+      <div class="cal-num">{{ c.day }}</div>
       {% for o in c.items %}
-        <a href="{{ o.href }}" title="{{ o.title }} · {{ o.amount }} · {{ page.t(o.status) }}"
-           class="block rounded-md px-1.5 py-1 text-[11px] leading-tight transition hover:ring-2 hover:ring-brand-100
-           {% if o.status == "PAID" %}bg-brand-50 text-brand-900 border border-brand-100
-           {% else if o.status == "OVERDUE" %}bg-rose-50 text-rose-900 border border-rose-200
-           {% else if o.status == "SKIPPED" %}bg-stone-50 text-stone-400 line-through border border-stone-100
-           {% else %}bg-white text-stone-700 border border-stone-200{% endif %}">
-          <div class="truncate">{% if o.status == "PAID" %}✓ {% endif %}{{ o.title }}</div>
-          <div class="tabular-nums font-medium {% if !o.is_expense %}text-brand-700{% endif %}">{% if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}</div>
+        <a href="{{ o.href }}" class="occ occ-{{ o.status|lower }}" title="{{ o.title }} · {{ o.amount }} · {{ page.t(o.status) }}">
+          <span class="occ-title">{% if o.status == "PAID" %}<svg class="icon icon-xs" aria-hidden="true"><use href="{{ page.icon("check") }}"></use></svg>{% endif %}{{ o.title }}</span>
+          <span class="occ-amount{% if !o.is_expense %} text-income{% endif %}">{% if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}</span>
+          <span class="sr-only">{{ page.t(o.status) }}</span>
         </a>
       {% endfor %}
-      </div>
     </div>
     {% endfor %}
   </div>
   {% endfor %}
-</div>
+</section>
+
+<section class="agenda" aria-label="{{ month_title }}">
+  {% for day in agenda %}
+  <h2 class="agenda-day{% if day.is_today %} text-accent{% endif %}">{{ day.label }}</h2>
+  <ul class="card divide-y divide-line">
+    {% for o in day.items %}
+    <li><a href="{{ o.href }}" class="agenda-item">
+      <span class="occ-dot occ-{{ o.status|lower }}" aria-hidden="true"></span>
+      <span class="grow min-w-0"><span class="block truncate{% if o.status == "SKIPPED" %} line-through text-subtle{% endif %}">{{ o.title }}</span>
+        <span class="text-xs {% if o.status == "OVERDUE" %}text-danger{% else %}text-subtle{% endif %}">{{ page.t(o.status) }}</span></span>
+      <span class="amount{% if !o.is_expense %} text-income{% endif %}">{% if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}</span>
+    </a></li>
+    {% endfor %}
+  </ul>
+  {% endfor %}
+  {% if agenda.is_empty() %}<div class="card">{% call m::empty(page, "calendar-days", page.t("nothing_month"), page.t("empty_text"), "/planning/plans/new", page.t("add")) %}{% endcall %}</div>{% endif %}
+</section>
 {% endblock %}

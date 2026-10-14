@@ -10,7 +10,7 @@ use axum::{Extension, Form, Router};
 use chrono::{Datelike, Days, Months, NaiveDate};
 use kernel::error::AppError;
 use kernel::i18n::{Lang, month_name, weekdays};
-use kernel::web::{Choice, PageCtx, PageError, PageResult, money, parse_money, render, see_other, url_encode};
+use kernel::web::{Choice, Flash, PageCtx, PageError, PageResult, money_in, parse_money, render, see_other_flash, url_encode};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -30,11 +30,31 @@ pub fn router(service: Arc<PlanningService>) -> Router {
         .route("/plans/new", get(new_form).post(create))
         .route("/plans/{id}/edit", get(edit_form).post(update))
         .route("/plans/{id}/delete", post(delete))
+        .route("/plans/{id}/toggle", post(toggle))
+        .route("/plans/undo/{token}", post(undo))
         .with_state(service)
 }
 
 fn ctx(page: PageCtx) -> PageCtx {
     page.for_feature(crate::NAME, crate::i18n::dict)
+}
+
+/// Вложенная страница: хлебные крошки «Календарь → …».
+fn nested(page: PageCtx, plans: bool) -> PageCtx {
+    let page = ctx(page);
+    let cal = page.t("title");
+    let page = page.crumb(cal, "/planning");
+    if plans {
+        let p = page.t("plans");
+        page.crumb(p, "/planning/plans")
+    } else {
+        page
+    }
+}
+
+/// Строка словаря фичи (для тостов до привязки контекста к фиче).
+fn tr(page: &PageCtx, key: &str) -> String {
+    kernel::i18n::t(page.lang, Some(crate::i18n::dict), key)
 }
 
 fn today() -> NaiveDate {
@@ -84,6 +104,13 @@ struct DayCell {
     items: Vec<OccView>,
 }
 
+/// День со вхождениями — для списка на телефоне.
+struct AgendaDay {
+    label: String,
+    is_today: bool,
+    items: Vec<OccView>,
+}
+
 #[derive(Template)]
 #[template(path = "planning/calendar.html")]
 struct CalendarPage {
@@ -94,6 +121,7 @@ struct CalendarPage {
     this_month: String,
     weekdays: [&'static str; 7],
     weeks: Vec<Vec<DayCell>>,
+    agenda: Vec<AgendaDay>,
     still_to_pay: String,
     paid: String,
     income: String,
@@ -139,17 +167,28 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
         by_day.entry(o.date).or_default().push(OccView {
             href: format!("/planning/occurrence/{}/{}?back={}", o.plan.id, o.date, url_encode(&back)),
             title: o.plan.title(lang).to_string(),
-            amount: money(amount),
+            amount: money_in(lang, amount),
             status: o.status.clone(),
             is_expense: o.plan.is_expense(),
         });
     }
     let mut weeks = Vec::new();
+    let mut agenda = Vec::new();
     let mut d = grid_from;
     while d <= grid_to {
         let mut week = Vec::with_capacity(7);
         for _ in 0..7 {
-            week.push(DayCell { day: d.day(), in_month: d.month() == first.month(), is_today: d == t, items: by_day.remove(&d).unwrap_or_default() });
+            let items = by_day.remove(&d).unwrap_or_default();
+            let in_month = d.month() == first.month();
+            if in_month && !items.is_empty() {
+                let wd = weekdays(lang)[d.weekday().num_days_from_monday() as usize];
+                agenda.push(AgendaDay {
+                    label: format!("{wd}, {}", page.date(&d)),
+                    is_today: d == t,
+                    items: items.iter().map(|o| OccView { href: o.href.clone(), title: o.title.clone(), amount: o.amount.clone(), status: o.status.clone(), is_expense: o.is_expense }).collect(),
+                });
+            }
+            week.push(DayCell { day: d.day(), in_month, is_today: d == t, items });
             d = d.succ_opt().unwrap_or(d);
         }
         weeks.push(week);
@@ -161,9 +200,10 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
         this_month: ym(t),
         weekdays: weekdays(lang),
         weeks,
-        still_to_pay: money(to_pay),
-        paid: money(paid),
-        income: money(income),
+        agenda,
+        still_to_pay: money_in(lang, to_pay),
+        paid: money_in(lang, paid),
+        income: money_in(lang, income),
         overdue,
         page: ctx(page),
     })
@@ -206,19 +246,29 @@ async fn occurrence(
         pay_href: pay_href(&o, page.lang, &back),
         o,
         back,
-        page: ctx(page),
+        page: nested(page, false),
     })
 }
 
+/// «Пропустить»: без транзакции, тост с «Отменить» (снять пропуск).
 async fn skip(State(svc): Svc, Extension(page): Extension<PageCtx>, Path((plan, date)): Path<(Uuid, NaiveDate)>, Form(q): Form<BackQuery>) -> PageResult {
     let s = page.session.scope();
     svc.skip(s.project_id, s.user_id, plan, date).await?;
-    Ok(see_other(&safe_back(&q.back)))
+    let back = safe_back(&q.back);
+    let undo = format!("/planning/occurrence/{plan}/{date}/unskip?back={}", url_encode(&back));
+    Ok(see_other_flash(&page.config, &back, Flash::with_undo(tr(&page, "skipped_toast"), undo)))
 }
 
-async fn unskip(State(svc): Svc, Extension(page): Extension<PageCtx>, Path((plan, date)): Path<(Uuid, NaiveDate)>, Form(q): Form<BackQuery>) -> PageResult {
+async fn unskip(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Path((plan, date)): Path<(Uuid, NaiveDate)>,
+    Query(q): Query<BackQuery>,
+    Form(f): Form<BackQuery>,
+) -> PageResult {
     svc.unskip(page.session.project_id, plan, date).await?;
-    Ok(see_other(&safe_back(&q.back)))
+    let back = if f.back.is_empty() { safe_back(&q.back) } else { safe_back(&f.back) };
+    Ok(see_other_flash(&page.config, &back, Flash::ok(tr(&page, "unskipped_toast"))))
 }
 
 // ---------------------------------------------------------------- планы
@@ -239,11 +289,11 @@ async fn plans(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResu
         .into_iter()
         .map(|x| {
             let cat = titles.get(&x.category_code).cloned().unwrap_or_else(|| x.category_code.clone());
-            let amount = money(x.amount);
+            let amount = money_in(page.lang, x.amount);
             (x, cat, amount)
         })
         .collect();
-    render(&PlansPage { page: ctx(page), plans })
+    render(&PlansPage { page: nested(page, false), plans })
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -326,7 +376,7 @@ async fn form_page(svc: &PlanningService, page: PageCtx, id: Option<Uuid>, f: Pl
     let p = page.session.project_id;
     let accounts = svc.account_choices(p, page.lang).await?;
     let categories = svc.category_choices(p, page.lang).await?;
-    render(&PlanFormPage { page: ctx(page), id, f, recurrences: crate::domain::Recurrence::VALUES, accounts, categories, error })
+    render(&PlanFormPage { page: nested(page, true), id, f, recurrences: crate::domain::Recurrence::VALUES, accounts, categories, error })
 }
 
 async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
@@ -346,7 +396,7 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): F
     let s = page.session.scope();
     let result = async { svc.create(s.project_id, s.user_id, f.to_input()?).await }.await;
     match result {
-        Ok(_) => Ok(see_other("/planning/plans")),
+        Ok(_) => Ok(see_other_flash(&page.config, "/planning/plans", Flash::ok(page.t("toast.saved")))),
         Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, None, f, Some(m)).await,
         Err(e) => Err(PageError(e)),
     }
@@ -361,13 +411,38 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): 
     let p = page.session.project_id;
     let result = async { svc.update(p, id, f.to_input()?).await }.await;
     match result {
-        Ok(_) => Ok(see_other("/planning/plans")),
+        Ok(_) => Ok(see_other_flash(&page.config, "/planning/plans", Flash::ok(page.t("toast.saved")))),
         Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, Some(id), f, Some(m)).await,
         Err(e) => Err(PageError(e)),
     }
 }
 
+/// Удаление плана без «Вы уверены?»: тост с «Отменить».
 async fn delete(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>) -> PageResult {
-    svc.delete(page.session.project_id, id).await?;
-    Ok(see_other("/planning/plans"))
+    let token = svc.delete_with_undo(page.session.project_id, id).await?;
+    Ok(see_other_flash(&page.config, "/planning/plans", Flash::with_undo(page.t("toast.deleted"), format!("/planning/plans/undo/{token}"))))
+}
+
+async fn undo(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(token): Path<Uuid>) -> PageResult {
+    let s = page.session.scope();
+    let flash = match svc.undo_delete(s.project_id, s.user_id, token).await {
+        Ok(()) => Flash::ok(page.t("toast.restored")),
+        Err(AppError::NotFound(_)) => Flash::error(page.t("toast.undo_expired")),
+        Err(e) => return Err(PageError(e)),
+    };
+    Ok(see_other_flash(&page.config, "/planning/plans", flash))
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct ToggleForm {
+    active: String,
+}
+
+/// «Остановить» / «Возобновить» план из списка.
+async fn toggle(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>, Form(f): Form<ToggleForm>) -> PageResult {
+    let active = f.active == "1";
+    svc.set_active(page.session.project_id, id, active).await?;
+    let msg = tr(&page, if active { "resumed_toast" } else { "stopped_toast" });
+    Ok(see_other_flash(&page.config, "/planning/plans", Flash::ok(msg)))
 }

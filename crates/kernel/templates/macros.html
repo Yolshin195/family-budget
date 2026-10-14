@@ -1,11 +1,21 @@
+{# Ошибка под полем `name` (сообщение валидации «поле: текст»). У поля — aria-describedby="<name>-err". #}
+{% macro err(error, name) %}{% if let Some(m) = kernel::web::field_error(error, name) %}<p class="field-error" id="{{ name }}-err">{{ m }}</p>{% endif %}{% endmacro %}
+
+{# Атрибуты поля с ошибкой: aria-invalid + связь с текстом ошибки. #}
+{% macro aria(error, name) %} aria-describedby="{{ name }}-err"{% if kernel::web::field_error(error, name).is_some() %} aria-invalid="true"{% endif %}{% endmacro %}
+
+{# Ошибка, не привязанная к полям формы `fields` (через запятую), — блоком над формой. #}
+{% macro form_alert(error, fields) %}{% if let Some(m) = kernel::web::general_error(error, fields) %}<div class="alert alert-error mb-4" role="alert"><svg class="icon" aria-hidden="true"><use href="{{ kernel::web::icon_href("circle-alert") }}"></use></svg><span>{{ m }}</span></div>{% endif %}{% endmacro %}
+
 {# Переводимое поле: оригинал + язык оригинала + переводы ru/en/th. Имена полей формы: X, X_lang, X_ru, X_en, X_th. #}
-{% macro i18n_fields(page, field, label, original, lang, ru, en, th) %}
-<div class="grid gap-3 sm:grid-cols-[1fr_10rem]">
-  <div>
+{% macro i18n_fields(page, field, label, original, lang, ru, en, th, error) %}
+<div class="grid gap-4 sm:grid-cols-[1fr_11rem]">
+  <div class="field">
     <label class="label" for="{{ field }}">{{ label }}</label>
-    <input class="input" id="{{ field }}" name="{{ field }}" value="{{ original }}" required>
+    <input class="input" id="{{ field }}" name="{{ field }}" value="{{ original }}" required maxlength="200"{% call aria(error, field) %}{% endcall %}>
+    {% call err(error, field) %}{% endcall %}
   </div>
-  <div>
+  <div class="field">
     <label class="label" for="{{ field }}_lang">{{ page.t("lang.original") }}</label>
     <select class="input" id="{{ field }}_lang" name="{{ field }}_lang">
       <option value="RU" {% if lang == "RU" %}selected{% endif %}>RU · {{ page.t("RU") }}</option>
@@ -14,17 +24,30 @@
     </select>
   </div>
 </div>
-<details class="mt-2 rounded-lg border border-dashed border-stone-300 px-3 py-2" {% if !ru.is_empty() || !en.is_empty() || !th.is_empty() %}open{% endif %}>
-  <summary class="cursor-pointer text-sm text-stone-600">🌐 {{ page.t("lang.translations") }}</summary>
-  <div class="grid gap-3 sm:grid-cols-3 mt-2">
-    <div><label class="label">RU</label><input class="input" name="{{ field }}_ru" value="{{ ru }}"></div>
-    <div><label class="label">EN</label><input class="input" name="{{ field }}_en" value="{{ en }}"></div>
-    <div><label class="label">TH</label><input class="input" name="{{ field }}_th" value="{{ th }}"></div>
+<details class="disclosure"{% if !ru.is_empty() || !en.is_empty() || !th.is_empty() %} open{% endif %}>
+  <summary><svg class="icon" aria-hidden="true"><use href="{{ page.icon("languages") }}"></use></svg>{{ page.t("lang.translations") }}</summary>
+  <div class="grid gap-4 sm:grid-cols-3 mt-3">
+    <div class="field"><label class="label" for="{{ field }}_ru">RU</label><input class="input" id="{{ field }}_ru" name="{{ field }}_ru" value="{{ ru }}" lang="ru" maxlength="200"></div>
+    <div class="field"><label class="label" for="{{ field }}_en">EN</label><input class="input" id="{{ field }}_en" name="{{ field }}_en" value="{{ en }}" lang="en" maxlength="200"></div>
+    <div class="field"><label class="label" for="{{ field }}_th">TH</label><input class="input" id="{{ field }}_th" name="{{ field }}_th" value="{{ th }}" lang="th" maxlength="200"></div>
   </div>
 </details>
 {% endmacro %}
 
 {# Отметка «нет перевода на язык интерфейса». #}
 {% macro no_tr(page, missing) %}
-{% if missing %}<span class="chip bg-amber-50 text-amber-700 border border-amber-200" title="{{ page.t("lang.no_translation") }}">🌐 {{ page.lang.upper() }}?</span>{% endif %}
+{% if missing %}<span class="badge badge-warn" title="{{ page.t("lang.no_translation") }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("languages") }}"></use></svg>{{ page.lang.upper() }}?<span class="sr-only"> — {{ page.t("lang.no_translation") }}</span></span>{% endif %}
 {% endmacro %}
+
+{# Пустое состояние: иконка, объяснение и кнопка первого действия (если можно писать). #}
+{% macro empty(page, icon, title, text, href, action) %}
+<div class="empty">
+  <span class="empty-icon"><svg class="icon icon-lg" aria-hidden="true"><use href="{{ page.icon(icon) }}"></use></svg></span>
+  <p class="empty-title">{{ title }}</p>
+  {% if !text.is_empty() %}<p class="empty-text">{{ text }}</p>{% endif %}
+  {% if !href.is_empty() && page.can_write() %}<a class="btn-primary" href="{{ href }}"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ action }}</a>{% endif %}
+</div>
+{% endmacro %}
+
+{# Сумма с валютой: выровнена вправо, цифры моноширинные. #}
+{% macro amount(value, currency) %}<span class="amount">{{ value }}<span class="cur">{{ currency }}</span></span>{% endmacro %}

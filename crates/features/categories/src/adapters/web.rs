@@ -7,7 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use kernel::error::AppError;
-use kernel::web::{Choice, PageCtx, PageError, PageResult, render, see_other};
+use kernel::web::{Flash, see_other_flash, Choice, PageCtx, PageError, PageResult, render, see_other};
 use serde::Deserialize;
 
 use crate::dto::{CategoryDto, CreateCategoryDto, UpdateCategoryDto};
@@ -21,11 +21,19 @@ pub fn router(service: Arc<CategoryService>) -> Router {
         .route("/new", get(new_form).post(create))
         .route("/{code}/edit", get(edit_form).post(update))
         .route("/{code}/archive", post(archive))
+        .route("/{code}/restore", post(restore))
         .with_state(service)
 }
 
 fn ctx(page: PageCtx) -> PageCtx {
     page.for_feature(crate::NAME, crate::i18n::dict)
+}
+
+/// Вложенная страница (форма): хлебная крошка на список.
+fn form_ctx(page: PageCtx) -> PageCtx {
+    let page = ctx(page);
+    let title = page.t("title");
+    page.crumb(title, crate::MOUNT)
 }
 
 #[derive(Template)]
@@ -96,7 +104,7 @@ impl CategoryForm {
 
 async fn form_page(svc: &CategoryService, page: PageCtx, is_new: bool, f: CategoryForm, error: Option<String>) -> PageResult {
     let parents = svc.choices(page.session.project_id, page.lang).await?;
-    render(&FormPage { page: ctx(page), is_new, f, parents, error })
+    render(&FormPage { page: form_ctx(page), is_new, f, parents, error })
 }
 
 async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
@@ -168,13 +176,25 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
     }
 }
 
+/// Архив без «Вы уверены?»: тост с «Отменить» на 5 секунд.
 async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
     match svc.archive(page.session.project_id, &code).await {
-        Ok(()) => Ok(see_other("/categories")),
+        Ok(()) => {
+            let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/categories/{}/restore", kernel::web::url_encode(&code)));
+            Ok(see_other_flash(&page.config, "/categories", flash))
+        }
         Err(AppError::Validation(m)) => {
             let c = svc.get(page.session.project_id, &code).await?;
             form_page(&svc, page, false, CategoryForm::from_dto(c), Some(m)).await
         }
+        Err(e) => Err(PageError(e)),
+    }
+}
+
+async fn restore(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
+    match svc.restore(page.session.project_id, &code).await {
+        Ok(()) => Ok(see_other_flash(&page.config, "/categories", Flash::ok(format!("{} · {code}", page.t("toast.restored"))))),
+        Err(AppError::Validation(m)) => Ok(see_other_flash(&page.config, "/categories", Flash::error(m))),
         Err(e) => Err(PageError(e)),
     }
 }

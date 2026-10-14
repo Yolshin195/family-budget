@@ -17,11 +17,11 @@ use std::sync::Arc;
 
 use kernel::context::AppContext;
 use kernel::feature::Feature;
-use kernel::web::{NavItem, Web};
+use kernel::web::{NavGroup, NavItem, Web};
 use utoipa::OpenApi;
 
 pub use ports::Deps;
-pub use ports::{AccountsLookup, CategoriesLookup, FactLine, Payment};
+pub use ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, FactLine, Payment};
 /// Use cases фичи. Другие фичи получают к ним доступ только через свои порты и адаптеры в app/wiring.
 pub use service::TransactionService as Service;
 
@@ -45,7 +45,9 @@ pub fn feature(api: Arc<Service>) -> Feature {
         web: Some(Web {
             pages: adapters::web::router(api),
             public: None,
-            nav: Some(NavItem { feature: NAME, href: MOUNT, label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)), order: 20 }),
+            nav: Some(NavItem { feature: NAME, href: MOUNT, label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)), icon: "receipt-text", group: NavGroup::Main, order: 20, mobile: true }),
+            root: None,
+            account: None,
         }),
     }
 }

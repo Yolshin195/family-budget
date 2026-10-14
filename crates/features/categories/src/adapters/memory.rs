@@ -49,4 +49,11 @@ impl CategoryRepository for InMemoryCategoryRepository {
         let rows = self.rows.lock().unwrap();
         Ok(rows.iter().filter(|r| r.project_id == project_id && (include_archived || !r.archived)).count() as i64)
     }
+
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
+        let mut rows = self.rows.lock().unwrap();
+        let n = rows.len();
+        rows.retain(|r| r.project_id != project_id);
+        Ok((n - rows.len()) as u64)
+    }
 }

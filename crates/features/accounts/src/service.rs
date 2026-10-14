@@ -63,6 +63,18 @@ impl AccountService {
         self.repo.update(&item).await
     }
 
+    /// Вернуть из архива («Отменить» в тосте после архивирования).
+    pub async fn restore(&self, project_id: Uuid, code: &str) -> AppResult<()> {
+        let mut item = self.load(project_id, code).await?;
+        item.archived = false;
+        self.repo.update(&item).await
+    }
+
+    /// Удалить все записи проекта (удаление проекта или аккаунта).
+    pub async fn purge_project(&self, project_id: Uuid) -> AppResult<u64> {
+        self.repo.purge(project_id).await
+    }
+
     /// Публичный контракт для других фич: существует ли активная запись с таким кодом.
     pub async fn exists(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
         let Ok(code) = normalize("code", code) else { return Ok(false) };

@@ -17,6 +17,13 @@ use crate::ports::{Deps, PlanRepository};
 pub struct PlanningService {
     repo: Arc<dyn PlanRepository>,
     deps: Deps,
+    /// Удалённые планы с их пропусками — для «Отменить» в тосте.
+    undo: kernel::undo::UndoBuffer<(Plan, Vec<NaiveDate>)>,
+}
+
+/// Окно, в котором ищутся пропуски удаляемого плана (весь разумный диапазон дат).
+fn all_dates() -> (NaiveDate, NaiveDate) {
+    (NaiveDate::from_ymd_opt(1900, 1, 1).unwrap_or_default(), NaiveDate::from_ymd_opt(2999, 12, 31).unwrap_or_default())
 }
 
 /// Окно расчёта вхождений — не больше 3 лет за запрос.
@@ -24,7 +31,7 @@ const MAX_RANGE_DAYS: i64 = 3 * 366;
 
 impl PlanningService {
     pub fn new(repo: Arc<dyn PlanRepository>, deps: Deps) -> Self {
-        Self { repo, deps }
+        Self { repo, deps, undo: Default::default() }
     }
 
     pub async fn create(&self, project_id: Uuid, user_id: Uuid, input: PlanInput) -> AppResult<PlanDto> {
@@ -57,6 +64,37 @@ impl PlanningService {
     /// Удаление плана; оплаченные им транзакции остаются (ссылка plan_id просто перестаёт резолвиться).
     pub async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<()> {
         if self.repo.delete(project_id, id).await? { Ok(()) } else { Err(not_found(id)) }
+    }
+
+    /// Удаление из интерфейса: план и его пропуски запоминаются — токен для «Отменить».
+    pub async fn delete_with_undo(&self, project_id: Uuid, id: Uuid) -> AppResult<Uuid> {
+        let plan = self.load(project_id, id).await?;
+        let (from, to) = all_dates();
+        let skips = self.repo.skips(project_id, from, to).await?.into_iter().filter(|(p, _)| *p == id).map(|(_, d)| d).collect();
+        self.delete(project_id, id).await?;
+        Ok(self.undo.put(project_id, (plan, skips)))
+    }
+
+    /// «Отменить»: вернуть план с тем же id и его пропуски.
+    pub async fn undo_delete(&self, project_id: Uuid, user_id: Uuid, token: Uuid) -> AppResult<()> {
+        let (plan, skips) = self.undo.take(project_id, token).ok_or_else(|| AppError::NotFound("отменить уже нельзя".into()))?;
+        self.repo.insert(&plan).await?;
+        for d in skips {
+            self.repo.add_skip(project_id, plan.id, d, user_id).await?;
+        }
+        Ok(())
+    }
+
+    /// Остановить или возобновить план (остановленный показывает только решённые вхождения).
+    pub async fn set_active(&self, project_id: Uuid, id: Uuid, active: bool) -> AppResult<()> {
+        let mut plan = self.load(project_id, id).await?;
+        plan.active = active;
+        self.repo.update(&plan).await
+    }
+
+    /// Удалить все планы проекта (удаление проекта или аккаунта).
+    pub async fn purge_project(&self, project_id: Uuid) -> AppResult<u64> {
+        self.repo.purge(project_id).await
     }
 
     /// Вхождения всех активных планов в периоде со статусами, по дате.

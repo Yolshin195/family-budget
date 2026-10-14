@@ -6,13 +6,13 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, put};
 use axum::{Extension, Json, Router};
-use kernel::auth::Scope;
+use kernel::auth::{Scope, Session};
 use kernel::error::AppResult;
 use kernel::pagination::{PagedResponse, Pagination};
 use utoipa::OpenApi;
 use uuid::Uuid;
 
-use crate::dto::{LineDto, ListQuery, TransactionDto, TransactionInput, TranslationInput};
+use crate::dto::{LineDto, ListQuery, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, QuickQuery, TransactionDto, TransactionInput, TranslationInput};
 use crate::service::TransactionService;
 
 type Svc = State<Arc<TransactionService>>;
@@ -20,6 +20,7 @@ type Svc = State<Arc<TransactionService>>;
 pub fn router(service: Arc<TransactionService>) -> Router {
     Router::new()
         .route("/", get(list).post(create))
+        .route("/quick-defaults", get(quick_defaults))
         .route("/{id}", get(get_one).put(update).delete(delete))
         .route("/{id}/translation", put(translate))
         .with_state(service)
@@ -27,8 +28,8 @@ pub fn router(service: Arc<TransactionService>) -> Router {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(create, list, get_one, update, delete, translate),
-    components(schemas(TransactionInput, TransactionDto, LineDto, TranslationInput)),
+    paths(create, list, get_one, update, delete, translate, quick_defaults),
+    components(schemas(TransactionInput, TransactionDto, LineDto, TranslationInput, QuickDefaultsDto, QuickAccountDto, QuickCategoryDto)),
     tags((name = "Транзакции", description = "Операции с позициями; сумма = сумма позиций"))
 )]
 pub struct ApiDoc;
@@ -74,4 +75,13 @@ pub async fn delete(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id
     responses((status = 200, body = TransactionDto), (status = 404), (status = 422)), security(("bearer_auth" = [])))]
 pub async fn translate(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>, Json(body): Json<TranslationInput>) -> AppResult<Json<TransactionDto>> {
     Ok(Json(svc.translate(scope.project_id, id, body).await?))
+}
+
+/// Быстрый расход: счёт по умолчанию, частые категории и остатки лимитов по ним. Сохранение —
+/// обычный `POST /api/transactions`.
+#[utoipa::path(get, path = "/api/transactions/quick-defaults", tag = "Транзакции", params(QuickQuery),
+    responses((status = 200, body = QuickDefaultsDto)), security(("bearer_auth" = [])))]
+pub async fn quick_defaults(State(svc): Svc, Extension(s): Extension<Session>, Query(q): Query<QuickQuery>) -> AppResult<Json<QuickDefaultsDto>> {
+    let date = q.date.unwrap_or_else(|| chrono::Local::now().date_naive());
+    Ok(Json(svc.quick_defaults(s.project_id, s.user_id, &s.base_currency, s.lang, date).await?))
 }

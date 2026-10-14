@@ -172,3 +172,60 @@ impl TransactionDto {
         self.tx_kind == "EXPENSE"
     }
 }
+
+/// Счёт в форме быстрого расхода.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct QuickAccountDto {
+    pub code: String,
+    pub title: String,
+    pub currency: String,
+    /// Символ валюты для показа рядом с суммой (฿, $)
+    pub symbol: String,
+    /// Курс 1 единицы валюты счёта к базовой валюте на дату (для предупреждения о лимите)
+    #[schema(value_type = String)]
+    pub rate_to_base: Decimal,
+}
+
+/// Категория в форме быстрого расхода: дерево, поиск на трёх языках, остаток лимита за месяц.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct QuickCategoryDto {
+    pub code: String,
+    pub parent_code: Option<String>,
+    /// EXPENSE / INCOME
+    pub kind: String,
+    /// Название на языке интерфейса
+    pub title: String,
+    pub depth: usize,
+    /// Оригинал и переводы — для поиска на любом из трёх языков
+    pub search: String,
+    /// Лимит узла за месяц (в базовой валюте), если задан
+    #[schema(value_type = Option<String>)]
+    pub limit: Option<Decimal>,
+    /// Факт + план за месяц по поддереву
+    #[schema(value_type = String)]
+    pub forecast: Decimal,
+    /// Сколько ещё можно потратить с учётом предков
+    #[schema(value_type = Option<String>)]
+    pub available: Option<Decimal>,
+}
+
+/// Подсказки для быстрого расхода: всё, чтобы добавить операцию за ≤ 5 секунд.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct QuickDefaultsDto {
+    pub date: NaiveDate,
+    pub base_currency: String,
+    /// Последний счёт, которым пользователь пользовался в проекте
+    pub default_account: Option<String>,
+    pub accounts: Vec<QuickAccountDto>,
+    /// До 6 частых категорий расходов пользователя за 30 дней
+    pub frequent_expense: Vec<String>,
+    /// До 6 частых категорий доходов
+    pub frequent_income: Vec<String>,
+    pub categories: Vec<QuickCategoryDto>,
+}
+
+#[derive(Debug, Default, Deserialize, IntoParams)]
+pub struct QuickQuery {
+    /// Дата операции (по умолчанию — сегодня): от неё считаются месяц лимитов и курсы
+    pub date: Option<NaiveDate>,
+}

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#312e81"/><stop offset="1" stop-color="#4338ca"/></linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <g transform="translate(96 215) scale(3.1)">
+    <rect width="64" height="64" rx="14" fill="#fff" fill-opacity=".12"/>
+    <g transform="translate(14 14) scale(1.5)" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/>
+      <path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>
+    </g>
+  </g>
+  <!-- Бюджет по веткам: полосы заполнения лимитов -->
+  <g transform="translate(470 150)">
+    <rect width="620" height="330" rx="24" fill="#fff"/>
+    <g fill="#e7e5e4"><rect x="40" y="48" width="180" height="14" rx="7"/><rect x="40" y="118" width="140" height="14" rx="7"/><rect x="40" y="188" width="200" height="14" rx="7"/><rect x="40" y="258" width="120" height="14" rx="7"/></g>
+    <g><rect x="280" y="46" width="300" height="18" rx="9" fill="#f5f5f4"/><rect x="280" y="46" width="190" height="18" rx="9" fill="#047857"/></g>
+    <g><rect x="280" y="116" width="300" height="18" rx="9" fill="#f5f5f4"/><rect x="280" y="116" width="262" height="18" rx="9" fill="#f59e0b"/></g>
+    <g><rect x="280" y="186" width="300" height="18" rx="9" fill="#f5f5f4"/><rect x="280" y="186" width="300" height="18" rx="9" fill="#be123c"/></g>
+    <g><rect x="280" y="256" width="300" height="18" rx="9" fill="#f5f5f4"/><rect x="280" y="256" width="96" height="18" rx="9" fill="#047857"/></g>
+  </g>
+</svg>

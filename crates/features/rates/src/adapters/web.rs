@@ -7,7 +7,7 @@ use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use kernel::error::AppError;
-use kernel::web::{Choice, PageCtx, PageError, PageResult, parse_money, render, see_other};
+use kernel::web::{Flash, see_other_flash, Choice, PageCtx, PageError, PageResult, parse_money, render, see_other};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -17,7 +17,9 @@ use crate::service::RateService;
 type Svc = State<Arc<RateService>>;
 
 pub fn router(service: Arc<RateService>) -> Router {
-    Router::new().route("/", get(list).post(create)).route("/{id}/delete", post(delete)).with_state(service)
+    Router::new()
+        .route("/", get(list).post(create)).route("/{id}/delete", post(delete))
+        .route("/undo/{token}", post(undo)).with_state(service)
 }
 
 #[derive(Template)]
@@ -70,7 +72,17 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): F
     }
 }
 
+/// Удаление без «Вы уверены?»: тост с «Отменить» на 5 секунд.
 async fn delete(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>) -> PageResult {
-    svc.delete(page.session.project_id, id).await?;
-    Ok(see_other("/rates"))
+    let token = svc.delete_with_undo(page.session.project_id, id).await?;
+    Ok(see_other_flash(&page.config, "/rates", Flash::with_undo(page.t("toast.deleted"), format!("/rates/undo/{token}"))))
+}
+
+async fn undo(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(token): Path<Uuid>) -> PageResult {
+    let flash = match svc.undo_delete(page.session.project_id, token).await {
+        Ok(()) => Flash::ok(page.t("toast.restored")),
+        Err(AppError::NotFound(_)) => Flash::error(page.t("toast.undo_expired")),
+        Err(e) => return Err(PageError(e)),
+    };
+    Ok(see_other_flash(&page.config, "/rates", flash))
 }

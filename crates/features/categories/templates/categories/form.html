@@ -1,46 +1,40 @@
 {% extends "base.html" %}
 {% import "macros.html" as m %}
-{% block title %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit") }} {{ f.code }}{% endif %}{% endblock %}
+{% block title %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit_title") }} {{ f.code }}{% endif %}{% endblock %}
+{% block heading %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit_title") }} <span class="font-mono">{{ f.code }}</span>{% endif %}{% endblock %}
 {% block content %}
-<a href="/categories" class="text-sm text-stone-500 hover:text-stone-900">← {{ page.t("title") }}</a>
-<h1 class="text-2xl font-semibold mt-1 mb-4">{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit") }} <span class="font-mono">{{ f.code }}</span>{% endif %}</h1>
-{% if let Some(err) = error %}<div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{{ err }}</div>{% endif %}
-<form method="post" class="card p-5 space-y-4 max-w-2xl">
-  <div class="grid gap-3 sm:grid-cols-2">
-    <div>
-      <label class="label">{{ page.t("code") }}</label>
-      <input class="input font-mono uppercase" name="code" value="{{ f.code }}" {% if !is_new %}readonly{% endif %} required placeholder="FOOD_CAFE">
-      <p class="text-xs text-stone-400 mt-1">{{ page.t("code_hint") }}</p>
+{% call m::form_alert(error, "code,name,category_kind,parent_code,sort_order") %}{% endcall %}
+<form method="post" class="card card-pad form max-w-2xl" data-form>
+  <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+  <div class="grid gap-4 sm:grid-cols-2">
+    <div class="field">
+      <label class="label" for="code">{{ page.t("code") }}</label>
+      <input class="input font-mono uppercase" id="code" name="code" value="{{ f.code }}"{% if !is_new %} readonly{% else %} autofocus{% endif %} required maxlength="40" placeholder="FOOD_CAFE" aria-describedby="code-hint code-err"{% if kernel::web::field_error(error, "code").is_some() %} aria-invalid="true"{% endif %}>
+      <p class="hint" id="code-hint">{{ page.t("code_hint") }}</p>{% call m::err(error, "code") %}{% endcall %}
     </div>
-    <div><label class="label">{{ page.t("kind") }}</label>
-      <select class="input" name="category_kind" id="kind">
+    <div class="field"><label class="label" for="kind">{{ page.t("kind") }}</label>
+      <select class="input" name="category_kind" id="kind" data-filter-target="#parent">
         <option value="EXPENSE" {% if f.category_kind == "EXPENSE" %}selected{% endif %}>{{ page.t("expense") }}</option>
         <option value="INCOME" {% if f.category_kind == "INCOME" %}selected{% endif %}>{{ page.t("income") }}</option>
       </select></div>
   </div>
-  {% call m::i18n_fields(page, "name", page.t("name"), f.name, f.name_lang, f.name_ru, f.name_en, f.name_th) %}{% endcall %}
-  <div class="grid gap-3 sm:grid-cols-[1fr_8rem]">
-    <div><label class="label">{{ page.t("parent") }}</label>
-      <select class="input" name="parent_code" id="parent">
+  {% call m::i18n_fields(page, "name", page.t("name"), f.name, f.name_lang, f.name_ru, f.name_en, f.name_th, error) %}{% endcall %}
+  <div class="grid gap-4 sm:grid-cols-[1fr_8rem]">
+    <div class="field"><label class="label" for="parent">{{ page.t("parent") }}</label>
+      <select class="input" name="parent_code" id="parent"{% call m::aria(error, "parent_code") %}{% endcall %}>
         <option value="" data-kind="">{{ page.t("root") }}</option>
         {% for c in parents %}{% if c.code != f.code %}
           <option value="{{ c.code }}" data-kind="{{ c.tag }}" {% if f.parent_code == c.code %}selected{% endif %}>{{ c.indent() }}{{ c.label }}</option>
         {% endif %}{% endfor %}
-      </select></div>
-    <div><label class="label">{{ page.t("sort_order") }}</label><input class="input" type="number" name="sort_order" value="{{ f.sort_order }}"></div>
+      </select>{% call m::err(error, "parent_code") %}{% endcall %}</div>
+    <div class="field"><label class="label" for="sort_order">{{ page.t("sort_order") }}</label><input class="input" type="number" id="sort_order" name="sort_order" value="{{ f.sort_order }}"{% call m::aria(error, "sort_order") %}{% endcall %}>
+      {% call m::err(error, "sort_order") %}{% endcall %}</div>
   </div>
-  <div class="flex items-center gap-2 pt-2">
+  <div class="form-actions">
     <button class="btn-primary">{{ page.t("save") }}</button>
     <a href="/categories" class="btn-ghost">{{ page.t("cancel") }}</a>
-    {% if !is_new %}<button formaction="/categories/{{ f.code }}/archive" formnovalidate class="btn-danger ml-auto">{{ page.t("archive") }}</button>{% endif %}
+    {% if !is_new %}<button formaction="/categories/{{ f.code }}/archive" formnovalidate class="btn-ghost text-danger ml-auto">
+      <svg class="icon" aria-hidden="true"><use href="{{ page.icon("archive") }}"></use></svg>{{ page.t("archive") }}</button>{% endif %}
   </div>
 </form>
-<script>
-  // Родителем может быть только категория того же типа.
-  const kind = document.getElementById('kind'), parent = document.getElementById('parent');
-  function sync() {
-    for (const o of parent.options) { const ok = !o.dataset.kind || o.dataset.kind === kind.value; o.hidden = !ok; if (!ok && o.selected) parent.value = ''; }
-  }
-  kind.addEventListener('change', sync); sync();
-</script>
 {% endblock %}

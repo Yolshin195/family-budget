@@ -1,27 +1,27 @@
 {% extends "base.html" %}
 {% import "macros.html" as m %}
 {% block title %}{{ page.t("title") }}{% endblock %}
+{% block heading %}{{ page.t("title") }}{% endblock %}
+{% block actions %}{% if page.can_write() %}<a href="/categories/new" class="btn-primary"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("add") }}</a>{% endif %}{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-1">
-  <h1 class="text-2xl font-semibold">{{ page.t("title") }}</h1>
-  {% if page.can_write() %}<a href="/categories/new" class="btn-primary">+ {{ page.t("add") }}</a>{% endif %}
-</div>
-<p class="text-sm text-stone-500 mb-4">{{ page.t("tree_hint") }}</p>
+<p class="text-muted mb-4 max-w-3xl">{{ page.t("tree_hint") }}</p>
 <div class="grid gap-4 lg:grid-cols-2 items-start">
 {% for (kind, label) in [("EXPENSE", "expenses"), ("INCOME", "incomes")] %}
-  <section class="card">
-    <h2 class="px-4 py-3 border-b border-stone-200 font-medium">{{ page.t(label) }}</h2>
-    <ul class="divide-y divide-stone-100">
+  <section class="card" aria-labelledby="h-{{ kind }}">
+    <div class="card-head"><h2 class="section-title" id="h-{{ kind }}">{{ page.t(label) }}</h2></div>
+    <ul class="tree" role="list">
     {% for (depth, c) in rows %}{% if c.category_kind == **kind %}
-      <li class="flex items-center gap-2 px-4 py-2 group {% if c.archived %}opacity-50{% endif %}" style="padding-left: {{ 1 + depth * 3 / 2 }}rem">
-        {% if *depth > 0 %}<span class="text-stone-300">└</span>{% endif %}
+      <li class="tree-row indent-{{ depth }}{% if c.archived %} row-muted{% endif %}">
+        {% if *depth > 0 %}<span class="tree-branch" aria-hidden="true"></span>{% endif %}
         <span class="{% if *depth == 0 %}font-medium{% endif %}">{{ c.title(page.lang) }}</span>
         {% call m::no_tr(page, c.missing_tr(page.lang)) %}{% endcall %}
-        <span class="text-xs text-stone-400 font-mono">{{ c.code }}</span>
+        <span class="text-xs text-subtle font-mono">{{ c.code }}</span>
+        {% if c.archived %}<span class="badge">{{ page.t("archived") }}</span>{% endif %}
         {% if page.can_write() %}
-        <span class="ml-auto flex gap-1 opacity-0 group-hover:opacity-100 transition">
-          {% if !c.archived %}<a class="btn-ghost !py-1 text-xs" href="/categories/new?parent={{ c.code }}&kind={{ c.category_kind }}">{{ page.t("add_child") }}</a>{% endif %}
-          <a class="btn-ghost !py-1 text-xs" href="/categories/{{ c.code }}/edit">{{ page.t("edit") }}</a>
+        <span class="row-actions">
+          {% if !c.archived %}<a class="btn-ghost btn-sm" href="/categories/new?parent={{ c.code }}&amp;kind={{ c.category_kind }}" aria-label="{{ page.t("add_child") }}: {{ c.title(page.lang) }}">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg><span class="hide-sm">{{ page.t("add_child") }}</span></a>{% endif %}
+          <a class="btn-ghost btn-sm" href="/categories/{{ c.code }}/edit" aria-label="{{ page.t("edit") }}: {{ c.title(page.lang) }}">{{ page.t("edit") }}</a>
         </span>
         {% endif %}
       </li>
@@ -30,4 +30,5 @@
   </section>
 {% endfor %}
 </div>
+{% if rows.is_empty() %}<section class="card mt-4">{% call m::empty(page, "folder-tree", page.t("empty_title"), page.t("empty_text"), "/categories/new", page.t("add")) %}{% endcall %}</section>{% endif %}
 {% endblock %}

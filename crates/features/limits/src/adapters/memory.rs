@@ -55,4 +55,11 @@ impl LimitRepository for InMemoryLimitRepository {
         rows.retain(|r| !(r.project_id == project_id && r.id == id));
         Ok(rows.len() < before)
     }
+
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
+        let mut rows = self.rows.lock().unwrap();
+        let n = rows.len();
+        rows.retain(|r| r.project_id != project_id);
+        Ok((n - rows.len()) as u64)
+    }
 }

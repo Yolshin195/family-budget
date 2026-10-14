@@ -1,0 +1,42 @@
+{% extends "public.html" %}
+{% block title %}{{ self.k("title") }}{% endblock %}
+{% block meta %}
+  <meta name="description" content="{{ self.k("intro") }}">
+  <link rel="canonical" href="{{ p.canonical() }}">
+  {% for l in p.langs %}<link rel="alternate" hreflang="{{ l.code() }}" href="{{ p.url(l) }}">
+  {% endfor %}<link rel="alternate" hreflang="x-default" href="{{ p.base }}{{ p.path }}">
+{% endblock %}
+{% block body %}
+<a class="skip-link" href="#main">{{ self.t("skip_to_content") }}</a>
+<header class="site-header">
+  <div class="site-wrap site-header-row">
+    <a href="/?lang={{ lang.code() }}" class="logo" aria-label="{{ self.t("footer.home") }}">
+      <span class="logo-mark"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("wallet") }}"></use></svg></span>
+      <span class="logo-text">{{ self.t("app.title") }}</span>
+    </a>
+    <div class="lang-switch" role="group" aria-label="{{ self.t("nav.language") }}">
+      {% for l in p.langs %}<a href="{{ p.path }}?lang={{ l.code() }}" class="lang-link" hreflang="{{ l.code() }}" lang="{{ l.code() }}"{% if *l == lang %} aria-current="true"{% endif %}>{{ l.upper() }}</a>{% endfor %}
+    </div>
+  </div>
+</header>
+<main id="main" class="site-wrap site-narrow legal">
+  <h1 class="site-h1">{{ self.k("title") }}</h1>
+  {% if let Some(n) = notice %}<div class="alert alert-ok mb-6" role="status"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("circle-check") }}"></use></svg><span>{{ n }}</span></div>{% endif %}
+  <p class="lead">{{ self.k("intro") }}</p>
+  {% for (h, text) in sections %}
+  <section><h2>{{ h }}</h2><p>{{ text }}</p></section>
+  {% endfor %}
+  <section><h2>{{ self.t("footer.contacts") }}</h2><p>{{ self.t("contacts.text") }} <a class="link" href="mailto:{{ p.contact }}">{{ p.contact }}</a></p></section>
+  <p class="text-sm text-subtle mt-8">{{ self.t("updated") }}: 13.10.2026</p>
+</main>
+<footer class="site-footer">
+  <div class="site-wrap site-footer-row">
+    <a class="link" href="/?lang={{ lang.code() }}">← {{ self.t("footer.home") }}</a>
+    <ul class="footer-links">
+      <li><a href="/privacy?lang={{ lang.code() }}">{{ self.t("footer.privacy") }}</a></li>
+      <li><a href="/terms?lang={{ lang.code() }}">{{ self.t("footer.terms") }}</a></li>
+      <li><a href="/data-deletion?lang={{ lang.code() }}">{{ self.t("footer.deletion") }}</a></li>
+    </ul>
+  </div>
+</footer>
+{% endblock %}

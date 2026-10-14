@@ -25,6 +25,8 @@ pub trait RateRepository: Send + Sync {
     async fn count(&self, project_id: Uuid, period: Period) -> AppResult<i64>;
     /// `true`, если запись была удалена.
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool>;
+    /// Удалить все записи проекта (удаление проекта или аккаунта).
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
 }
 
 /// Зависимости фичи от других фич. Порты объявляет эта фича (потребитель),

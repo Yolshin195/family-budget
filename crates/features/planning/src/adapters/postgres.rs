@@ -181,4 +181,12 @@ impl PlanRepository for PostgresPlanRepository {
             .await?;
         Ok(())
     }
+
+    async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM fb_plan_skips WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
+        let r = sqlx::query("DELETE FROM fb_plans WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(r.rows_affected())
+    }
 }

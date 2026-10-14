@@ -7,7 +7,7 @@ use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use kernel::error::AppError;
-use kernel::web::{Choice, PageCtx, PageError, PageResult, parse_money, render, see_other};
+use kernel::web::{Flash, see_other_flash, Choice, PageCtx, PageError, PageResult, parse_money, render, see_other};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -17,13 +17,16 @@ use crate::service::LimitService;
 type Svc = State<Arc<LimitService>>;
 
 pub fn router(service: Arc<LimitService>) -> Router {
-    Router::new().route("/", get(list).post(create)).route("/{id}/delete", post(delete)).with_state(service)
+    Router::new()
+        .route("/", get(list).post(create)).route("/{id}/delete", post(delete))
+        .route("/undo/{token}", post(undo)).with_state(service)
 }
 
 struct Row {
     dto: LimitDto,
     category: String,
-    indent: String,
+    /// Уровень категории в дереве (отступ строки).
+    depth: usize,
     /// Есть более поздний лимит этой категории, уже вступивший в силу.
     superseded: bool,
 }
@@ -60,7 +63,7 @@ async fn show(svc: &LimitService, page: PageCtx, error: Option<String>) -> PageR
         let current = mine.iter().find(|l| l.valid_from <= today).map(|l| l.id);
         for l in mine {
             let superseded = l.valid_from <= today && Some(l.id) != current;
-            rows.push(Row { dto: clone(l), category: c.label.clone(), indent: c.indent(), superseded });
+            rows.push(Row { dto: clone(l), category: c.label.clone(), depth: c.depth.min(5), superseded });
         }
     }
     let page = page.for_feature(crate::NAME, crate::i18n::dict);
@@ -93,7 +96,17 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): F
     }
 }
 
+/// Удаление без «Вы уверены?»: тост с «Отменить» на 5 секунд.
 async fn delete(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>) -> PageResult {
-    svc.delete(page.session.project_id, id).await?;
-    Ok(see_other("/limits"))
+    let token = svc.delete_with_undo(page.session.project_id, id).await?;
+    Ok(see_other_flash(&page.config, "/limits", Flash::with_undo(page.t("toast.deleted"), format!("/limits/undo/{token}"))))
+}
+
+async fn undo(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(token): Path<Uuid>) -> PageResult {
+    let flash = match svc.undo_delete(page.session.project_id, token).await {
+        Ok(()) => Flash::ok(page.t("toast.restored")),
+        Err(AppError::NotFound(_)) => Flash::error(page.t("toast.undo_expired")),
+        Err(e) => return Err(PageError(e)),
+    };
+    Ok(see_other_flash(&page.config, "/limits", flash))
 }

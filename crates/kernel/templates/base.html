@@ -1,57 +1,275 @@
 <!doctype html>
-<html lang="{{ page.lang.code() }}">
+<html lang="{{ page.lang.code() }}"{% if !page.theme().is_empty() %} data-theme="{{ page.theme() }}"{% endif %}>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{% block title %}{% endblock %} · {{ page.t("app.title") }}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#4338ca">
+  <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"selfRequestsOnly":true}'>
+  <link rel="icon" href="{{ page.asset("favicon.svg") }}" type="image/svg+xml">
+  <link rel="icon" href="{{ page.asset("favicon-32.png") }}" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="{{ page.asset("apple-touch-icon.png") }}">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="{{ page.asset("app.css") }}">
+  <script src="{{ page.asset("boot.js") }}"></script>
+  <script src="{{ page.asset("htmx.min.js") }}" defer></script>
+  <script src="{{ page.asset("app.js") }}" defer></script>
 </head>
-<body class="bg-stone-50 text-stone-900 font-sans antialiased min-h-screen">
-  <header class="bg-white border-b border-stone-200">
-    <div class="max-w-6xl mx-auto px-4 flex flex-wrap items-center gap-x-6 gap-y-2 py-3">
-      <a href="/budget" class="flex items-center gap-2 font-semibold text-stone-900">
-        <span class="grid place-items-center w-8 h-8 rounded-lg bg-brand-600 text-white text-sm"><svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v1"/><path d="M3 7v10a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-3"/><path d="M21 12h-4a2 2 0 0 0 0 4h4v-4z"/></svg></span>
-        <span class="hidden sm:inline">{{ page.t("app.title") }}</span>
+<body class="app-body" data-csrf="{{ page.csrf() }}" data-can-write="{% if page.can_write() %}1{% endif %}" data-lang="{{ page.lang.code() }}" data-base="{{ page.session.base_currency }}">
+<a class="skip-link" href="#main">{{ page.t("skip_to_content") }}</a>
+<div class="app">
+  <aside class="sidebar" id="sidebar" aria-label="{{ page.t("nav.main") }}">
+    <div class="sidebar-top">
+      <a href="/budget" class="logo" aria-label="{{ page.t("app.title") }}">
+        <span class="logo-mark"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("wallet") }}"></use></svg></span>
+        <span class="nav-text logo-text">{{ page.t("app.title") }}</span>
       </a>
-      <nav class="flex flex-wrap gap-1 text-sm order-3 sm:order-none w-full sm:w-auto">
-        {% for item in page.nav_items() %}
-          <a href="{{ item.href }}"
-             class="rounded-lg px-3 py-1.5 {% if item.feature == page.active %}bg-brand-50 text-brand-700 font-medium{% else %}text-stone-600 hover:bg-stone-100{% endif %}">
-            {{ page.nav_label(item) }}
-          </a>
-        {% endfor %}
-      </nav>
-      <div class="ml-auto flex items-center gap-3 text-sm">
-        <details class="relative">
-          <summary class="list-none cursor-pointer rounded-lg border border-stone-200 px-3 py-1.5 hover:bg-stone-50">
-            <span class="text-stone-500">{{ page.t("nav.project") }}:</span>
-            <span class="font-medium">{{ page.session.project_name }}</span> ▾
-          </summary>
-          <div class="absolute right-0 mt-1 w-64 card p-1 z-20">
-            {% for p in page.other_projects() %}
-              <a href="/projects/switch/{{ p.id }}" class="block rounded-lg px-3 py-2 hover:bg-stone-100">{{ p.name }}</a>
-            {% endfor %}
-            <a href="/projects" class="block rounded-lg px-3 py-2 text-brand-700 hover:bg-stone-100">⚙ {{ page.t("nav.projects_manage") }}</a>
-          </div>
-        </details>
-        <div class="flex rounded-lg border border-stone-200 overflow-hidden text-xs">
-          {% for l in page.langs() %}
-            <a href="/lang/{{ l.code() }}?back={{ page.back() }}"
-               class="px-2 py-1.5 {% if page.is_lang(l) %}bg-stone-900 text-white{% else %}hover:bg-stone-100{% endif %}">{{ l.upper() }}</a>
-          {% endfor %}
-        </div>
-        <span class="hidden md:inline text-stone-500">{{ page.session.user_name }}</span>
-        <a href="/logout" class="text-stone-500 hover:text-stone-900">{{ page.t("nav.logout") }}</a>
-      </div>
+      <button type="button" class="btn-icon sidebar-toggle" data-action="toggle-sidebar" aria-controls="sidebar"
+              aria-label="{{ page.t("nav.collapse") }}" title="{{ page.t("nav.collapse") }}" data-label-expand="{{ page.t("nav.expand") }}" data-label-collapse="{{ page.t("nav.collapse") }}">
+        <svg class="icon" aria-hidden="true"><use href="{{ page.icon("panel-left") }}"></use></svg>
+      </button>
     </div>
-  </header>
-  {% if !page.can_write() %}
-    <div class="bg-amber-50 text-amber-800 text-sm text-center py-1.5 border-b border-amber-200">{{ page.t("readonly") }}</div>
+
+    <details class="project-switch" data-menu>
+      <summary aria-label="{{ page.t("nav.switch_project") }}: {{ page.session.project_name }}" title="{{ page.t("nav.switch_project") }}">
+        <span class="project-badge" aria-hidden="true">{{ page.project_initial() }}</span>
+        <span class="nav-text project-name">{{ page.session.project_name }}</span>
+        <svg class="icon nav-text chevron" aria-hidden="true"><use href="{{ page.icon("chevrons-up-down") }}"></use></svg>
+      </summary>
+      <div class="menu">
+        <div class="menu-current">{{ page.session.project_name }} · {{ page.t(page.session.role.as_str()) }}</div>
+        {% for p in page.other_projects() %}
+          <a class="menu-item" href="/projects/switch/{{ p.id }}">{{ p.name }}</a>
+        {% endfor %}
+        <a class="menu-item menu-item-accent" href="/projects">
+          <svg class="icon" aria-hidden="true"><use href="{{ page.icon("users") }}"></use></svg>{{ page.t("nav.projects_manage") }}</a>
+      </div>
+    </details>
+
+    {% if page.can_write() %}
+    <a class="btn-primary btn-add" href="/transactions/new?back={{ page.back() }}" data-quick="EXPENSE"
+       aria-label="{{ page.t("nav.add_expense_hint") }}" title="{{ page.t("nav.add_expense_hint") }}">
+      <svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>
+      <span class="nav-text">{{ page.t("nav.add_expense") }}</span>
+      <kbd class="nav-text kbd-inline">N</kbd>
+    </a>
+    {% endif %}
+
+    <nav class="nav" aria-label="{{ page.t("nav.main") }}">
+      <ul class="nav-list">
+        {% for item in page.nav_main() %}
+        <li><a class="nav-link" href="{{ item.href }}" title="{{ page.nav_label(item) }}"{% if page.is_active(item) %} aria-current="page"{% endif %}>
+          <svg class="icon" aria-hidden="true"><use href="{{ page.icon(item.icon) }}"></use></svg>
+          <span class="nav-text">{{ page.nav_label(item) }}</span></a></li>
+        {% endfor %}
+      </ul>
+      <div class="nav-group-title"><span class="nav-text">{{ page.t("nav.directories") }}</span></div>
+      <ul class="nav-list">
+        {% for item in page.nav_directory() %}
+        <li><a class="nav-link" href="{{ item.href }}" title="{{ page.nav_label(item) }}"{% if page.is_active(item) %} aria-current="page"{% endif %}>
+          <svg class="icon" aria-hidden="true"><use href="{{ page.icon(item.icon) }}"></use></svg>
+          <span class="nav-text">{{ page.nav_label(item) }}</span></a></li>
+        {% endfor %}
+      </ul>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <a class="nav-link" href="/projects" title="{{ page.t("nav.projects_manage") }}"{% if page.active == "projects" %} aria-current="page"{% endif %}>
+        <svg class="icon" aria-hidden="true"><use href="{{ page.icon("users") }}"></use></svg>
+        <span class="nav-text">{{ page.t("nav.projects_manage") }}</span></a>
+      <div class="lang-switch" role="group" aria-label="{{ page.t("nav.language") }}">
+        <svg class="icon collapsed-only" aria-hidden="true"><use href="{{ page.icon("languages") }}"></use></svg>
+        {% for l in page.langs() %}
+          <a href="/lang/{{ l.code() }}?back={{ page.back() }}" class="lang-link" hreflang="{{ l.code() }}" lang="{{ l.code() }}"{% if page.is_lang(l) %} aria-current="true"{% endif %}>{{ l.upper() }}</a>
+        {% endfor %}
+      </div>
+      <a class="nav-link" href="/profile" title="{{ page.t("nav.profile") }}"{% if page.active == "profile" %} aria-current="page"{% endif %}>
+        <span class="avatar" aria-hidden="true">{{ page.initials() }}</span>
+        <span class="nav-text truncate">{{ page.session.user_name }}</span></a>
+      <form method="post" action="/auth/logout">
+        <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+        <button class="nav-link" title="{{ page.t("nav.logout") }}">
+          <svg class="icon" aria-hidden="true"><use href="{{ page.icon("log-out") }}"></use></svg>
+          <span class="nav-text">{{ page.t("nav.logout") }}</span></button>
+      </form>
+    </div>
+  </aside>
+
+  <div class="main-col">
+    {% if !page.can_write() %}<div class="readonly-banner" role="note">
+      <svg class="icon" aria-hidden="true"><use href="{{ page.icon("eye") }}"></use></svg>{{ page.t("readonly") }}</div>{% endif %}
+    <main id="main" class="page" tabindex="-1">
+      <header class="page-head">
+        <div class="min-w-0">
+          {% if !page.crumbs.is_empty() %}
+          <nav class="crumbs" aria-label="{{ page.t("nav.breadcrumbs") }}"><ol>
+            {% for (label, href) in page.crumbs %}<li><a href="{{ href }}">{{ label }}</a></li>{% endfor %}
+          </ol></nav>
+          {% endif %}
+          <h1 class="page-title">{% block heading %}{% endblock %}</h1>
+        </div>
+        <div class="page-actions">{% block actions %}{% endblock %}</div>
+      </header>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+<nav class="tabbar" aria-label="{{ page.t("nav.main") }}">
+  {% for item in page.nav_mobile() %}
+    {% if loop.index0 == 2 %}
+      {% if page.can_write() %}
+      <a class="fab" href="/transactions/new?back={{ page.back() }}" data-quick="EXPENSE" aria-label="{{ page.t("nav.add_expense_hint") }}">
+        <svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg></a>
+      {% endif %}
+    {% endif %}
+    <a class="tab" href="{{ item.href }}"{% if page.is_active(item) %} aria-current="page"{% endif %}>
+      <svg class="icon" aria-hidden="true"><use href="{{ page.icon(item.icon) }}"></use></svg><span>{{ page.nav_label(item) }}</span></a>
+  {% endfor %}
+  <a class="tab" href="#more" data-action="open-more" aria-haspopup="dialog">
+    <svg class="icon" aria-hidden="true"><use href="{{ page.icon("ellipsis") }}"></use></svg><span>{{ page.t("nav.more") }}</span></a>
+</nav>
+
+<div id="more" class="sheet-wrap" role="dialog" aria-modal="true" aria-label="{{ page.t("nav.more") }}">
+  <a class="sheet-backdrop" href="#" aria-label="{{ page.t("close") }}" data-action="close-more"></a>
+  <div class="sheet">
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <ul class="sheet-list">
+      {% for item in page.nav_more() %}
+      <li><a class="nav-link" href="{{ item.href }}"{% if page.is_active(item) %} aria-current="page"{% endif %}>
+        <svg class="icon" aria-hidden="true"><use href="{{ page.icon(item.icon) }}"></use></svg>{{ page.nav_label(item) }}</a></li>
+      {% endfor %}
+      <li><a class="nav-link" href="/projects"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("users") }}"></use></svg>{{ page.t("nav.projects_manage") }}</a></li>
+      <li><a class="nav-link" href="/profile"><span class="avatar" aria-hidden="true">{{ page.initials() }}</span>{{ page.t("nav.profile") }}</a></li>
+    </ul>
+    <div class="sheet-row">
+      <div class="lang-switch lang-switch-wide" role="group" aria-label="{{ page.t("nav.language") }}">
+        {% for l in page.langs() %}<a href="/lang/{{ l.code() }}?back={{ page.back() }}" class="lang-link" lang="{{ l.code() }}"{% if page.is_lang(l) %} aria-current="true"{% endif %}>{{ l.upper() }}</a>{% endfor %}
+      </div>
+      <form method="post" action="/auth/logout"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+        <button class="btn-ghost"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("log-out") }}"></use></svg>{{ page.t("nav.logout") }}</button></form>
+    </div>
+  </div>
+</div>
+
+{% if page.can_write() %}
+<dialog id="quick" class="dialog quick" aria-labelledby="quick-title" data-title-expense="{{ page.t("quick.expense") }}" data-title-income="{{ page.t("quick.income") }}">
+  <form id="quick-form" method="dialog" class="quick-form" autocomplete="off">
+    <div class="dialog-head">
+      <h2 id="quick-title" class="dialog-title">{{ page.t("quick.expense") }}</h2>
+      <div class="seg seg-sm" role="radiogroup" aria-label="{{ page.t("kind") }}">
+        <label class="seg-item"><input type="radio" name="tx_kind" value="EXPENSE" checked><span>{{ page.t("expense") }}</span></label>
+        <label class="seg-item"><input type="radio" name="tx_kind" value="INCOME"><span>{{ page.t("income") }}</span></label>
+      </div>
+      <button type="button" class="btn-icon" data-close aria-label="{{ page.t("close") }} (Esc)" title="{{ page.t("close") }} (Esc)">
+        <svg class="icon" aria-hidden="true"><use href="{{ page.icon("x") }}"></use></svg></button>
+    </div>
+
+    <div class="dialog-body" id="q-body">
+      <div class="field">
+        <label class="label" for="q-amount">{{ page.t("amount") }}</label>
+        <div class="amount-field">
+          <input id="q-amount" name="amount" class="input input-amount" inputmode="decimal" enterkeyhint="done" placeholder="0" required
+                 aria-describedby="q-amount-hint q-amount-err">
+          <span class="amount-cur" id="q-cur" aria-live="polite"></span>
+        </div>
+        <p class="hint" id="q-amount-hint">{{ page.t("quick.amount_hint") }}</p>
+        <p class="field-error" id="q-amount-err" hidden></p>
+      </div>
+
+      <fieldset class="field">
+        <legend class="label" id="q-cat-label">{{ page.t("category") }}</legend>
+        <div class="chips" id="q-chips" aria-describedby="q-cat-err"></div>
+        <div class="combo">
+          <svg class="icon combo-icon" aria-hidden="true"><use href="{{ page.icon("search") }}"></use></svg>
+          <input id="q-search" class="input input-search" type="search" placeholder="{{ page.t("quick.search") }}" aria-label="{{ page.t("quick.search") }}"
+                 role="combobox" aria-expanded="false" aria-controls="q-results" aria-autocomplete="list">
+          <ul id="q-results" class="combo-list" role="listbox" aria-label="{{ page.t("category") }}" hidden></ul>
+        </div>
+        <p class="limit-note" id="q-limit" aria-live="polite"></p>
+        <p class="field-error" id="q-cat-err" hidden></p>
+      </fieldset>
+
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div class="field">
+          <label class="label" for="q-account">{{ page.t("account") }}</label>
+          <select id="q-account" class="input" name="account_code"></select>
+        </div>
+        <fieldset class="field">
+          <legend class="label">{{ page.t("date") }}</legend>
+          <div class="seg seg-sm" role="radiogroup" aria-label="{{ page.t("date") }}">
+            <label class="seg-item"><input type="radio" name="q_day" value="0" checked><span>{{ page.t("today") }}</span></label>
+            <label class="seg-item"><input type="radio" name="q_day" value="1"><span>{{ page.t("quick.yesterday") }}</span></label>
+            <label class="seg-item"><input type="radio" name="q_day" value="other"><span>{{ page.t("quick.other_date") }}</span></label>
+          </div>
+          <input id="q-date" class="input mt-2" type="date" name="occurred_on" aria-label="{{ page.t("date") }}" hidden>
+        </fieldset>
+      </div>
+
+      <div class="field">
+        <label class="label" for="q-desc">{{ page.t("description") }} <span class="label-note">· {{ page.t("optional") }}</span></label>
+        <input id="q-desc" class="input" name="description" maxlength="300">
+      </div>
+      <p class="alert alert-error" id="q-error" role="alert" hidden></p>
+    </div>
+
+    <div class="dialog-loading" id="q-loading" aria-busy="true" aria-label="{{ page.t("loading") }}" hidden>
+      <div class="skeleton h-12"></div><div class="skeleton h-8 w-3/4"></div><div class="skeleton h-10"></div><div class="skeleton h-10 w-1/2"></div>
+    </div>
+    <div class="dialog-failed" id="q-failed" role="alert" hidden>
+      <svg class="icon icon-lg" aria-hidden="true"><use href="{{ page.icon("cloud-off") }}"></use></svg>
+      <p>{{ page.t("quick.load_failed") }}</p>
+      <button type="button" class="btn-secondary" data-action="quick-retry">{{ page.t("retry") }}</button>
+    </div>
+
+    <div class="dialog-foot">
+      <a href="/transactions/new" class="btn-ghost" id="q-split">
+        <svg class="icon" aria-hidden="true"><use href="{{ page.icon("split") }}"></use></svg>{{ page.t("quick.split") }}</a>
+      <span class="grow"></span>
+      <!-- «Сохранить» — первая кнопка отправки: её нажимает Enter. Визуально — справа. -->
+      <button type="submit" class="btn-primary order-last" value="save" title="Enter">{{ page.t("save") }}</button>
+      <button type="submit" class="btn-secondary hide-sm" value="more" data-more title="Ctrl+Enter">{{ page.t("quick.save_more") }}</button>
+    </div>
+  </form>
+</dialog>
+{% endif %}
+
+<dialog id="keys" class="dialog dialog-sm" aria-labelledby="keys-title">
+  <div class="dialog-head">
+    <h2 id="keys-title" class="dialog-title">{{ page.t("nav.keys") }}</h2>
+    <button type="button" class="btn-icon" data-close aria-label="{{ page.t("close") }}"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("x") }}"></use></svg></button>
+  </div>
+  <dl class="keys">
+    <div><dt><kbd>N</kbd></dt><dd>{{ page.t("keys.n") }}</dd></div>
+    <div><dt><kbd>I</kbd></dt><dd>{{ page.t("keys.i") }}</dd></div>
+    <div><dt><kbd>Enter</kbd></dt><dd>{{ page.t("keys.enter") }}</dd></div>
+    <div><dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></dt><dd>{{ page.t("keys.ctrl_enter") }}</dd></div>
+    <div><dt><kbd>Esc</kbd></dt><dd>{{ page.t("keys.esc") }}</dd></div>
+    <div><dt><kbd>?</kbd></dt><dd>{{ page.t("keys.help") }}</dd></div>
+  </dl>
+</dialog>
+
+<div class="toasts" id="toasts" role="status" aria-live="polite">
+  {% if let Some(f) = page.flash %}
+  <div class="toast{% if f.kind == "error" %} toast-error{% endif %}" data-timeout="5000">
+    <span class="toast-text">{{ f.text }}</span>
+    {% if let Some(u) = f.undo %}
+    <form method="post" action="{{ u }}" class="toast-form"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+      <button class="toast-action">{{ page.t("undo") }}</button></form>
+    {% endif %}
+    <button type="button" class="toast-close" data-close-toast aria-label="{{ page.t("close") }}"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("x") }}"></use></svg></button>
+  </div>
   {% endif %}
-  <main class="max-w-6xl mx-auto px-4 py-6">
-    {% block content %}{% endblock %}
-  </main>
+</div>
+
+<div hidden id="i18n"
+  data-undo="{{ page.t("undo") }}" data-close="{{ page.t("close") }}" data-expense="{{ page.t("expense") }}" data-income="{{ page.t("income") }}"
+  data-available="{{ page.t("quick.available") }}" data-left="{{ page.t("quick.left") }}" data-over="{{ page.t("quick.over") }}"
+  data-warn="{{ page.t("quick.warn") }}" data-anyway="{{ page.t("quick.saved_anyway") }}" data-choose="{{ page.t("quick.choose_category") }}"
+  data-no-match="{{ page.t("quick.no_match") }}" data-no-accounts="{{ page.t("quick.no_accounts") }}" data-failed="{{ page.t("quick.failed") }}"
+  data-undone="{{ page.t("quick.undone") }}" data-frequent="{{ page.t("quick.frequent") }}" data-amount-required="{{ page.t("quick.amount_hint") }}"
+  data-icon-x="{{ page.icon("x") }}"></div>
 </body>
 </html>

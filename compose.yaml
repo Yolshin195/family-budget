@@ -1,4 +1,8 @@
 # Запуск: make (или `podman compose up -d --build`). Открыть: http://localhost:8080
+# Сервисы: PostgreSQL (базы family_budget и rauthy, у каждого приложения свой пользователь без прав
+# суперпользователя), Rauthy (вход, регистрация, GitHub/Facebook, 2FA), приложение.
+# Секреты и адреса — в .env (см. .env.example). Для локальной разработки значения по умолчанию
+# рабочие; в продакшене приложение без настоящих секретов не стартует (APP_ENV=prod).
 name: family-budget
 
 services:
@@ -7,10 +11,16 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_DB: family_budget
+      # Суперпользователь — только для обслуживания и резервных копий.
       POSTGRES_USER: budget
       POSTGRES_PASSWORD: ${DB_PASSWORD:-budget}
+      # Пользователи приложения и Rauthy (создаёт deploy/postgres/init-roles.sh).
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-fb_app_dev}
+      RAUTHY_DB_PASSWORD: ${RAUTHY_DB_PASSWORD:-rauthy_dev}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro,Z
+    # Только с этой машины: БД недоступна снаружи (ТЗ, раздел 13).
     ports:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
     healthcheck:
@@ -19,6 +29,62 @@ services:
       timeout: 3s
       retries: 20
 
+  rauthy:
+    image: ghcr.io/sebadob/rauthy:0.37.1
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Публичный адрес (как его видит браузер) — из него Rauthy строит issuer: http://<PUB_URL>/auth/v1/
+      PUB_URL: ${RAUTHY_PUB_URL:-localhost:8443}
+      LISTEN_SCHEME: http
+      LISTEN_PORT_HTTP: "8443"
+      # В продакшене Rauthy за обратным прокси с TLS: PROXY_MODE=true, TRUSTED_PROXIES, COOKIE_MODE=host.
+      PROXY_MODE: ${RAUTHY_PROXY_MODE:-false}
+      TRUSTED_PROXIES: ${RAUTHY_TRUSTED_PROXIES:-}
+      COOKIE_MODE: ${RAUTHY_COOKIE_MODE:-danger-insecure}
+      RP_ID: ${RAUTHY_RP_ID:-localhost}
+      RP_ORIGIN: ${RAUTHY_RP_ORIGIN:-http://localhost:8443}
+      # Отдельная база rauthy в нашем PostgreSQL.
+      HIQLITE: "false"
+      PG_HOST: db
+      PG_PORT: "5432"
+      PG_USER: rauthy
+      PG_PASSWORD: ${RAUTHY_DB_PASSWORD:-rauthy_dev}
+      PG_DB_NAME: rauthy
+      PG_TLS: disable
+      # Кэш (Hiqlite) одного узла.
+      HQL_NODE_ID: "1"
+      HQL_SECRET_RAFT: ${RAUTHY_SECRET_RAFT:-dev-only-raft-secret-0123456789}
+      HQL_SECRET_API: ${RAUTHY_SECRET_API:-dev-only-api-secret-0123456789x}
+      # Ключ шифрования: `podman run --rm --entrypoint /app/rauthy ghcr.io/sebadob/rauthy:0.37.1 generate-enc-key`
+      ENC_KEYS: ${RAUTHY_ENC_KEYS:-dev-2026/wynhNpSS5pN9HE/Jh88sg2HIrfa+cRjM6sSCU93fJio=}
+      ENC_KEY_ACTIVE: ${RAUTHY_ENC_KEY_ACTIVE:-dev-2026}
+      BOOTSTRAP_ADMIN_EMAIL: ${RAUTHY_ADMIN_EMAIL:-admin@localhost}
+      # Клиент family-budget и (для разработки) демо-пользователи — при первом старте пустой базы.
+      BOOTSTRAP_DIR: /app/bootstrap
+      GENERATED_SECRETS_TTL: "0"
+      # Открытая регистрация; второй фактор — 6-значный код по email (ТЗ, разделы 12–13).
+      OPEN_USER_REG: "true"
+      OTP_ENABLE: "true"
+      OTP_LENGTH: "6"
+      OTP_EMAIL_ENABLE: "true"
+      # Письма (регистрация, сброс пароля, код 2FA).
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_TLS_MODE: ${SMTP_TLS_MODE:-tls}
+      SMTP_FROM: ${SMTP_FROM:-Семейный бюджет <no-reply@localhost>}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      # Языки страниц Rauthy: тайского в Rauthy 0.37 нет (см. deploy/rauthy/README.md).
+      FILTER_LANG_COMMON: "en\nru"
+    volumes:
+      - rauthy-data:/app/data
+      - ./deploy/rauthy/bootstrap:/app/bootstrap:ro,Z
+    ports:
+      - "127.0.0.1:${RAUTHY_PORT:-8443}:8443"
+
   app:
     build: .
     image: localhost/family-budget:latest
@@ -26,13 +92,27 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      rauthy:
+        condition: service_started
     environment:
-      DATABASE_URL: postgres://budget:${DB_PASSWORD:-budget}@db:5432/family_budget
-      JWT_SECRET: ${JWT_SECRET:-change-me-please}
+      APP_ENV: ${APP_ENV:-dev}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      DATABASE_URL: postgres://fb_app:${APP_DB_PASSWORD:-fb_app_dev}@db:5432/family_budget
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:8443/auth/v1/}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-family-budget}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      # Браузер ходит в Rauthy на localhost:8443, приложение в контейнере — по внутреннему адресу.
+      OIDC_INTERNAL_URL: ${OIDC_INTERNAL_URL:-http://rauthy:8443}
+      RAUTHY_ADMIN_API_KEY: ${RAUTHY_ADMIN_API_KEY:-}
       SEED_DEMO: ${SEED_DEMO:-1}
+      GUEST_DEMO: ${GUEST_DEMO:-1}
+      CONTACT_EMAIL: ${CONTACT_EMAIL:-}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
       BIND_ADDR: 0.0.0.0:8080
     ports:
       - "${APP_PORT:-8080}:8080"
 
 volumes:
   pgdata:
+  rauthy-data:

@@ -14,12 +14,12 @@ use std::sync::Arc;
 
 use kernel::context::AppContext;
 use kernel::feature::Feature;
-use kernel::web::{NavItem, Web};
+use kernel::web::{NavGroup, NavItem, Web};
 use utoipa::OpenApi;
 
 pub use domain::{LimitRule, Node, View};
 pub use ports::{AccountRec, AccountsSource, CategoriesSource, Deps, FactRec, FactsSource, LimitsSource, PlannedRec, PlansSource, RatesSource};
-pub use service::BudgetService as Service;
+pub use service::{BudgetService as Service, CategoryLimit};
 
 pub const NAME: &str = "budget";
 pub const MOUNT: &str = "/budget";
@@ -38,7 +38,9 @@ pub fn feature(api: Arc<Service>) -> Feature {
         web: Some(Web {
             pages: adapters::web::router(api),
             public: None,
-            nav: Some(NavItem { feature: NAME, href: MOUNT, label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)), order: 0 }),
+            nav: Some(NavItem { feature: NAME, href: MOUNT, label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)), icon: "chart-pie", group: NavGroup::Main, order: 10, mobile: true }),
+            root: None,
+            account: None,
         }),
     }
 }

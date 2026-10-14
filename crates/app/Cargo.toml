@@ -19,21 +19,22 @@ utoipa-swagger-ui.workspace = true
 uuid.workspace = true
 # Крейты фич. Блок ведёт arch.py.
 # @arch:deps:begin
+projects = { path = "../features/projects", optional = true }
 currencies = { path = "../features/currencies", optional = true }
 rates = { path = "../features/rates", optional = true }
 accounts = { path = "../features/accounts", optional = true }
 categories = { path = "../features/categories", optional = true }
 transactions = { path = "../features/transactions", optional = true }
 limits = { path = "../features/limits", optional = true }
-projects = { path = "../features/projects", optional = true }
 planning = { path = "../features/planning", optional = true }
 budget = { path = "../features/budget", optional = true }
+site = { path = "../features/site", optional = true }
 # @arch:deps:end
 
 [features]
 # Включённые фичи = default. Блок ведёт arch.py.
 # @arch:features:begin
-default = ["projects", "currencies", "rates", "accounts", "categories", "transactions", "limits", "planning", "budget", "seed"]
+default = ["projects", "currencies", "rates", "accounts", "categories", "transactions", "limits", "planning", "budget", "seed", "site"]
 projects = ["dep:projects", "currencies", "categories"]
 currencies = ["dep:currencies"]
 rates = ["dep:rates", "currencies"]
@@ -43,6 +44,7 @@ transactions = ["dep:transactions", "accounts", "categories"]
 limits = ["dep:limits", "categories"]
 planning = ["dep:planning", "transactions"]
 budget = ["dep:budget", "transactions", "planning", "limits", "rates"]
+site = ["dep:site"]
 # @arch:features:end
 # Демо-данные при пустой БД (не фича предметной области — флаг приложения).
 seed = ["budget"]

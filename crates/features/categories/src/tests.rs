@@ -169,3 +169,39 @@ async fn tree_depth_limit() {
     let tree = svc.tree(p, false).await.unwrap();
     assert_eq!(tree.iter().map(|(d, c)| (*d, c.code.as_str())).collect::<Vec<_>>(), vec![(0, "L1"), (1, "L2"), (2, "L3"), (3, "L4"), (4, "L5")]);
 }
+
+/// ТЗ, раздел 13: каждый запрос фильтруется по проекту — чужой проект видит 404, а не данные.
+#[tokio::test]
+async fn foreign_project_gets_not_found() {
+    let svc = service();
+    let (mine, other) = (Uuid::new_v4(), Uuid::new_v4());
+    svc.create(mine, create_dto("FOOD")).await.unwrap();
+    assert!(matches!(svc.get(other, "FOOD").await.unwrap_err(), AppError::NotFound(_)));
+    assert!(matches!(svc.update(other, "FOOD", update_dto("x")).await.unwrap_err(), AppError::NotFound(_)));
+    assert!(matches!(svc.archive(other, "FOOD").await.unwrap_err(), AppError::NotFound(_)));
+    assert!(matches!(svc.restore(other, "FOOD").await.unwrap_err(), AppError::NotFound(_)));
+    assert!(!svc.exists(other, "FOOD").await.unwrap());
+    assert_eq!(svc.list(other, ListQuery::default(), page(10)).await.unwrap().page.total_elements, 0);
+}
+
+#[tokio::test]
+async fn archive_can_be_undone_and_project_purged() {
+    let svc = service();
+    let (mine, other) = (Uuid::new_v4(), Uuid::new_v4());
+    svc.create(mine, create_dto("FOOD")).await.unwrap();
+    svc.create(other, create_dto("FOOD")).await.unwrap();
+    svc.archive(mine, "FOOD").await.unwrap();
+    assert!(!svc.exists(mine, "FOOD").await.unwrap());
+    svc.restore(mine, "FOOD").await.unwrap();
+    assert!(svc.exists(mine, "FOOD").await.unwrap(), "«Отменить» возвращает запись");
+    assert_eq!(svc.purge_project(mine).await.unwrap(), 1);
+    assert!(!svc.exists(mine, "FOOD").await.unwrap());
+    assert!(svc.exists(other, "FOOD").await.unwrap(), "чужой проект не задет");
+}
+
+#[test]
+fn templates_are_translated() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
+}
