@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":semanticCommitsDisabled"],
+  "extends": ["config:recommended", ":semanticCommitsDisabled", "customManagers:dockerfileVersions"],
   "description": "Обновления зависимостей: Cargo, npm (сборка статики), образы контейнеров (включая Rauthy), GitHub Actions.",
   "labels": ["dependencies"],
   "packageRules": [

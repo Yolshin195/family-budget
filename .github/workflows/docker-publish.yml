@@ -1,0 +1,222 @@
+# Сборка multi-arch образа (linux/amd64 + linux/arm64) и публикация в GitHub Container Registry:
+# ghcr.io/yolshin195/family-budget — вкладка Packages репозитория.
+#
+# - amd64 и arm64 собираются параллельно, каждая на своём нативном раннере (ubuntu-24.04 /
+#   ubuntu-24.04-arm), без QEMU: под эмуляцией cargo build медленнее в 10–15 раз.
+# - Платформы пушатся по digest, без тегов. Job publish собирает из них один multi-arch манифест и только
+#   тогда ставит теги — и только если прошли тесты (job test идёт параллельно со сборкой и времени не
+#   добавляет). Поэтому latest не укажет ни на образ с упавшими тестами, ни на образ без одной из платформ.
+# - Кэш слоёв — в кэше GitHub Actions (type=gha), отдельно на платформу. Зависимости Rust — отдельный слой
+#   (cargo-chef в Dockerfile): правка кода не пересобирает ~380 крейтов.
+# - На опубликованный образ выписывается подписанная аттестация происхождения (SLSA provenance), проверка:
+#   gh attestation verify oci://ghcr.io/yolshin195/family-budget:latest -R Yolshin195/family-budget
+#
+# Теги:
+#   main                          → latest, <версия из Cargo.toml>, sha-<коммит>
+#   другая ветка (запуск вручную) → <имя ветки>, sha-<коммит>; latest и версию не трогает
+name: Docker build and publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Явный bash включает pipefail: упавшая команда в начале конвейера валит шаг.
+defaults:
+  run:
+    shell: bash
+
+# Новый пуш в ту же ветку отменяет недоделанную публикацию: теги всё равно получит последний коммит.
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  # Только нижний регистр — этого требует реестр.
+  IMAGE_NAME: ghcr.io/yolshin195/family-budget
+
+jobs:
+  prepare:
+    name: Version and tags
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      labels: ${{ steps.meta.outputs.labels }}
+      json: ${{ steps.meta.outputs.json }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # cargo metadata, а не grep: версия крейта может быть своей или унаследованной из [workspace.package].
+      - name: Read version from Cargo.toml
+        id: cargo
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "family_budget") | .version')
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Image tags, labels and annotations
+        id: meta
+        uses: docker/metadata-action@v6
+        env:
+          # Аннотации — на индекс multi-arch манифеста: по ним GHCR показывает описание пакета.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ steps.cargo.outputs.version }},enable={{is_default_branch}},priority=300
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch,enable=${{ github.ref_name != github.event.repository.default_branch }}
+            type=sha
+          labels: |
+            org.opencontainers.image.title=family-budget
+            org.opencontainers.image.description=Семейная бухгалтерия: общий и раздельный бюджет, лимиты, календарь платежей
+          annotations: |
+            org.opencontainers.image.title=family-budget
+            org.opencontainers.image.description=Семейная бухгалтерия: общий и раздельный бюджет, лимиты, календарь платежей
+
+  test:
+    name: Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace --locked
+
+  build:
+    name: Build (linux/${{ matrix.arch }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ needs.prepare.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          # Сбой записи кэша не должен валить публикацию.
+          cache-to: type=gha,scope=docker-${{ matrix.arch }},mode=max,ignore-error=true
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish multi-arch image
+    needs: [prepare, test, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write     # подпись аттестации (Sigstore)
+      attestations: write # сохранение аттестации в GitHub
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list and push tags
+        id: manifest
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          META: ${{ needs.prepare.outputs.json }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          jq -e '.tags | length > 0' <<< "$META" > /dev/null
+          args=()
+          while IFS= read -r tag; do args+=(--tag "$tag"); done < <(jq -r '.tags[]' <<< "$META")
+          while IFS= read -r note; do args+=(--annotation "$note"); done < <(jq -r '.annotations[]' <<< "$META")
+          sources=()
+          for digest in *; do sources+=("$IMAGE_NAME@sha256:$digest"); done
+          docker buildx imagetools create "${args[@]}" "${sources[@]}"
+          digest=$(docker buildx imagetools inspect "$IMAGE_NAME:$VERSION" --format '{{json .Manifest}}' | jq -er .digest)
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect image
+        env:
+          DIGEST: ${{ steps.manifest.outputs.digest }}
+        run: docker buildx imagetools inspect "$IMAGE_NAME@$DIGEST"
+
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+          # Storage records бывают только у репозиториев организаций.
+          create-storage-record: false
+
+      - name: Summary
+        env:
+          META: ${{ needs.prepare.outputs.json }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DIGEST: ${{ steps.manifest.outputs.digest }}
+        run: |
+          {
+            echo "### Образ опубликован"
+            echo
+            echo '```'
+            jq -r '.tags[]' <<< "$META"
+            echo "$IMAGE_NAME@$DIGEST"
+            echo '```'
+            echo
+            echo "\`docker pull $IMAGE_NAME:$VERSION\`"
+          } >> "$GITHUB_STEP_SUMMARY"
