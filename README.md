@@ -57,7 +57,8 @@ make restart
 ## Продакшен
 
 Пошаговое развёртывание на одном VDS (Docker, Caddy с HTTPS, Rauthy, резервные копии, обновление и откат) —
-[docs/deploy-vds.md](docs/deploy-vds.md).
+[docs/deploy-vds.md](docs/deploy-vds.md). Автоматически, с готовым образом из GHCR:
+`sudo bash scripts/deploy-vds.sh install vds.conf` (образец настроек — `deploy/vds.conf.example`).
 
 - Секреты — только из окружения или файлов секретов (`NAME_FILE=/run/secrets/...`): `SESSION_SECRET`,
   `OIDC_CLIENT_SECRET`, `RAUTHY_*`, SMTP. `APP_ENV=prod`, `SEED_DEMO=0`, Swagger выключен.
