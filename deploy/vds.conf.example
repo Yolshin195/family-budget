@@ -1,0 +1,45 @@
+# Настройки для scripts/deploy-vds.sh install (docs/deploy-vds.md, раздел «Автоматическая установка»).
+# Скопируйте в vds.conf, заполните и запустите: sudo bash deploy-vds.sh install vds.conf
+# Файл читает bash: значения с пробелами и спецсимволами — в одинарных кавычках.
+# После установки удалите его (shred -u vds.conf): всё нужное уже в /srv/family-budget/.env.
+
+# ---------------------------------------------------------------- обязательно
+DOMAIN=budget.example.com      # домен приложения; A-запись → IP сервера (шаг 2)
+AUTH_DOMAIN=auth.example.com   # домен Rauthy; A-запись → тот же IP
+ADMIN_EMAIL=you@example.com    # администратор Rauthy, email для Let's Encrypt, контакт на сайте
+
+# ---------------------------------------------------------------- почта Rauthy: регистрация, сброс пароля, коды 2FA
+# Без SMTP войти сможет только администратор. Многие хостеры блокируют порт 25 — используйте 587 или 465.
+SMTP_URL=smtp.example.com
+SMTP_PORT=587
+SMTP_TLS_MODE=tls
+SMTP_USERNAME=
+SMTP_PASSWORD=''
+# Отправитель (должен быть разрешён SMTP-сервисом). По умолчанию — «Семейный бюджет <no-reply@DOMAIN>».
+#SMTP_FROM='Семейный бюджет <no-reply@budget.example.com>'
+
+# ---------------------------------------------------------------- резервные копии (шаг 13)
+# Публичный ключ age (age1…). Пару ключей создайте на СВОЁМ компьютере: age-keygen -o fb-backup.key
+# Приватный ключ на сервер не попадает. Пусто — копии не настраиваются (можно позже: install ещё раз).
+BACKUP_AGE_RECIPIENT=
+
+# ---------------------------------------------------------------- необязательно
+#TIMEZONE=Europe/Moscow        # часовой пояс сервера: расписание cron и время в логах
+#APP_IMAGE_TAG=latest          # latest, версия (0.2.0) или sha-<коммит>
+#GUEST_DEMO=1                  # кнопка «Посмотреть демо» на лендинге; 0 — убрать
+
+# Только если пакет ghcr.io/yolshin195/family-budget приватный: логин GitHub и classic-токен с правом read:packages.
+#GHCR_USER=
+#GHCR_TOKEN=
+
+# Пользователь для работы. SSH-ключи копируются от root (или от того, кто запустил sudo); SSH_PUBKEY — добавить свой.
+#DEPLOY_USER=deploy
+#SSH_PUBKEY='ssh-ed25519 AAAA... you@laptop'
+# Пароль deploy для sudo. Не задан — скрипт спросит его, а без терминала сгенерирует и покажет в конце.
+#DEPLOY_PASSWORD=''
+#SSH_HARDEN=1                  # 0 — не отключать вход по паролю и под root
+
+#APP_DIR=/srv/family-budget
+#REPO_URL=https://github.com/Yolshin195/family-budget.git   # приватный репозиторий — склонируйте сами (шаг 6)
+#REPO_BRANCH=main
+#SWAP_SIZE=2G                  # swap создаётся при RAM до 2,5 ГБ; 0 — не создавать
