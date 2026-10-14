@@ -9,7 +9,7 @@ use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use kernel::web::Choice;
 use rust_decimal::Decimal;
-use transactions::{AccountInfo, CategoryInfo, CategoryLimit};
+use transactions::{AccountCurrency, AccountInfo, CategoryInfo, CategoryLimit};
 use uuid::Uuid;
 
 pub struct AccountsLookupAdapter(pub Arc<::accounts::Service>, pub Arc<::currencies::Service>);
@@ -18,6 +18,20 @@ pub struct AccountsLookupAdapter(pub Arc<::accounts::Service>, pub Arc<::currenc
 impl ::transactions::AccountsLookup for AccountsLookupAdapter {
     async fn exists(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
         self.0.exists(project_id, code).await
+    }
+    async fn currencies(&self, project_id: Uuid) -> AppResult<Vec<AccountCurrency>> {
+        let minor: Vec<(String, i32)> = self.1.all(project_id, true).await?.into_iter().map(|c| (c.code, c.minor_units)).collect();
+        Ok(self
+            .0
+            .all(project_id, true)
+            .await?
+            .into_iter()
+            .map(|a| AccountCurrency {
+                minor_units: minor.iter().find(|m| m.0 == a.currency_code).map(|m| m.1.max(0) as u32).unwrap_or(2),
+                code: a.code,
+                currency: a.currency_code,
+            })
+            .collect())
     }
     async fn choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>> {
         self.0.choices(project_id, lang).await

@@ -10,28 +10,41 @@ use kernel::web::Choice;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::Transaction;
+use crate::domain::{AccountCurrency, Transaction, TxKind};
 
 /// Фильтр списка: период по `occurred_on` (включительно) + необязательные условия.
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
     pub from: Option<NaiveDate>,
     pub to: Option<NaiveDate>,
+    /// Транзакции с проводкой на этот счёт (выписка).
     pub account_code: Option<String>,
+    pub kind: Option<TxKind>,
     pub created_by: Option<Uuid>,
     /// Только с описанием без перевода на этот язык.
     pub untranslated: Option<Lang>,
 }
 
-/// Позиция в развёрнутом виде — для отчётов (бюджет).
+/// Проводка на категорию — факт для бюджета и лимитов.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FactLine {
     pub transaction_id: Uuid,
     pub occurred_on: NaiveDate,
-    pub account_code: String,
-    /// EXPENSE / INCOME
-    pub tx_kind: String,
+    /// Валюта проводки (= валюта счёта, с которого платили).
+    pub currency: String,
+    /// Тип категории: EXPENSE (в том числе комиссия перевода) или INCOME.
+    pub kind: String,
     pub category_code: String,
+    /// Сколько потрачено (расход) или получено (доход); возврат — отрицательная сумма.
+    pub amount: Decimal,
+    pub created_by: Uuid,
+}
+
+/// Проводка на системный счёт «Обмен валют» — для курсовой разницы.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExchangeLine {
+    pub occurred_on: NaiveDate,
+    pub currency: String,
     pub amount: Decimal,
     pub created_by: Uuid,
 }
@@ -48,9 +61,9 @@ pub struct Payment {
 
 #[async_trait]
 pub trait TransactionRepository: Send + Sync {
-    /// Шапка + позиции в одной SQL-транзакции.
+    /// Шапка + проводки в одной SQL-транзакции.
     async fn insert(&self, item: &Transaction) -> AppResult<()>;
-    /// Шапка + замена набора позиций в одной SQL-транзакции.
+    /// Шапка + замена набора проводок в одной SQL-транзакции.
     async fn update(&self, item: &Transaction) -> AppResult<()>;
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Transaction>>;
     /// Новые сначала.
@@ -58,22 +71,29 @@ pub trait TransactionRepository: Send + Sync {
     async fn count(&self, project_id: Uuid, filter: &Filter) -> AppResult<i64>;
     /// `true`, если запись была удалена.
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool>;
-    /// Все позиции за период (для бюджета).
+    /// Проводки на категории за период (для бюджета).
     async fn lines(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<FactLine>>;
+    /// Проводки «Обмен валют» за период.
+    async fn exchange(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<ExchangeLine>>;
     /// Оплаченные вхождения планов с `plan_date` в периоде.
     async fn payments(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<Payment>>;
-    /// Обороты по счетам по дату включительно: (счёт, доходы, расходы).
-    async fn turnover(&self, project_id: Uuid, to: NaiveDate) -> AppResult<Vec<(String, Decimal, Decimal)>>;
-    /// Для быстрого расхода: последний счёт пользователя и его частые категории (по числу позиций
-    /// с `since`, чаще — первые) для операций типа `kind`.
+    /// Остатки счетов на дату включительно: (счёт, сумма проводок).
+    async fn balances(&self, project_id: Uuid, to: NaiveDate) -> AppResult<Vec<(String, Decimal)>>;
+    /// Есть ли у счёта хотя бы одна проводка.
+    async fn has_postings(&self, project_id: Uuid, account_code: &str) -> AppResult<bool>;
+    /// Транзакция начального остатка счёта.
+    async fn find_opening(&self, project_id: Uuid, account_code: &str) -> AppResult<Option<Transaction>>;
+    /// Для быстрого расхода: последний счёт пользователя в расходах и доходах и его частые категории
+    /// (по числу проводок с `since`, чаще — первые) для транзакций типа `kind`.
     async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate) -> AppResult<QuickStats>;
     /// Удалить все операции проекта (удаление проекта или аккаунта).
     async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
-    /// Сколько пользователей внесли первую операцию за период — для воронки лендинга.
+    /// Сколько пользователей внесли первую операцию за период — для воронки лендинга
+    /// (начальные остатки не считаются).
     async fn count_first(&self, from: chrono::DateTime<chrono::Utc>, to: chrono::DateTime<chrono::Utc>) -> AppResult<i64>;
 }
 
-/// Привычки пользователя в проекте — из позиций транзакций, без отдельных таблиц.
+/// Привычки пользователя в проекте — из проводок, без отдельных таблиц.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct QuickStats {
     pub last_account: Option<String>,
@@ -132,7 +152,10 @@ pub struct CategoryInfo {
 /// Что этой фиче нужно от справочника `accounts`.
 #[async_trait]
 pub trait AccountsLookup: Send + Sync {
+    /// Активный счёт с таким кодом есть.
     async fn exists(&self, project_id: Uuid, code: &str) -> AppResult<bool>;
+    /// Валюты всех счетов, включая архивные: старые проводки остаются валидными.
+    async fn currencies(&self, project_id: Uuid) -> AppResult<Vec<AccountCurrency>>;
     /// Активные счета; `tag` — валюта счёта.
     async fn choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>>;
     /// Названия всех счетов, включая архивные: (код, название).

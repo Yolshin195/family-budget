@@ -58,6 +58,7 @@ struct UpcomingView {
     amount: String,
     overdue: bool,
     is_expense: bool,
+    is_transfer: bool,
 }
 
 #[derive(Template)]
@@ -82,6 +83,9 @@ struct BudgetPage {
     inc_total: String,
     net: String,
     net_negative: bool,
+    /// Курсовая разница за период (пусто, если обменов не было).
+    fx: String,
+    fx_negative: bool,
     accounts: Vec<(String, String, String, bool)>,
     upcoming: Vec<UpcomingView>,
     missing_rates: String,
@@ -152,6 +156,7 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
             amount: money(u.amount),
             overdue: u.status == "OVERDUE",
             is_expense: u.kind == "EXPENSE",
+            is_transfer: u.kind == "TRANSFER",
         })
         .collect();
     let page = page.for_feature(crate::NAME, crate::i18n::dict);
@@ -171,6 +176,8 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         inc_total: money(inc_total),
         net_negative: net < Decimal::ZERO,
         net: money(net),
+        fx: if r.fx_result.is_zero() { String::new() } else { money(r.fx_result) },
+        fx_negative: r.fx_result < Decimal::ZERO,
         accounts: r
             .accounts
             .iter()

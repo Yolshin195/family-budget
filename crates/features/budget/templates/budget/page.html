@@ -51,6 +51,7 @@
     <p class="stat-label">{{ page.t("net") }}</p>
     <p class="stat-value{% if net_negative %} text-danger{% endif %}">{% call m::amount(net, base) %}{% endcall %}</p>
     <p class="stat-note">{{ page.t("base_currency") }}: {{ base }}</p>
+    {% if !fx.is_empty() %}<p class="stat-note" title="{{ page.t("fx_hint") }}">{{ page.t("fx_result") }}: <span class="{% if fx_negative %}text-danger{% else %}text-income{% endif %}">{{ fx }}</span></p>{% endif %}
   </div>
   <div class="stat col-span-2 lg:col-span-1">
     <p class="stat-label">{{ page.t("accounts") }}</p>
@@ -139,7 +140,8 @@
         <li><a href="{{ u.href }}" class="upcoming-item">
           <span class="tabular-nums text-xs w-11 shrink-0{% if u.overdue %} text-danger font-medium{% else %} text-subtle{% endif %}">{{ u.date }}</span>
           <span class="grow truncate">{{ u.title }}</span>
-          <span class="amount{% if !u.is_expense %} text-income{% endif %}">{% if u.is_expense %}−{% else %}+{% endif %}{{ u.amount }}</span></a></li>
+          {% if u.is_transfer %}<span class="amount text-muted" title="{{ page.t("transfer") }}"><svg class="icon icon-sm inline" aria-hidden="true"><use href="{{ page.icon("arrow-right-left") }}"></use></svg> {{ u.amount }}</span>
+          {% else %}<span class="amount{% if !u.is_expense %} text-income{% endif %}">{% if u.is_expense %}−{% else %}+{% endif %}{{ u.amount }}</span>{% endif %}</a></li>
       {% endfor %}
     </ul>
     {% endif %}

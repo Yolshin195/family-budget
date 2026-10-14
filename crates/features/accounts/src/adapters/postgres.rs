@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::domain::{AccountNameLang, AccountAccountKind, Account};
 use crate::ports::AccountRepository;
 
-const COLUMNS: &str = "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, account_kind, currency_code, opening_balance, holder_user_id";
+const COLUMNS: &str = "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, account_kind, currency_code, holder_user_id";
 
 pub struct PostgresAccountRepository {
     pool: PgPool,
@@ -35,7 +35,6 @@ struct Row {
     name_th: Option<String>,
     account_kind: String,
     currency_code: String,
-    opening_balance: rust_decimal::Decimal,
     holder_user_id: Option<uuid::Uuid>,
 }
 
@@ -55,7 +54,6 @@ impl TryFrom<Row> for Account {
             name_th: r.name_th,
             account_kind: AccountAccountKind::parse(&r.account_kind).ok_or_else(|| bad_value("account_kind", &r.account_kind))?,
             currency_code: r.currency_code,
-            opening_balance: r.opening_balance,
             holder_user_id: r.holder_user_id,
         })
     }
@@ -70,7 +68,7 @@ fn bad_value(column: &str, value: &str) -> AppError {
 impl AccountRepository for PostgresAccountRepository {
     async fn insert(&self, item: &Account) -> AppResult<()> {
         sqlx::query(
-            "INSERT INTO fb_accounts ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"
+            "INSERT INTO fb_accounts ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
                 .replace("{COLUMNS}", COLUMNS)
                 .as_str(),
         )
@@ -85,7 +83,6 @@ impl AccountRepository for PostgresAccountRepository {
         .bind(&item.name_th)
         .bind(item.account_kind.as_str())
         .bind(&item.currency_code)
-        .bind(item.opening_balance)
         .bind(item.holder_user_id)
         .execute(&self.pool)
         .await?;
@@ -94,7 +91,7 @@ impl AccountRepository for PostgresAccountRepository {
 
     async fn update(&self, item: &Account) -> AppResult<()> {
         let result = sqlx::query(
-            "UPDATE fb_accounts SET name = $3, archived = $4, name_lang = $5, name_ru = $6, name_en = $7, name_th = $8, account_kind = $9, currency_code = $10, opening_balance = $11, holder_user_id = $12 \
+            "UPDATE fb_accounts SET name = $3, archived = $4, name_lang = $5, name_ru = $6, name_en = $7, name_th = $8, account_kind = $9, currency_code = $10, holder_user_id = $11 \
              WHERE project_id = $1 AND code = $2",
         )
         .bind(item.project_id)
@@ -107,7 +104,6 @@ impl AccountRepository for PostgresAccountRepository {
         .bind(&item.name_th)
         .bind(item.account_kind.as_str())
         .bind(&item.currency_code)
-        .bind(item.opening_balance)
         .bind(item.holder_user_id)
         .execute(&self.pool)
         .await?;

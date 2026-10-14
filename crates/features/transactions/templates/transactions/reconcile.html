@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{{ page.t("reconcile") }} · {{ account_title }}{% endblock %}
+{% block heading %}{{ page.t("reconcile") }} · {{ account_title }}{% endblock %}
+{% block content %}
+{% call m::form_alert(error, "occurred_on,actual,category_code") %}{% endcall %}
+<form method="post" class="card card-pad form max-w-2xl" data-reconcile data-book="{{ book_raw }}">
+  <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+  <input type="hidden" name="account" value="{{ f.account }}">
+  <p class="text-sm text-muted">{{ page.t("reconcile_text") }}</p>
+  <div class="grid gap-4 sm:grid-cols-2">
+    <div class="field"><label class="label" for="occurred_on">{{ page.t("date") }}</label>
+      <input class="input" type="date" id="occurred_on" name="occurred_on" value="{{ f.occurred_on }}" required{% call m::aria(error, "occurred_on") %}{% endcall %}>{% call m::err(error, "occurred_on") %}{% endcall %}</div>
+    <div class="field"><p class="label">{{ page.t("book_balance") }}</p>
+      <p class="text-xl font-semibold tabular-nums">{% call m::amount(book, currency) %}{% endcall %}</p></div>
+  </div>
+  <div class="grid gap-4 sm:grid-cols-2">
+    <div class="field"><label class="label" for="actual">{{ page.t("actual_balance") }} <span class="label-note">{{ currency }}</span></label>
+      <input class="input num" id="actual" name="actual" value="{{ f.actual }}" inputmode="decimal" placeholder="0.00" required autofocus data-actual{% call m::aria(error, "actual") %}{% endcall %}>{% call m::err(error, "actual") %}{% endcall %}
+      <p class="hint" data-diff aria-live="polite" data-more="{{ page.t("diff_more") }}" data-less="{{ page.t("diff_less") }}" data-same="{{ page.t("reconcile_same") }}"></p></div>
+    <div class="field"><label class="label" for="category_code">{{ page.t("category") }}</label>
+      <select class="input" id="category_code" name="category_code" data-kind-filtered{% call m::aria(error, "category_code") %}{% endcall %}>
+        <option value=""></option>
+        {% for c in categories %}<option value="{{ c.code }}" data-kind="{{ c.tag }}" {% if f.category_code == c.code %}selected{% endif %}>{{ c.indent() }}{{ c.label }}</option>{% endfor %}
+      </select>
+      <p class="hint">{{ page.t("reconcile_category_hint") }}</p>{% call m::err(error, "category_code") %}{% endcall %}</div>
+  </div>
+  <div class="form-actions">
+    <button class="btn-primary">{{ page.t("save") }}</button>
+    <a href="/transactions?account={{ f.account }}" class="btn-ghost">{{ page.t("cancel") }}</a>
+  </div>
+</form>
+{% endblock %}

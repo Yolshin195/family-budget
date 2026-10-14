@@ -12,14 +12,23 @@ use uuid::Uuid;
 
 pub use crate::domain::{LimitRule, Node};
 
-/// Позиция транзакции (в валюте счёта).
+/// Проводка на категорию (в своей валюте): расход — потрачено, доход — получено, возврат — с минусом.
 #[derive(Debug, Clone)]
 pub struct FactRec {
     pub date: NaiveDate,
-    pub account_code: String,
+    pub currency: String,
     /// EXPENSE / INCOME
     pub kind: String,
     pub category_code: String,
+    pub amount: Decimal,
+    pub created_by: Uuid,
+}
+
+/// Проводка на системный счёт «Обмен валют» (со знаком, в своей валюте).
+#[derive(Debug, Clone)]
+pub struct ExchangeRec {
+    pub date: NaiveDate,
+    pub currency: String,
     pub amount: Decimal,
     pub created_by: Uuid,
 }
@@ -29,9 +38,11 @@ pub struct FactRec {
 pub struct PlannedRec {
     pub plan_id: Uuid,
     pub date: NaiveDate,
+    /// EXPENSE / INCOME / TRANSFER
     pub kind: String,
     pub account_code: String,
-    pub category_code: String,
+    /// Категория расхода или дохода; у перевода — нет.
+    pub category_code: Option<String>,
     pub amount: Decimal,
     pub title: String,
     /// EXPECTED / OVERDUE
@@ -43,7 +54,6 @@ pub struct AccountRec {
     pub code: String,
     pub title: String,
     pub currency: String,
-    pub opening: Decimal,
     pub archived: bool,
 }
 
@@ -55,8 +65,10 @@ pub trait CategoriesSource: Send + Sync {
 #[async_trait]
 pub trait FactsSource: Send + Sync {
     async fn lines(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<FactRec>>;
-    /// (счёт, доходы, расходы) по дату включительно.
-    async fn turnover(&self, project_id: Uuid, to: NaiveDate) -> AppResult<Vec<(String, Decimal, Decimal)>>;
+    /// Остатки счетов по дату включительно: (счёт, сумма проводок).
+    async fn balances(&self, project_id: Uuid, to: NaiveDate) -> AppResult<Vec<(String, Decimal)>>;
+    /// Проводки «Обмен валют» за период — курсовая разница.
+    async fn exchange(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<ExchangeRec>>;
 }
 
 #[async_trait]

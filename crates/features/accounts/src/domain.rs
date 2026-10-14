@@ -78,7 +78,6 @@ pub struct Account {
     pub name_th: Option<String>,
     pub account_kind: AccountAccountKind,
     pub currency_code: String,
-    pub opening_balance: rust_decimal::Decimal,
     pub holder_user_id: Option<uuid::Uuid>,
 }
 
@@ -93,7 +92,6 @@ pub struct NewAccount {
     pub name_th: Option<String>,
     pub account_kind: AccountAccountKind,
     pub currency_code: String,
-    pub opening_balance: rust_decimal::Decimal,
     pub holder_user_id: Option<uuid::Uuid>,
 }
 
@@ -108,7 +106,6 @@ pub struct AccountChanges {
     pub name_th: Option<String>,
     pub account_kind: AccountAccountKind,
     pub currency_code: String,
-    pub opening_balance: rust_decimal::Decimal,
     pub holder_user_id: Option<uuid::Uuid>,
 }
 
@@ -126,7 +123,6 @@ impl Account {
             name_th: kernel::i18n::clean(new.name_th.clone()),
             account_kind: new.account_kind,
             currency_code: normalize("currency_code", &new.currency_code)?,
-            opening_balance: new.opening_balance,
             holder_user_id: new.holder_user_id,
         })
     }
@@ -140,7 +136,6 @@ impl Account {
         self.name_th = kernel::i18n::clean(changes.name_th.clone());
         self.account_kind = changes.account_kind;
         self.currency_code = normalize("currency_code", &changes.currency_code)?;
-        self.opening_balance = changes.opening_balance;
         self.holder_user_id = changes.holder_user_id;
         Ok(())
     }

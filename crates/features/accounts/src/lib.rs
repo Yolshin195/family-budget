@@ -1,5 +1,5 @@
-//! @generated rust-hex-api v1 (directory). Правки допустимы — при upgrade они сливаются 3-way merge.
-//! Фича «Счета» (`accounts`): справочник. Поля и эндпоинты — FEATURE.md, спецификация — feature.json.
+//! rust-hex-api v1 (directory, написана вручную поверх сгенерированной: порт `Ledger` шире `exists`).
+//! Фича «Счета» (`accounts`): справочник. Поля и эндпоинты — FEATURE.md.
 //!
 //! Гексагональная схема: adapters/http → service → ports ← adapters/postgres | adapters/memory; domain — чистые правила.
 //! Публичный API крейта (то, что видят приложение и связки с другими фичами) — только ниже.
@@ -21,7 +21,7 @@ use kernel::web::{NavGroup, NavItem, Web};
 use utoipa::OpenApi;
 
 pub use ports::Deps;
-pub use ports::CurrenciesLookup;
+pub use ports::{CurrenciesLookup, Ledger};
 /// Use cases фичи. Другие фичи получают к ним доступ только через свои порты и адаптеры в app/wiring.
 pub use service::AccountService as Service;
 

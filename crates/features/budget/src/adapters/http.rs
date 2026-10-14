@@ -65,6 +65,9 @@ pub struct BudgetDto {
     pub to: NaiveDate,
     pub base_currency: String,
     pub rows: Vec<BudgetRowDto>,
+    /// Курсовая разница за период в базовой валюте («−» — потеряно на обмене); в расходы не входит
+    #[schema(value_type = String)]
+    pub fx_result: Decimal,
     pub missing_rates: Vec<String>,
 }
 
@@ -90,5 +93,5 @@ pub async fn report(State(svc): Svc, Extension(s): Extension<Session>, Query(q):
             level: x.level.code().into(),
         })
         .collect();
-    Ok(Json(BudgetDto { from: r.period.from, to: r.period.to, base_currency: r.base_currency, rows, missing_rates: r.missing_rates }))
+    Ok(Json(BudgetDto { from: r.period.from, to: r.period.to, base_currency: r.base_currency, rows, fx_result: r.fx_result, missing_rates: r.missing_rates }))
 }

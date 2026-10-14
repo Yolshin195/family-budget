@@ -1,28 +1,17 @@
-# Фича `accounts` — Счета
+# Фича `accounts` — Счета (сгенерирована по эталону v1, дальше ведётся вручную)
 
-Счета
+Справочник счетов: код, название (ru/en/th), тип `CASH`/`CARD`/`BANK`/`SAVINGS`, валюта, держатель.
+Остаток счёта — сумма его проводок в журнале операций; начальный остаток — транзакция `OPENING` (ТЗ, разделы 3–4).
+Порт `Ledger` шире `exists`, поэтому `feature.json` нет и `arch.py upgrade` фичу не трогает.
 
-- **Тип:** directory
-- **Крейт:** `crates/features/accounts` (Cargo-флаг приложения `accounts`)
-- **Зависит от:** `currencies` — через порты `CurrenciesLookup`, связка в `crates/app/src/wiring/wire_accounts.rs`
-- **Таблица:** `fb_accounts`
-- **Сгенерирована** из `feature.json` по эталону v1
+- **Таблица:** `fb_accounts` (без `opening_balance`: миграция `opening_to_ledger` передаёт начальные остатки журналу)
+- **Порты:** `CurrenciesLookup` (валюты), `Ledger` (остатки, начальный остаток, есть ли проводки) →
+  `crates/app/src/wiring/wire_accounts.rs`; журнал подключается через `OnceLock` (фича transactions сама зависит от счетов)
 
-## Поля
-
-| Поле | Тип | Обязательное | Описание |
-|---|---|---|---|
-| code | string | да | Уникальный код в пределах пользователя |
-| name | string | да | Название |
-| archived | bool | — | Архив (вместо удаления) |
-| name_lang | enum (RU, EN, TH) | да | Язык оригинала названия |
-| name_ru | string | нет | Перевод названия: ru |
-| name_en | string | нет | Перевод названия: en |
-| name_th | string | нет | Перевод названия: th |
-| account_kind | enum (CASH, CARD, BANK, SAVINGS) | да | Тип счёта |
-| currency_code | ref → `currencies` | да | Валюта счёта |
-| opening_balance | decimal | да | Начальный остаток |
-| holder_user_id | uuid | нет | Держатель счёта (участник проекта) |
+Правила:
+- валюту счёта, по которому есть проводки, изменить нельзя;
+- в архив уходит только счёт с нулевым остатком (с учётом операций будущими датами);
+- форма счёта: «Остаток» и «на дату» → транзакция `OPENING` (нулевой остаток — удаляется).
 
 ## Эндпоинты (под JWT)
 
@@ -34,34 +23,7 @@
 | PUT | /accounts/{code} | изменить (код не меняется) |
 | DELETE | /accounts/{code} | архивировать |
 
-## Файлы
+Остатки — `GET /api/transactions/balances`, начальный остаток через API — транзакция `OPENING`.
+Страницы (`/accounts`): карточки с текущим остатком и кнопками «Выписка», «Перевести», «Сверить»; форма счёта.
 
-```
-crates/app/src/wiring/wire_accounts.rs
-crates/features/accounts/Cargo.toml
-crates/features/accounts/FEATURE.md
-crates/features/accounts/feature.json
-crates/features/accounts/migrations/20261009025304_create_fb_accounts.down.sql
-crates/features/accounts/migrations/20261009025304_create_fb_accounts.up.sql
-crates/features/accounts/src/adapters/http.rs
-crates/features/accounts/src/adapters/memory.rs
-crates/features/accounts/src/adapters/mod.rs
-crates/features/accounts/src/adapters/postgres.rs
-crates/features/accounts/src/domain.rs
-crates/features/accounts/src/dto.rs
-crates/features/accounts/src/lib.rs
-crates/features/accounts/src/ports.rs
-crates/features/accounts/src/service.rs
-crates/features/accounts/src/tests.rs
-```
-
-Вне крейта фича затрагивает только строки с `@f:accounts` в `crates/app/src/wiring/mod.rs`
-и свои записи в блоках `@arch:*` файла `crates/app/Cargo.toml`.
-
-## Команды
-
-```bash
-cargo test -p accounts
-python3 <skill>/scripts/arch.py disable accounts | enable accounts | remove accounts
-python3 <skill>/scripts/arch.py upgrade   # после правки feature.json
-```
+Тесты: `cargo test -p accounts`.

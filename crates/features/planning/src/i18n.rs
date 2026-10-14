@@ -52,6 +52,10 @@ pub fn dict(key: &str) -> Option<Tr> {
         "month_nav" => ("Выбор месяца", "Month navigation", "เลือกเดือน"),
         "prev_month" => ("Предыдущий месяц", "Previous month", "เดือนก่อน"),
         "next_month" => ("Следующий месяц", "Next month", "เดือนถัดไป"),
+        "to_account" => ("Счёт зачисления", "To account", "บัญชีปลายทาง"),
+        "transfer_plan_hint" => ("Например, в копилку каждый месяц. Перевод не меняет доходы и расходы бюджета.",
+                                 "E.g. to savings every month. A transfer doesn't change the budget's income or expenses.",
+                                 "เช่น โอนเข้าบัญชีออมทุกเดือน การโอนไม่เปลี่ยนรายรับรายจ่ายของงบประมาณ"),
         _ => return None,
     })
 }

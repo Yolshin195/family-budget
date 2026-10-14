@@ -12,7 +12,7 @@ use crate::domain::{Name, Plan, Recurrence};
 use crate::ports::PlanRepository;
 
 const COLUMNS: &str = "id, project_id, name, name_lang, name_ru, name_en, name_th, tx_kind, account_code, category_code, \
-                       amount, recurrence, interval_n, start_on, end_on, active, created_by";
+                       amount, recurrence, interval_n, start_on, end_on, active, created_by, to_account_code";
 
 pub struct PostgresPlanRepository {
     pool: PgPool,
@@ -35,7 +35,8 @@ struct Row {
     name_th: Option<String>,
     tx_kind: String,
     account_code: String,
-    category_code: String,
+    category_code: Option<String>,
+    to_account_code: Option<String>,
     amount: Decimal,
     recurrence: String,
     interval_n: i32,
@@ -63,6 +64,7 @@ impl TryFrom<Row> for Plan {
             tx_kind: r.tx_kind,
             account_code: r.account_code,
             category_code: r.category_code,
+            to_account_code: r.to_account_code,
             amount: r.amount,
             recurrence: Recurrence::parse(&r.recurrence).ok_or_else(|| bad("recurrence", &r.recurrence))?,
             interval: r.interval_n.max(1) as u32,
@@ -77,7 +79,7 @@ impl TryFrom<Row> for Plan {
 #[async_trait]
 impl PlanRepository for PostgresPlanRepository {
     async fn insert(&self, p: &Plan) -> AppResult<()> {
-        sqlx::query(&format!("INSERT INTO fb_plans ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)"))
+        sqlx::query(&format!("INSERT INTO fb_plans ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)"))
             .bind(p.id)
             .bind(p.project_id)
             .bind(&p.name.text)
@@ -95,6 +97,7 @@ impl PlanRepository for PostgresPlanRepository {
             .bind(p.end_on)
             .bind(p.active)
             .bind(p.created_by)
+            .bind(&p.to_account_code)
             .execute(&self.pool)
             .await?;
         Ok(())
@@ -103,8 +106,8 @@ impl PlanRepository for PostgresPlanRepository {
     async fn update(&self, p: &Plan) -> AppResult<()> {
         let res = sqlx::query(
             "UPDATE fb_plans SET name=$3, name_lang=$4, name_ru=$5, name_en=$6, name_th=$7, tx_kind=$8, account_code=$9, \
-             category_code=$10, amount=$11, recurrence=$12, interval_n=$13, start_on=$14, end_on=$15, active=$16 \
-             WHERE project_id=$1 AND id=$2",
+             category_code=$10, amount=$11, recurrence=$12, interval_n=$13, start_on=$14, end_on=$15, active=$16, \
+             to_account_code=$17 WHERE project_id=$1 AND id=$2",
         )
         .bind(p.project_id)
         .bind(p.id)
@@ -122,6 +125,7 @@ impl PlanRepository for PostgresPlanRepository {
         .bind(p.start_on)
         .bind(p.end_on)
         .bind(p.active)
+        .bind(&p.to_account_code)
         .execute(&self.pool)
         .await?;
         if res.rows_affected() == 0 {

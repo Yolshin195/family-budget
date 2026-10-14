@@ -3,7 +3,7 @@
 {% block title %}{% if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
 {% block heading %}{% if !f.plan_id.is_empty() %}{{ page.t("paid_plan") }}{% else if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
 {% block content %}
-{% call m::form_alert(error, "occurred_on,account_code,tx_kind,line_category_code,line_amount,description") %}{% endcall %}
+{% call m::form_alert(error, "occurred_on,account_code,tx_kind,line_category_code,line_amount,description,to_account_code,amount,to_amount,fee_category_code,fee_amount") %}{% endcall %}
 <form method="post" class="card card-pad form max-w-3xl" id="tx" data-tx-form data-limit-warn>
   <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
   <input type="hidden" name="plan_id" value="{{ f.plan_id }}">
@@ -13,33 +13,35 @@
     <fieldset class="field">
       <legend class="label">{{ page.t("kind") }}</legend>
       <div class="seg" role="radiogroup">
-        <label class="seg-item"><input type="radio" name="tx_kind" value="EXPENSE" {% if f.tx_kind != "INCOME" %}checked{% endif %}><span>{{ page.t("expense") }}</span></label>
-        <label class="seg-item"><input type="radio" name="tx_kind" value="INCOME" {% if f.tx_kind == "INCOME" %}checked{% endif %}><span>{{ page.t("income") }}</span></label>
+        <label class="seg-item"><input type="radio" name="tx_kind" value="EXPENSE" {% if f.kind() == "EXPENSE" %}checked{% endif %}><span>{{ page.t("expense") }}</span></label>
+        <label class="seg-item"><input type="radio" name="tx_kind" value="INCOME" {% if f.kind() == "INCOME" %}checked{% endif %}><span>{{ page.t("income") }}</span></label>
+        <label class="seg-item"><input type="radio" name="tx_kind" value="TRANSFER" {% if f.kind() == "TRANSFER" %}checked{% endif %}><span>{{ page.t("transfer") }}</span></label>
       </div>
     </fieldset>
     <div class="field"><label class="label" for="occurred_on">{{ page.t("date") }}</label>
       <input class="input" type="date" id="occurred_on" name="occurred_on" value="{{ f.occurred_on }}" required{% call m::aria(error, "occurred_on") %}{% endcall %}>{% call m::err(error, "occurred_on") %}{% endcall %}</div>
-    <div class="field"><label class="label" for="account_code">{{ page.t("account") }}</label>
-      <select class="input" id="account_code" name="account_code" required{% call m::aria(error, "account_code") %}{% endcall %}>
-        {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" {% if f.account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
+    <div class="field"><label class="label" for="account_code" data-label-flow="{{ page.t("account") }}" data-label-transfer="{{ page.t("from") }}">{% if f.kind() == "TRANSFER" %}{{ page.t("from") }}{% else %}{{ page.t("account") }}{% endif %}</label>
+      <select class="input" id="account_code" name="account_code" required data-account{% call m::aria(error, "account_code") %}{% endcall %}>
+        {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" data-rate="{{ self.rate_of(a.tag) }}" {% if f.account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
       </select>{% call m::err(error, "account_code") %}{% endcall %}</div>
   </div>
 
-  <fieldset class="field">
-    <div class="flex items-center justify-between mb-2">
+  <fieldset class="field" data-section="flow"{% if f.kind() == "TRANSFER" %} hidden disabled{% endif %}>
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
       <legend class="label !mb-0">{{ page.t("lines") }}</legend>
+      <label class="checkbox checkbox-sm" title="{{ page.t("refund_hint") }}"><input type="checkbox" name="refund" value="1" data-refund {% if f.refund == "1" %}checked{% endif %}><span>{{ page.t("refund") }}</span></label>
       <p class="text-sm text-muted" aria-live="polite">{{ page.t("total") }}: <b class="amount text-default" data-total>0.00</b> <span data-cur></span></p>
     </div>
     <div class="lines" data-lines>
       {% for l in lines %}
       <div class="line" data-line>
         <label class="sr-only" for="lc-{{ loop.index }}">{{ page.t("category") }} {{ loop.index }}</label>
-        <select class="input" id="lc-{{ loop.index }}" name="line_category" required data-kind-filtered{% if loop.first %}{% call m::aria(error, "line_category_code") %}{% endcall %}{% endif %}>
+        <select class="input" id="lc-{{ loop.index }}" name="line_category" data-kind-filtered{% if loop.first %}{% call m::aria(error, "line_category_code") %}{% endcall %}{% endif %}>
           <option value=""></option>
           {% for c in categories %}<option value="{{ c.code }}" data-kind="{{ c.tag }}" {% if l.category == c.code %}selected{% endif %}>{{ c.indent() }}{{ c.label }}</option>{% endfor %}
         </select>
         <label class="sr-only" for="la-{{ loop.index }}">{{ page.t("amount") }} {{ loop.index }}</label>
-        <input class="input num" id="la-{{ loop.index }}" name="line_amount" value="{{ l.amount }}" inputmode="decimal" placeholder="0.00" required data-amount{% if loop.first && f.plan_id.is_empty() && id.is_none() %} autofocus{% endif %}>
+        <input class="input num" id="la-{{ loop.index }}" name="line_amount" value="{{ l.amount }}" inputmode="decimal" placeholder="0.00" data-amount{% if loop.first && f.plan_id.is_empty() && id.is_none() && f.kind() != "TRANSFER" %} autofocus{% endif %}>
         <label class="sr-only" for="ln-{{ loop.index }}">{{ page.t("note") }} {{ loop.index }}</label>
         <input class="input line-note" id="ln-{{ loop.index }}" name="line_note" value="{{ l.note }}" placeholder="{{ page.t("note") }}" maxlength="200">
         <button type="button" class="btn-icon" data-remove-line aria-label="{{ page.t("remove") }}" title="{{ page.t("remove") }}"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("x") }}"></use></svg></button>
@@ -49,6 +51,37 @@
     {% call m::err(error, "line_category_code") %}{% endcall %}{% call m::err(error, "line_amount") %}{% endcall %}
     <p class="limit-note" data-limit-note aria-live="polite"></p>
     <button type="button" class="btn-ghost btn-sm mt-2" data-add-line><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("add_line") }}</button>
+  </fieldset>
+
+  <fieldset class="field space-y-4" data-section="transfer"{% if f.kind() != "TRANSFER" %} hidden disabled{% endif %}>
+    <legend class="sr-only">{{ page.t("transfer") }}</legend>
+    <div class="grid gap-4 sm:grid-cols-3">
+      <div class="field"><label class="label" for="to_account_code">{{ page.t("to") }}</label>
+        <select class="input" id="to_account_code" name="to_account_code" data-to-account{% call m::aria(error, "to_account_code") %}{% endcall %}>
+          <option value=""></option>
+          {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" data-rate="{{ self.rate_of(a.tag) }}" {% if f.to_account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
+        </select>{% call m::err(error, "to_account_code") %}{% endcall %}</div>
+      <div class="field"><label class="label" for="amount">{{ page.t("sent") }} <span class="label-note" data-from-cur></span></label>
+        <input class="input num" id="amount" name="amount" value="{{ f.amount }}" inputmode="decimal" placeholder="0.00" data-sent{% if f.kind() == "TRANSFER" && id.is_none() %} autofocus{% endif %}{% call m::aria(error, "amount") %}{% endcall %}>
+        <p class="hint">{{ page.t("sent_hint") }}</p>{% call m::err(error, "amount") %}{% endcall %}</div>
+      <div class="field" data-exchange><label class="label" for="to_amount">{{ page.t("received") }} <span class="label-note" data-to-cur></span></label>
+        <input class="input num" id="to_amount" name="to_amount" value="{{ f.to_amount }}" inputmode="decimal" placeholder="0.00" data-received{% call m::aria(error, "to_amount") %}{% endcall %}>
+        <p class="hint">{{ page.t("received_hint") }}</p>{% call m::err(error, "to_amount") %}{% endcall %}</div>
+    </div>
+    <p class="rate-line" data-rate-line aria-live="polite" data-label="{{ page.t("rate") }}" data-ref="{{ page.t("rate_ref") }}"></p>
+    <details class="disclosure"{% if !f.fee_amount.is_empty() || !f.fee_category_code.is_empty() %} open{% endif %}>
+      <summary><svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("fee") }} <span class="label-note">· {{ page.t("optional") }}</span></summary>
+      <div class="grid gap-4 sm:grid-cols-[1fr_11rem] mt-3">
+        <div class="field"><label class="label" for="fee_category_code">{{ page.t("fee_category") }}</label>
+          <select class="input" id="fee_category_code" name="fee_category_code"{% call m::aria(error, "fee_category_code") %}{% endcall %}>
+            <option value=""></option>
+            {% for c in categories %}{% if c.tag == "EXPENSE" %}<option value="{{ c.code }}" {% if f.fee_category_code == c.code %}selected{% endif %}>{{ c.indent() }}{{ c.label }}</option>{% endif %}{% endfor %}
+          </select>{% call m::err(error, "fee_category_code") %}{% endcall %}</div>
+        <div class="field"><label class="label" for="fee_amount">{{ page.t("amount") }} <span class="label-note" data-from-cur></span></label>
+          <input class="input num" id="fee_amount" name="fee_amount" value="{{ f.fee_amount }}" inputmode="decimal" placeholder="0.00" data-fee{% call m::aria(error, "fee_amount") %}{% endcall %}>{% call m::err(error, "fee_amount") %}{% endcall %}</div>
+      </div>
+      <p class="hint mt-2">{{ page.t("fee_hint") }}</p>
+    </details>
   </fieldset>
 
   <div>
@@ -70,6 +103,16 @@
       </div>
     </details>
   </div>
+
+  {% if !postings.is_empty() %}
+  <details class="disclosure">
+    <summary><svg class="icon" aria-hidden="true"><use href="{{ page.icon("scale") }}"></use></svg>{{ page.t("postings") }}</summary>
+    <p class="hint mt-2">{{ page.t("postings_hint") }}</p>
+    <ul class="postings mt-2" role="list">
+      {% for x in postings %}<li><span{% if x.system %} class="text-subtle"{% endif %}>{{ x.title }}</span><span class="amount">{{ x.amount }}<span class="cur">{{ x.currency }}</span></span></li>{% endfor %}
+    </ul>
+  </details>
+  {% endif %}
 
   <div class="form-actions">
     <button class="btn-primary">{{ page.t("save") }}</button>

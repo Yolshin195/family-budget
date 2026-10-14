@@ -3,6 +3,8 @@
 
 use std::sync::Arc;
 
+use chrono::NaiveDate;
+use rust_decimal::Decimal;
 #[allow(unused_imports)]
 use kernel::code::{ensure_ref, normalize};
 use kernel::error::{AppError, AppResult};
@@ -17,8 +19,12 @@ use crate::ports::{Deps, AccountRepository};
 
 pub struct AccountService {
     repo: Arc<dyn AccountRepository>,
-    #[allow(dead_code)]
     deps: Deps,
+}
+
+/// Дата «после всех операций» — для остатка с учётом операций будущими датами.
+fn end_of_time() -> NaiveDate {
+    NaiveDate::from_ymd_opt(9999, 12, 31).unwrap_or(NaiveDate::MAX)
 }
 
 impl AccountService {
@@ -50,17 +56,55 @@ impl AccountService {
 
     pub async fn update(&self, project_id: Uuid, code: &str, dto: UpdateAccountDto) -> AppResult<AccountDto> {
         let mut item = self.load(project_id, code).await?;
+        let currency = item.currency_code.clone();
         item.change(dto.into_domain().map_err(AppError::Validation)?).map_err(AppError::Validation)?;
+        // Проводки хранят валюту: смена валюты переписала бы историю счёта.
+        if item.currency_code != currency && self.deps.ledger.has_postings(project_id, &item.code).await? {
+            return Err(AppError::Validation(format!("currency_code: по счёту есть операции — валюта остаётся {currency}")));
+        }
+        if item.archived {
+            self.ensure_zero(project_id, &item.code).await?;
+        }
         self.check_refs(project_id, &item).await?;
         self.repo.update(&item).await?;
         Ok(item.into())
     }
 
     /// Архивирование вместо удаления: код остаётся занятым, ссылки на запись не «повисают».
+    /// Архивировать можно только счёт с нулевым остатком.
     pub async fn archive(&self, project_id: Uuid, code: &str) -> AppResult<()> {
         let mut item = self.load(project_id, code).await?;
+        self.ensure_zero(project_id, &item.code).await?;
         item.archived = true;
         self.repo.update(&item).await
+    }
+
+    async fn ensure_zero(&self, project_id: Uuid, code: &str) -> AppResult<()> {
+        let balance = self.balances(project_id, end_of_time()).await?.into_iter().find(|b| b.0 == code).map(|b| b.1).unwrap_or_default();
+        if balance.is_zero() {
+            Ok(())
+        } else {
+            Err(AppError::Conflict(format!("archived: на счёте {code} остаток {} — переведите его или сверьте остаток", balance.normalize())))
+        }
+    }
+
+    // ---- Остатки (из журнала операций) ----
+
+    /// Остатки счетов на дату: (счёт, остаток).
+    pub async fn balances(&self, project_id: Uuid, date: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
+        self.deps.ledger.balances(project_id, date).await
+    }
+
+    /// Начальный остаток счёта и его дата.
+    pub async fn opening(&self, project_id: Uuid, code: &str) -> AppResult<Option<(Decimal, NaiveDate)>> {
+        let item = self.load(project_id, code).await?;
+        self.deps.ledger.opening(project_id, &item.code).await
+    }
+
+    /// Задать начальный остаток из формы счёта.
+    pub async fn set_opening(&self, project_id: Uuid, user_id: Uuid, code: &str, amount: Decimal, date: NaiveDate) -> AppResult<()> {
+        let item = self.load(project_id, code).await?;
+        self.deps.ledger.set_opening(project_id, user_id, &item.code, amount, date).await
     }
 
     /// Вернуть из архива («Отменить» в тосте после архивирования).

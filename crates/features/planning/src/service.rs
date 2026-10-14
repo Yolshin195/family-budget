@@ -181,12 +181,13 @@ impl PlanningService {
 
     async fn check_refs(&self, project_id: Uuid, plan: &Plan) -> AppResult<()> {
         ensure_ref(self.deps.accounts.exists(project_id, &plan.account_code).await?, "account_code", &plan.account_code)?;
-        match self.deps.categories.kind_of(project_id, &plan.category_code).await? {
-            None => ensure_ref(false, "category_code", &plan.category_code),
-            Some(k) if k != plan.tx_kind => Err(AppError::Validation(format!(
-                "category_code: категория '{}' — {k}, а план — {}",
-                plan.category_code, plan.tx_kind
-            ))),
+        if let Some(to) = &plan.to_account_code {
+            ensure_ref(self.deps.accounts.exists(project_id, to).await?, "to_account_code", to)?;
+        }
+        let Some(code) = &plan.category_code else { return Ok(()) };
+        match self.deps.categories.kind_of(project_id, code).await? {
+            None => ensure_ref(false, "category_code", code),
+            Some(k) if k != plan.tx_kind => Err(AppError::Validation(format!("category_code: категория '{code}' — {k}, а план — {}", plan.tx_kind))),
             Some(_) => Ok(()),
         }
     }

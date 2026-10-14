@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use budget::{AccountRec, FactRec, LimitRule, Node, PlannedRec, View};
+use budget::{AccountRec, ExchangeRec, FactRec, LimitRule, Node, PlannedRec, View};
 use chrono::NaiveDate;
 use kernel::error::AppResult;
 use kernel::i18n::Lang;
@@ -35,11 +35,20 @@ impl ::budget::FactsSource for FactsAdapter {
             .lines(project_id, from, to)
             .await?
             .into_iter()
-            .map(|l| FactRec { date: l.occurred_on, account_code: l.account_code, kind: l.tx_kind, category_code: l.category_code, amount: l.amount, created_by: l.created_by })
+            .map(|l| FactRec { date: l.occurred_on, currency: l.currency, kind: l.kind, category_code: l.category_code, amount: l.amount, created_by: l.created_by })
             .collect())
     }
-    async fn turnover(&self, project_id: Uuid, to: NaiveDate) -> AppResult<Vec<(String, Decimal, Decimal)>> {
-        self.0.turnover(project_id, to).await
+    async fn balances(&self, project_id: Uuid, to: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
+        self.0.balances(project_id, to).await
+    }
+    async fn exchange(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<ExchangeRec>> {
+        Ok(self
+            .0
+            .exchange(project_id, from, to)
+            .await?
+            .into_iter()
+            .map(|x| ExchangeRec { date: x.occurred_on, currency: x.currency, amount: x.amount, created_by: x.created_by })
+            .collect())
     }
 }
 
@@ -93,7 +102,7 @@ impl ::budget::AccountsSource for AccountsAdapter {
             .all(project_id, true)
             .await?
             .into_iter()
-            .map(|a| AccountRec { title: a.title(lang).to_string(), code: a.code, currency: a.currency_code, opening: a.opening_balance, archived: a.archived })
+            .map(|a| AccountRec { title: a.title(lang).to_string(), code: a.code, currency: a.currency_code, archived: a.archived })
             .collect())
     }
 }
