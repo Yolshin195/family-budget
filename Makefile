@@ -65,7 +65,7 @@ css: ## Пересобрать Tailwind CSS после правки шаблон
 assets: ## Пересобрать всю статику: CSS, htmx, шрифты, иконки, favicon, OG-картинку
 	$(NODE) sh -c "npm ci --silent && npm run build"
 
-backup: ## Зашифрованные резервные копии баз family_budget и rauthy (хранятся BACKUP_KEEP_DAYS дней)
+backup: ## Зашифрованные резервные копии баз family_budget и rauthy (не больше трёх копий каждой)
 	ENGINE=$(ENGINE) ./scripts/backup.sh
 
 restore-check: ## Проверка восстановления последней копии во временную базу
