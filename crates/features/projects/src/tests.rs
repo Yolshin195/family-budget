@@ -1,5 +1,5 @@
 //! Тесты use cases «Проекты»: вход через Rauthy (фейковый провайдер), сессии, API-токены, 2FA,
-//! семейный проект и роли, изоляция проектов, удаление аккаунта.
+//! семейный проект и роли, приглашения по ссылке, изоляция проектов, удаление аккаунта.
 
 use std::sync::{Arc, Mutex};
 
@@ -12,7 +12,7 @@ use kernel::i18n::Lang;
 use uuid::Uuid;
 
 use crate::adapters::memory::InMemoryProjectRepository;
-use crate::domain::{PendingLogin, ProjectKind, VerifiedLogin};
+use crate::domain::{InviteState, PendingLogin, ProjectKind, VerifiedLogin};
 use crate::ports::{AuthRequest, Deps, IdentityProvider, ProjectBootstrap, ProjectPurge};
 use crate::service::ProjectService;
 
@@ -317,4 +317,119 @@ async fn demo_guest_cannot_change_shared_account_or_projects() {
     assert!(forbidden(e.svc.create_token(guest, family, "t", &["read".into()], 30, false, &meta()).await.map(|_| ())));
     assert!(forbidden(e.svc.update_profile(guest, "Vandal", Lang::Ru, kernel::auth::Theme::Dark).await));
     assert!(e.svc.guest_login(&meta()).await.is_ok(), "демо по-прежнему работает");
+}
+
+/// Код из ссылки-приглашения, которую владелец видит на странице «Проекты».
+async fn invite_code(e: &Env, owner: Uuid, project: Uuid, invite: Uuid) -> String {
+    let p = e.svc.overview(owner).await.unwrap().into_iter().find(|p| p.id == project).unwrap();
+    let url = p.invites.into_iter().find(|i| i.id == invite).expect("приглашение в списке").url;
+    url.split_once("/join/").unwrap().1.to_string()
+}
+
+#[tokio::test]
+async fn invite_link_brings_a_new_user_into_the_family_budget() {
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    let id = e.svc.create_invite(me, family, Role::Editor, &meta()).await.unwrap();
+    let code = invite_code(&e, me, family, id).await;
+    // Anna впервые входит по приглашению — у неё нет проектов, онбординг ей не нужен
+    let anna = e.svc.finish_login(&pending(), "state-1", "sub-anna", Lang::En, &meta()).await.unwrap().user_id;
+    let preview = e.svc.invite_preview(&code, Some(anna)).await.unwrap();
+    assert_eq!((preview.project_name.as_str(), preview.inviter_name.as_str(), preview.role, preview.state, preview.member), ("Семья", "Имя", Role::Editor, InviteState::Active, false));
+    assert_eq!(e.svc.accept_invite(anna, &code, &meta()).await.unwrap(), family);
+    let s = e.svc.session(anna, None).await.unwrap().unwrap();
+    assert_eq!((s.project_id, s.role, s.members.len()), (family, Role::Editor, 2), "сразу в семейном бюджете");
+    // повторно — просто проект; другому человеку ссылка уже не подходит
+    assert_eq!(e.svc.accept_invite(anna, &code, &meta()).await.unwrap(), family);
+    assert!(e.svc.invite_preview(&code, Some(anna)).await.unwrap().member);
+    let other = e.svc.finish_login(&pending(), "state-1", "sub-fb", Lang::Ru, &meta()).await.unwrap().user_id;
+    assert!(matches!(e.svc.accept_invite(other, &code, &meta()).await.unwrap_err(), AppError::Validation(_)));
+    assert_eq!(e.svc.invite_preview(&code, None).await.unwrap().state, InviteState::Used);
+    assert!(e.svc.overview(me).await.unwrap().iter().find(|p| p.id == family).unwrap().invites.is_empty(), "использованное пропадает из списка");
+    assert!(e.repo.audit.lock().unwrap().iter().any(|a| a.action == "member_joined" && a.user_id == Some(anna)));
+}
+
+#[tokio::test]
+async fn invite_code_is_signed() {
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    let id = e.svc.create_invite(me, family, Role::Viewer, &meta()).await.unwrap();
+    let code = invite_code(&e, me, family, id).await;
+    let (anna, _, _) = signed_up(&e, "sub-anna").await;
+    let forged = format!("{}.{}", id.simple(), "A".repeat(22));
+    let unknown = format!("{}.{}", Uuid::new_v4().simple(), code.split_once('.').unwrap().1);
+    for bad in [forged.as_str(), unknown.as_str(), "nonsense", &code[..code.len() - 1]] {
+        assert!(matches!(e.svc.invite_preview(bad, None).await.unwrap_err(), AppError::NotFound(_)), "{bad}");
+        assert!(matches!(e.svc.accept_invite(anna, bad, &meta()).await.unwrap_err(), AppError::NotFound(_)), "{bad}");
+    }
+    assert!(!code.contains(&id.to_string()), "в ссылке id без дефисов");
+    assert_ne!(e.svc.session(anna, Some(family)).await.unwrap().unwrap().project_id, family, "не вошла");
+}
+
+#[tokio::test]
+async fn only_the_owner_invites_and_only_into_a_family_budget() {
+    let e = env();
+    let (me, _, personal) = signed_up(&e, "sub-me").await;
+    let (anna, _, _) = signed_up(&e, "sub-anna").await;
+    // личный бюджет — сначала сделать семейным; название по умолчанию меняется
+    assert!(matches!(e.svc.create_invite(me, personal, Role::Editor, &meta()).await.unwrap_err(), AppError::Validation(_)));
+    assert!(matches!(e.svc.make_family(anna, personal, &meta()).await.unwrap_err(), AppError::NotFound(_)), "чужой проект");
+    e.svc.make_family(me, personal, &meta()).await.unwrap();
+    let p = e.svc.overview(me).await.unwrap().into_iter().find(|p| p.id == personal).unwrap();
+    assert_eq!((p.kind.as_str(), p.name.as_str()), ("FAMILY", "Семейный бюджет"));
+    // владельцем по ссылке не стать; приглашать может только владелец
+    assert!(matches!(e.svc.create_invite(me, personal, Role::Owner, &meta()).await.unwrap_err(), AppError::Validation(_)));
+    let id = e.svc.create_invite(me, personal, Role::Editor, &meta()).await.unwrap();
+    let code = invite_code(&e, me, personal, id).await;
+    e.svc.accept_invite(anna, &code, &meta()).await.unwrap();
+    assert!(matches!(e.svc.create_invite(anna, personal, Role::Viewer, &meta()).await.unwrap_err(), AppError::Forbidden(_)));
+    assert!(matches!(e.svc.revoke_invite(anna, personal, id, &meta()).await.unwrap_err(), AppError::Forbidden(_)));
+    assert!(e.svc.overview(anna).await.unwrap().iter().all(|p| p.invites.is_empty()), "ссылки видит только владелец");
+}
+
+#[tokio::test]
+async fn revoked_expired_or_orphaned_invites_do_not_work() {
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    let (anna, _, _) = signed_up(&e, "sub-anna").await;
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    let rejected = |r: AppResult<Uuid>| matches!(r, Err(AppError::Validation(_)));
+    // отозванное
+    let revoked = e.svc.create_invite(me, family, Role::Editor, &meta()).await.unwrap();
+    let revoked_code = invite_code(&e, me, family, revoked).await;
+    e.svc.revoke_invite(me, family, revoked, &meta()).await.unwrap();
+    assert!(rejected(e.svc.accept_invite(anna, &revoked_code, &meta()).await));
+    assert_eq!(e.svc.invite_preview(&revoked_code, None).await.unwrap().state, InviteState::Revoked);
+    // истёкшее
+    let expired = e.svc.create_invite(me, family, Role::Editor, &meta()).await.unwrap();
+    let expired_code = invite_code(&e, me, family, expired).await;
+    for i in e.repo.invites.lock().unwrap().iter_mut().filter(|i| i.id == expired) {
+        i.expires_at = Utc::now() - Duration::minutes(1);
+    }
+    assert!(rejected(e.svc.accept_invite(anna, &expired_code, &meta()).await));
+    assert_eq!(e.svc.invite_preview(&expired_code, None).await.unwrap().state, InviteState::Expired);
+    // пригласивший больше не владелец — его ссылки не действуют
+    let orphan = e.svc.create_invite(me, family, Role::Editor, &meta()).await.unwrap();
+    let orphan_code = invite_code(&e, me, family, orphan).await;
+    e.svc.add_member(me, family, "anna@demo.local", Role::Owner, &meta()).await.unwrap();
+    e.svc.set_role(anna, family, me, Role::Editor, &meta()).await.unwrap();
+    let (fb, _, _) = signed_up(&e, "sub-fb").await;
+    assert!(rejected(e.svc.accept_invite(fb, &orphan_code, &meta()).await));
+    assert!(e.svc.session(fb, Some(family)).await.unwrap().unwrap().project_id != family);
+    // и ничего не изменилось: в проекте двое
+    assert_eq!(e.svc.session(anna, Some(family)).await.unwrap().unwrap().members.len(), 2);
+}
+
+#[tokio::test]
+async fn demo_guest_cannot_join_by_invite() {
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    let guest = e.svc.ensure_user(crate::GUEST_SUB, "guest@demo.local", "Guest", Lang::En).await.unwrap();
+    let id = e.svc.create_invite(me, family, Role::Editor, &meta()).await.unwrap();
+    let code = invite_code(&e, me, family, id).await;
+    assert!(matches!(e.svc.accept_invite(guest, &code, &meta()).await.unwrap_err(), AppError::Forbidden(_)));
+    assert_eq!(e.svc.invite_preview(&code, None).await.unwrap().state, InviteState::Active, "приглашение не израсходовано");
 }

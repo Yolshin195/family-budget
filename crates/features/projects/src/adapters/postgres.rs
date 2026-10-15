@@ -1,5 +1,5 @@
-//! Исходящий адаптер: PostgreSQL (fb_users, fb_projects, fb_project_members, fb_sessions,
-//! fb_api_tokens, fb_audit_log). Только параметризованные запросы.
+//! Исходящий адаптер: PostgreSQL (fb_users, fb_projects, fb_project_members, fb_project_invites,
+//! fb_sessions, fb_api_tokens, fb_audit_log). Только параметризованные запросы.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -9,7 +9,7 @@ use kernel::i18n::Lang;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::domain::{ApiToken, AuditEvent, Member, Project, ProjectKind, SessionRecord, User};
+use crate::domain::{ApiToken, AuditEvent, Invite, Member, Project, ProjectKind, SessionRecord, User};
 use crate::ports::{AccessRepository, ProjectRepository};
 
 pub struct PostgresProjectRepository {
@@ -58,6 +58,14 @@ fn role(v: &str) -> AppResult<Role> {
 
 const USER_COLS: &str = "u.id, u.rauthy_sub, u.email, u.display_name, u.avatar_url, u.lang, u.theme";
 const PROJECT_COLS: &str = "p.id, p.name, p.project_kind, p.base_currency, p.created_by, p.require_2fa";
+
+type InviteRow = (Uuid, Uuid, String, Uuid, DateTime<Utc>, DateTime<Utc>, Option<Uuid>, Option<DateTime<Utc>>, Option<DateTime<Utc>>);
+const INVITE_COLS: &str = "id, project_id, role, created_by, created_at, expires_at, used_by, used_at, revoked_at";
+
+fn invite(r: InviteRow) -> AppResult<Invite> {
+    let role = Role::parse(&r.2).ok_or_else(|| bad("fb_project_invites.role", &r.2))?;
+    Ok(Invite { id: r.0, project_id: r.1, role, created_by: r.3, created_at: r.4, expires_at: r.5, used_by: r.6, used_at: r.7, revoked_at: r.8 })
+}
 
 #[async_trait]
 impl ProjectRepository for PostgresProjectRepository {
@@ -175,6 +183,11 @@ impl ProjectRepository for PostgresProjectRepository {
         Ok(())
     }
 
+    async fn set_kind(&self, project_id: Uuid, kind: ProjectKind, name: &str) -> AppResult<()> {
+        sqlx::query("UPDATE fb_projects SET project_kind = $2, name = $3 WHERE id = $1").bind(project_id).bind(kind.as_str()).bind(name).execute(&self.pool).await?;
+        Ok(())
+    }
+
     async fn delete_project(&self, project_id: Uuid) -> AppResult<()> {
         sqlx::query("DELETE FROM fb_projects WHERE id = $1").bind(project_id).execute(&self.pool).await?;
         Ok(())
@@ -227,6 +240,76 @@ impl ProjectRepository for PostgresProjectRepository {
     async fn remove_member(&self, project_id: Uuid, user_id: Uuid) -> AppResult<()> {
         sqlx::query("DELETE FROM fb_project_members WHERE project_id = $1 AND user_id = $2").bind(project_id).bind(user_id).execute(&self.pool).await?;
         Ok(())
+    }
+
+    async fn insert_invite(&self, i: &Invite) -> AppResult<()> {
+        sqlx::query(&format!("INSERT INTO fb_project_invites ({INVITE_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"))
+            .bind(i.id)
+            .bind(i.project_id)
+            .bind(i.role.as_str())
+            .bind(i.created_by)
+            .bind(i.created_at)
+            .bind(i.expires_at)
+            .bind(i.used_by)
+            .bind(i.used_at)
+            .bind(i.revoked_at)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn invite(&self, id: Uuid) -> AppResult<Option<Invite>> {
+        let r: Option<InviteRow> = sqlx::query_as(&format!("SELECT {INVITE_COLS} FROM fb_project_invites WHERE id = $1")).bind(id).fetch_optional(&self.pool).await?;
+        r.map(invite).transpose()
+    }
+
+    async fn invites_of(&self, project_id: Uuid) -> AppResult<Vec<Invite>> {
+        let rows: Vec<InviteRow> = sqlx::query_as(&format!("SELECT {INVITE_COLS} FROM fb_project_invites WHERE project_id = $1 ORDER BY created_at DESC, id"))
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await?;
+        rows.into_iter().map(invite).collect()
+    }
+
+    async fn revoke_invite(&self, project_id: Uuid, id: Uuid, at: DateTime<Utc>) -> AppResult<bool> {
+        let r = sqlx::query("UPDATE fb_project_invites SET revoked_at = $3 WHERE id = $2 AND project_id = $1 AND used_at IS NULL AND revoked_at IS NULL")
+            .bind(project_id)
+            .bind(id)
+            .bind(at)
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() == 1)
+    }
+
+    async fn accept_invite(&self, id: Uuid, m: &Member, at: DateTime<Utc>) -> AppResult<bool> {
+        let mut tx = self.pool.begin().await?;
+        // Условие в UPDATE — защита от гонки: по одной ссылке войдёт только один человек.
+        let claimed = sqlx::query(
+            "UPDATE fb_project_invites SET used_by = $2, used_at = $3 \
+             WHERE id = $1 AND project_id = $4 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $3",
+        )
+        .bind(id)
+        .bind(m.user_id)
+        .bind(at)
+        .bind(m.project_id)
+        .execute(&mut *tx)
+        .await?;
+        if claimed.rows_affected() != 1 {
+            return Ok(false);
+        }
+        sqlx::query("INSERT INTO fb_project_members (project_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (project_id, user_id) DO NOTHING")
+            .bind(m.project_id)
+            .bind(m.user_id)
+            .bind(m.role.as_str())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(true)
+    }
+
+    async fn purge_invites(&self, before: DateTime<Utc>) -> AppResult<u64> {
+        let r = sqlx::query("DELETE FROM fb_project_invites WHERE expires_at < $1").bind(before).execute(&self.pool).await?;
+        Ok(r.rows_affected())
     }
 
     async fn count_signups(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> AppResult<i64> {

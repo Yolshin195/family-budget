@@ -1,5 +1,5 @@
 //! Входящий адаптер: вход через Rauthy (публично), онбординг (вход есть, проекта нет), профиль и
-//! безопасность (`/profile`), проекты и участники (`/projects`).
+//! безопасность (`/profile`), проекты и участники (`/projects`), приглашение по ссылке (`/join/{code}`).
 
 use std::sync::Arc;
 
@@ -11,8 +11,8 @@ use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use chrono::{DateTime, Utc};
 use kernel::auth::{
-    Csrf, CurrentUser, Identity, LANG_COOKIE, PROJECT_COOKIE, RequestMeta, Role, Theme, Via, cookie, credential, request_lang, same_origin, session_cookie, session_csrf,
-    set_cookie, set_cookie_at,
+    Csrf, CurrentUser, Identity, LANG_COOKIE, MaybeUser, PROJECT_COOKIE, RequestMeta, Role, Theme, Via, cookie, credential, request_lang, same_origin, session_cookie,
+    session_csrf, set_cookie, set_cookie_at,
 };
 use kernel::config::Config;
 use kernel::crypto::ct_eq;
@@ -22,14 +22,17 @@ use kernel::web::{Flash, PageCtx, PageError, PageResult, flash_cookie, render, s
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::{ApiToken, AuditEvent, PendingLogin, ProjectKind, SessionRecord, TOKEN_TERMS};
-use crate::service::{ProjectService, ProjectView};
+use crate::domain::{ApiToken, AuditEvent, InviteState, PendingLogin, ProjectKind, SessionRecord, TOKEN_TERMS, split_invite_code};
+use crate::service::{InvitePreview, ProjectService, ProjectView};
 
 type Svc = State<Arc<ProjectService>>;
 
 const YEAR: i64 = 365 * 24 * 3600;
 const SESSION_AGE: i64 = 30 * 24 * 3600;
 const OIDC_COOKIE: &str = "fb_oidc";
+/// Приглашение, открытое до входа: после входа или регистрации в Rauthy человек вернётся к нему.
+const JOIN_COOKIE: &str = "fb_join";
+const JOIN_AGE: i64 = 24 * 3600;
 
 /// Публичные страницы (без авторизации), от корня сайта.
 pub fn public(service: Arc<ProjectService>) -> Router {
@@ -41,12 +44,13 @@ pub fn public(service: Arc<ProjectService>) -> Router {
         .route("/auth/dev", post(dev_login))
         .route("/demo", post(demo))
         .route("/lang/{code}", get(set_lang))
+        .route("/join/{code}", get(join_page))
         .with_state(service)
 }
 
-/// Страницы аккаунта: вход есть, проекта может не быть.
+/// Страницы аккаунта: вход есть, проекта может не быть (онбординг, принять приглашение).
 pub fn account(service: Arc<ProjectService>) -> Router {
-    Router::new().route("/onboarding", get(onboarding_form).post(onboarding)).with_state(service)
+    Router::new().route("/onboarding", get(onboarding_form).post(onboarding)).route("/join/{code}", post(join)).with_state(service)
 }
 
 /// Страницы под авторизацией (монтируются в /projects).
@@ -61,6 +65,9 @@ pub fn pages(service: Arc<ProjectService>) -> Router {
         .route("/{id}/members", post(add_member))
         .route("/{id}/members/{user}/role", post(set_role))
         .route("/{id}/members/{user}/remove", post(remove_member))
+        .route("/{id}/make-family", post(make_family))
+        .route("/{id}/invites", post(create_invite))
+        .route("/{id}/invites/{invite}/revoke", post(revoke_invite))
         .with_state(service)
 }
 
@@ -222,9 +229,19 @@ async fn callback(State(svc): Svc, headers: HeaderMap, Extension(meta): Extensio
     };
     match svc.finish_login(&pending, &q.state, &q.code, lang, &meta).await {
         Ok(r) => {
-            let to = if r.onboarding { "/onboarding".to_string() } else { r.next };
+            // Открывал приглашение до входа — сразу к нему (новичку онбординг не нужен: проект будет семейный).
+            let to = match cookie(&headers, JOIN_COOKIE).filter(|c| split_invite_code(c).is_some()) {
+                Some(code) => format!("/join/{code}"),
+                None if r.onboarding => "/onboarding".to_string(),
+                None => r.next,
+            };
             Ok((
-                AppendHeaders([session_cookie(cfg, &r.raw_session, SESSION_AGE), clear_pending, set_cookie(cfg, PROJECT_COOKIE, "", 0)]),
+                AppendHeaders([
+                    session_cookie(cfg, &r.raw_session, SESSION_AGE),
+                    clear_pending,
+                    set_cookie(cfg, PROJECT_COOKIE, "", 0),
+                    set_cookie(cfg, JOIN_COOKIE, "", 0),
+                ]),
                 Redirect::to(&to),
             )
                 .into_response())
@@ -316,6 +333,99 @@ async fn set_lang(State(svc): Svc, headers: HeaderMap, Path(code): Path<String>,
     }
     let back = if q.back.starts_with('/') && !q.back.starts_with("//") { q.back } else { "/".into() };
     ([set_cookie(svc.config(), LANG_COOKIE, lang.code(), YEAR)], Redirect::to(&back)).into_response()
+}
+
+// ---------------------------------------------------------------- приглашение по ссылке
+
+#[derive(Template)]
+#[template(path = "projects/join.html")]
+struct JoinPage {
+    lang: Lang,
+    langs: [Lang; 3],
+    code: String,
+    /// `None` — ссылка неверная или приглашение удалено.
+    invite: Option<InvitePreview>,
+    /// Вошёл — CSRF-токен формы «Присоединиться»; не вошёл — кнопки входа и регистрации.
+    csrf: Option<String>,
+    error: Option<String>,
+}
+
+impl JoinPage {
+    fn t(&self, key: &str) -> String {
+        t(self.lang, key)
+    }
+    fn asset(&self, name: &str) -> String {
+        kernel::web::asset_url(name)
+    }
+    fn icon(&self, name: &str) -> String {
+        kernel::web::icon_href(name)
+    }
+    fn state(&self) -> &'static str {
+        self.invite.as_ref().map(|i| if i.member { "member" } else { i.state.as_str() }).unwrap_or("missing")
+    }
+    fn state_text(&self) -> String {
+        self.t(&format!("join_{}", self.state()))
+    }
+    fn role(&self) -> String {
+        self.invite.as_ref().map(|i| self.t(&format!("join_as_{}", i.role.as_str()))).unwrap_or_default()
+    }
+}
+
+async fn join_view(svc: &ProjectService, headers: &HeaderMap, code: String, viewer: Option<Uuid>, lang: Lang, error: Option<String>) -> Result<(JoinPage, bool), PageError> {
+    let invite = match svc.invite_preview(&code, viewer).await {
+        Ok(p) => Some(p),
+        Err(AppError::NotFound(_)) => None,
+        Err(e) => return Err(PageError(e)),
+    };
+    let active = invite.as_ref().is_some_and(|i| i.state == InviteState::Active && !i.member);
+    let csrf = viewer.and_then(|_| session_csrf(svc.config(), headers)).map(|(_, c)| c);
+    Ok((JoinPage { lang, langs: Lang::ALL, code, invite, csrf, error }, active))
+}
+
+/// Ссылка-приглашение: кто и куда зовёт. Только показывает — расходует приглашение кнопка «Присоединиться»,
+/// поэтому превью ссылки в мессенджере ничего не ломает.
+async fn join_page(State(svc): Svc, headers: HeaderMap, Extension(maybe): Extension<MaybeUser>, Path(code): Path<String>) -> PageResult {
+    let lang = lang_of(&headers);
+    let (page, active) = join_view(&svc, &headers, code, maybe.0, lang, None).await?;
+    let remember = active && maybe.0.is_none();
+    let found = page.invite.is_some();
+    let mut resp = render(&page)?;
+    if !found {
+        *resp.status_mut() = axum::http::StatusCode::NOT_FOUND;
+    }
+    // Не вошёл — запомнить приглашение на время входа или регистрации в Rauthy.
+    if remember {
+        let (name, value) = set_cookie(svc.config(), JOIN_COOKIE, &page.code, JOIN_AGE);
+        if let Ok(v) = value.parse() {
+            resp.headers_mut().append(name, v);
+        }
+    }
+    Ok(resp)
+}
+
+/// «Присоединиться»: стать участником и сразу открыть семейный бюджет.
+async fn join(State(svc): Svc, headers: HeaderMap, Extension(user): Extension<CurrentUser>, Extension(meta): Extension<RequestMeta>, Path(code): Path<String>) -> PageResult {
+    let cfg = svc.config();
+    // Язык — как во всём приложении: выбранный в переключателе (cookie), иначе из профиля.
+    let lang = cookie(&headers, LANG_COOKIE).and_then(|v| Lang::parse(&v)).unwrap_or(svc.user(user.id).await?.lang);
+    match svc.accept_invite(user.id, &code, &meta).await {
+        Ok(project) => Ok((
+            AppendHeaders([
+                set_cookie(cfg, PROJECT_COOKIE, &project.to_string(), YEAR),
+                set_cookie(cfg, JOIN_COOKIE, "", 0),
+                flash_cookie(cfg, &Flash::ok(t(lang, "joined"))),
+            ]),
+            Redirect::to("/budget"),
+        )
+            .into_response()),
+        Err(AppError::Validation(m) | AppError::Forbidden(m) | AppError::NotFound(m)) => {
+            let (page, _) = join_view(&svc, &headers, code, Some(user.id), lang, Some(m)).await?;
+            let mut resp = render(&page)?;
+            *resp.status_mut() = axum::http::StatusCode::UNPROCESSABLE_ENTITY;
+            Ok(resp)
+        }
+        Err(e) => Err(PageError(e)),
+    }
 }
 
 // ---------------------------------------------------------------- онбординг
@@ -627,15 +737,60 @@ struct OverviewPage {
     projects: Vec<ProjectView>,
     roles: &'static [&'static str],
     error: Option<String>,
+    /// Только что созданное приглашение — его карточка открыта.
+    opened: Option<Uuid>,
 }
 
-async fn show(svc: &ProjectService, page: PageCtx, error: Option<String>) -> PageResult {
+impl OverviewPage {
+    fn is_open(&self, id: &Uuid) -> bool {
+        self.opened == Some(*id)
+    }
+
+    fn until(&self, at: &DateTime<Utc>) -> String {
+        when(&self.page, *at)
+    }
+
+    fn qr(&self, url: &str) -> String {
+        qr_svg(url)
+    }
+
+    /// Текст для мессенджера: «Присоединяйся к бюджету „…“».
+    fn share_text(&self, project: &str) -> String {
+        self.page.t("invite_share_text").replace("{project}", project)
+    }
+
+    fn telegram(&self, project: &str, url: &str) -> String {
+        format!("https://t.me/share/url?url={}&text={}", kernel::web::url_encode(url), kernel::web::url_encode(&self.share_text(project)))
+    }
+
+    fn whatsapp(&self, project: &str, url: &str) -> String {
+        format!("https://wa.me/?text={}", kernel::web::url_encode(&format!("{} {url}", self.share_text(project))))
+    }
+}
+
+/// QR-код ссылки — inline SVG: без внешних сервисов и скриптов. Тёмные модули на белом в любой теме,
+/// с полем вокруг — так его читает любая камера.
+fn qr_svg(url: &str) -> String {
+    use qrcode::render::svg;
+    let Ok(code) = qrcode::QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::M) else { return String::new() };
+    let svg = code.render::<svg::Color>().min_dimensions(176, 176).dark_color(svg::Color("#000000")).light_color(svg::Color("#ffffff")).build();
+    // Без XML-пролога: SVG встраивается прямо в HTML.
+    svg.find("<svg").map(|i| svg[i..].to_string()).unwrap_or_default()
+}
+
+async fn show(svc: &ProjectService, page: PageCtx, error: Option<String>, opened: Option<Uuid>) -> PageResult {
     let projects = svc.overview(page.session.user_id).await?;
-    render(&OverviewPage { page: page.for_feature(crate::NAME, crate::i18n::dict), projects, roles: &Role::VALUES, error })
+    render(&OverviewPage { page: page.for_feature(crate::NAME, crate::i18n::dict), projects, roles: &Role::VALUES, error, opened })
 }
 
-async fn overview(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
-    show(&svc, page, None).await
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct OverviewQuery {
+    invite: String,
+}
+
+async fn overview(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Query<OverviewQuery>) -> PageResult {
+    show(&svc, page, None, Uuid::parse_str(&q.invite).ok()).await
 }
 
 /// Ошибки валидации и прав показываем на той же странице.
@@ -648,7 +803,7 @@ async fn done(svc: &ProjectService, page: PageCtx, r: Result<(), AppError>, flas
                 None => see_other("/projects"),
             })
         }
-        Err(AppError::Validation(m) | AppError::Conflict(m) | AppError::Forbidden(m)) => show(svc, page, Some(m)).await,
+        Err(AppError::Validation(m) | AppError::Conflict(m) | AppError::Forbidden(m)) => show(svc, page, Some(m), None).await,
         Err(e) => Err(PageError(e)),
     }
 }
@@ -736,9 +891,35 @@ async fn remove_member(State(svc): Svc, Extension(page): Extension<PageCtx>, Ext
     done(&svc, page, r, Some("toast.saved")).await
 }
 
+async fn make_family(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path(id): Path<Uuid>) -> PageResult {
+    let r = svc.make_family(page.session.user_id, id, &meta).await;
+    done(&svc, page, r, Some("made_family")).await
+}
+
+async fn create_invite(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path(id): Path<Uuid>, Form(f): Form<MemberForm>) -> PageResult {
+    let r = async { svc.create_invite(page.session.user_id, id, parse_role(&f.role)?, &meta).await }.await;
+    match r {
+        // Карточка нового приглашения открыта: QR-код и кнопки «Поделиться» сразу на экране.
+        Ok(invite) => Ok(see_other(&format!("/projects?invite={invite}#invite-{invite}"))),
+        Err(e) => done(&svc, page, Err(e), None).await,
+    }
+}
+
+async fn revoke_invite(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path((id, invite)): Path<(Uuid, Uuid)>) -> PageResult {
+    let r = svc.revoke_invite(page.session.user_id, id, invite, &meta).await;
+    done(&svc, page, r, Some("invite_revoked")).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qr_is_inline_svg() {
+        let svg = qr_svg("https://budget.example/join/0123456789abcdef0123456789abcdef.AAAAAAAAAAAAAAAAAAAAAA");
+        assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"), "{svg}");
+        assert!(!svg.contains("style="), "CSP: без встроенных стилей");
+    }
 
     #[test]
     fn browser_names() {
