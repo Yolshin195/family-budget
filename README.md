@@ -67,6 +67,9 @@ make restart
   `RAUTHY_COOKIE_MODE=host`, redirect `https://<домен>/auth/callback` в клиенте Rauthy.
 - Админка Rauthy — только администратору, с passkey. GitHub и Facebook — Upstream Auth Providers в админке Rauthy.
 - Резервные копии: `make backup` по cron ежедневно (age-шифрование, 30 дней), `make restore-check` раз в месяц.
+- Ошибки: при заданном `SENTRY_DSN` ответы 500, паники и сбои фоновых задач уходят в Sentry (или GlitchTip) — с версией
+  сборки и шаблоном маршрута, без IP, cookie, заголовков, параметров адреса и данных пользователя
+  ([docs/deploy-vds.md](docs/deploy-vds.md), шаг 14.4). Журнал сервера — `tracing`, уровень — `RUST_LOG`.
 
 ### Готовый образ (GitHub Container Registry)
 

@@ -85,15 +85,15 @@ impl AppError {
     }
 
     /// Текст для пользователя: у внутренних ошибок и недоступных сервисов подробности не раскрываются
-    /// (они — в журнале сервера).
+    /// (они — в журнале сервера и, если подключён, в Sentry: уровень ERROR, цепочка причин в поле `error`).
     pub fn public_message(&self) -> String {
         match self {
             AppError::Unavailable(e) => {
-                eprintln!("service unavailable: {e:?}");
+                tracing::error!(error = e.as_ref() as &dyn std::error::Error, "service unavailable");
                 "сервис временно недоступен, попробуйте позже".to_string()
             }
             AppError::Internal(e) => {
-                eprintln!("internal error: {e:?}");
+                tracing::error!(error = e.as_ref() as &dyn std::error::Error, "internal error");
                 "внутренняя ошибка сервера".to_string()
             }
             other => other.to_string(),

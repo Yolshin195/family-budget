@@ -10,6 +10,7 @@
 mod assets;
 #[cfg(feature = "seed")]
 mod seed;
+mod telemetry;
 mod wiring;
 
 use std::env;
@@ -21,6 +22,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::routing::get;
 use axum::{Router, middleware};
+use sentry::integrations::tower::NewSentryLayer;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
@@ -53,7 +55,7 @@ async fn connect(url: &str) -> anyhow::Result<sqlx::PgPool> {
         match PgPoolOptions::new().max_connections(10).connect(url).await {
             Ok(pool) => return Ok(pool),
             Err(e) if attempt < 30 => {
-                eprintln!("БД недоступна (попытка {attempt}/30): {e}");
+                tracing::warn!("БД недоступна (попытка {attempt}/30): {e}");
                 attempt += 1;
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
@@ -66,10 +68,20 @@ fn flag(name: &str, default: bool) -> bool {
     env::var(name).map(|v| !matches!(v.trim(), "0" | "false" | "no" | "off" | "")).unwrap_or(default)
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     let config = Arc::new(Config::from_env());
+    // Журнал и Sentry — до запуска tokio: потоки рантайма берут клиент Sentry из главного хаба.
+    let _sentry = telemetry::init(&config);
+    let result = tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(run(config));
+    if let Err(e) = &result {
+        // Не стартовало (настройки, миграции, порт) — тоже в Sentry: гард отправит событие при выходе.
+        tracing::error!(error = e.as_ref() as &dyn std::error::Error, "приложение остановлено");
+    }
+    result
+}
+
+async fn run(config: Arc<Config>) -> anyhow::Result<()> {
     if let Err(e) = config.validate() {
         anyhow::bail!("настройки продакшена: {e}");
     }
@@ -78,7 +90,7 @@ async fn main() -> anyhow::Result<()> {
         anyhow::bail!("SEED_DEMO=1 запрещён в продакшене: демо для гостей включается GUEST_DEMO=1");
     }
     if config.oidc.is_none() {
-        eprintln!("Внимание: Rauthy не настроен (OIDC_ISSUER) — вход только «для разработки» (DEV_LOGIN).");
+        tracing::warn!("Rauthy не настроен (OIDC_ISSUER) — вход только «для разработки» (DEV_LOGIN).");
     }
 
     assets::register();
@@ -88,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
 
     let wired = wiring::features(&ctx);
     let feats = kernel::feature::assemble(&ctx, wired.features).await?;
-    println!("Включённые фичи: {:?}", feats.names);
+    tracing::info!("Включённые фичи: {:?}", feats.names);
 
     #[cfg(feature = "seed")]
     {
@@ -103,7 +115,7 @@ async fn main() -> anyhow::Result<()> {
                 loop {
                     tick.tick().await;
                     if let Err(e) = seed::reset_family(&s).await {
-                        eprintln!("сброс демо: {e}");
+                        tracing::error!("сброс демо: {e}");
                     }
                 }
             });
@@ -117,9 +129,9 @@ async fn main() -> anyhow::Result<()> {
         loop {
             tick.tick().await;
             match projects.cleanup().await {
-                Ok((s, a)) if s + a > 0 => println!("чистка: сессий {s}, записей журнала {a}"),
+                Ok((s, a)) if s + a > 0 => tracing::info!("чистка: сессий {s}, записей журнала {a}"),
                 Ok(_) => {}
-                Err(e) => eprintln!("чистка: {e}"),
+                Err(e) => tracing::error!("чистка: {e}"),
             }
         }
     });
@@ -135,7 +147,7 @@ async fn main() -> anyhow::Result<()> {
                 tick.tick().await;
                 let day = chrono::Utc::now().date_naive().pred_opt().unwrap_or_default();
                 if let Ok(f) = site.funnel(day).await {
-                    println!(
+                    tracing::info!(
                         "воронка {day}: визиты {} → регистрации {} ({:.1} %) → первый расход {} ({:.1} %)",
                         f.visits,
                         f.signups,
@@ -203,11 +215,14 @@ async fn main() -> anyhow::Result<()> {
         .layer(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, Duration::from_secs(15)))
         .layer(cors)
         .layer(CompressionLayer::new())
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http())
+        // Sentry — снаружи всего: свой хаб на запрос, внутри — имя маршрута для событий этого запроса.
+        .layer(middleware::from_fn(telemetry::route_name))
+        .layer(NewSentryLayer::<axum::extract::Request>::new_from_top());
 
     // По умолчанию — только эта машина: в dev открыт «Вход для разработки». В контейнере BIND_ADDR задан явно.
     let addr = env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".into());
-    println!("Server starting on http://{addr}  ({}; {})", if config.is_prod() { "production" } else { "development" }, config.base_url);
+    tracing::info!("Server starting on http://{addr}  ({}; {})", if config.is_prod() { "production" } else { "development" }, config.base_url);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
     Ok(())
