@@ -354,7 +354,8 @@ SMTP_PASSWORD=${smtp_pass}
 BACKUP_DIR=./backups
 # Публичный ключ age (age1…), шаг 13.
 BACKUP_AGE_RECIPIENT=
-BACKUP_KEEP_DAYS=30
+# Хранятся три копии каждой базы: свежая, 1–6 дней и 7–12 дней назад.
+BACKUP_OLD_DAYS=7
 
 # ---------------------------------------------------------------- уведомления автообновления (шаг 14.3)
 # Telegram: токен бота от @BotFather и id чата с ним. Почта — через SMTP_* выше на NOTIFY_EMAIL (пусто — CONTACT_EMAIL).
