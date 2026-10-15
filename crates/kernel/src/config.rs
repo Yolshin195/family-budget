@@ -58,6 +58,9 @@ pub struct Config {
     pub dev_login: bool,
     /// «Посмотреть демо» на лендинге: вход гостем в демо-проект с ролью VIEWER.
     pub guest_demo: bool,
+    /// Свободная регистрация: «Создать бюджет» на лендинге. Выключена — пользователей заводит администратор
+    /// в Rauthy, на лендинге только «Войти». Та же переменная управляет `OPEN_USER_REG` Rauthy (compose).
+    pub open_registration: bool,
     /// Swagger UI на `/docs` (в продакшене выключен).
     pub swagger: bool,
     /// Запросов в минуту на сессию / API-токен.
@@ -118,6 +121,7 @@ impl Config {
             signer: Signer::new(secret.as_bytes()),
             dev_login: !prod && flag("DEV_LOGIN", true),
             guest_demo: flag("GUEST_DEMO", true),
+            open_registration: flag("OPEN_REGISTRATION", false),
             swagger: flag("SWAGGER", !prod),
             rate_limit: env::var("RATE_LIMIT_PER_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(600),
             trust_proxy: flag("TRUST_PROXY", false),
@@ -187,6 +191,7 @@ impl Config {
             oidc: None,
             dev_login: true,
             guest_demo: true,
+            open_registration: true,
             swagger: false,
             rate_limit: 600,
             trust_proxy: false,

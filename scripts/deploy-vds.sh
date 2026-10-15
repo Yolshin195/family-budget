@@ -104,6 +104,7 @@ load_conf() {
   REPO_BRANCH=${REPO_BRANCH:-main}
   APP_IMAGE_TAG=${APP_IMAGE_TAG:-latest}
   GUEST_DEMO=${GUEST_DEMO:-1}
+  OPEN_REGISTRATION=${OPEN_REGISTRATION:-false}
   SMTP_URL=${SMTP_URL:-} SMTP_PORT=${SMTP_PORT:-587} SMTP_TLS_MODE=${SMTP_TLS_MODE:-tls}
   SMTP_USERNAME=${SMTP_USERNAME:-} SMTP_PASSWORD=${SMTP_PASSWORD:-}
   SWAP_SIZE=${SWAP_SIZE:-2G}
@@ -128,6 +129,7 @@ load_conf() {
     || die "TELEGRAM_BOT_TOKEN: нужен токен от @BotFather вида 123456:ABC…"
   [ -z "${TELEGRAM_CHAT_ID:-}" ] || [[ $TELEGRAM_CHAT_ID =~ ^-?[0-9]+$ ]] || die "TELEGRAM_CHAT_ID: нужно число (id чата)"
   [[ $SMTP_PORT =~ ^[0-9]+$ ]] || die "SMTP_PORT должен быть числом"
+  [[ $OPEN_REGISTRATION =~ ^(true|false)$ ]] || die "OPEN_REGISTRATION: только true или false"
   valid_tag "$APP_IMAGE_TAG"
   [ -z "${GHCR_TOKEN:-}" ] || [ -n "${GHCR_USER:-}" ] || die "GHCR_TOKEN задан без GHCR_USER (логин GitHub)"
   [ -z "${BACKUP_AGE_RECIPIENT:-}" ] || [[ $BACKUP_AGE_RECIPIENT =~ ^age1[0-9a-z]+$ ]] \
@@ -307,6 +309,8 @@ APP_IMAGE_TAG=${APP_IMAGE_TAG}
 SEED_DEMO=0
 # Кнопка «Посмотреть демо» на лендинге (гость — только просмотр демо-семьи). 0 — убрать.
 GUEST_DEMO=${GUEST_DEMO}
+# Свободная регистрация: true — «Создать бюджет» на лендинге; false — пользователей заводит администратор в Rauthy.
+OPEN_REGISTRATION=${OPEN_REGISTRATION}
 CONTACT_EMAIL=${ADMIN_EMAIL}
 # Приложение за Caddy: IP клиента — из X-Forwarded-For.
 TRUST_PROXY=1
@@ -324,7 +328,7 @@ OIDC_CLIENT_ID=family-budget
 # Заполняет deploy-vds.sh после первого старта Rauthy (то же, что make rauthy-secrets).
 OIDC_CLIENT_SECRET=
 OIDC_INTERNAL_URL=http://rauthy:8443
-# Необязательно (шаг 11.4). Формат <имя>\$<секрет> — только в одинарных кавычках.
+# Необязательно (шаг 11.5). Формат <имя>\$<секрет> — только в одинарных кавычках.
 RAUTHY_ADMIN_API_KEY=
 
 # ---------------------------------------------------------------- Rauthy
@@ -384,8 +388,6 @@ services:
     volumes:
       # Клиент family-budget с адресами продакшена, без демо-пользователей.
       - ./deploy/rauthy/bootstrap-prod:/app/bootstrap:ro
-    # environment:
-    #   OPEN_USER_REG: "false"     # закрыть свободную регистрацию: пользователей заводит администратор
 EOF
     chown "$APP_USER:" compose.override.yaml
     ok "compose.override.yaml"
@@ -622,7 +624,7 @@ install_summary() {
        Войдите в https://$AUTH_HOST/auth/v1/admin как $ADMIN_EMAIL, смените пароль и добавьте passkey (шаг 11.1).
     2. Сохраните копию .env в менеджер паролей: sudo cat $APP_DIR/.env
     3. В НОВОМ терминале проверьте вход: ssh $APP_USER@${ip:-<IP сервера>}${SSH_HARDENED:+ — под root войти больше нельзя}.
-    4. В браузере: регистрация → письмо → вход → 2FA (шаг 12).
+    4. Пользователи: админка Rauthy → Users → добавить (шаг 11.3); в браузере: письмо → пароль → вход → 2FA (шаг 12).
     5. Копии — не только на этом сервере (шаг 13.4); внешний мониторинг https://$DOMAIN/health.
     6. Файл настроек с паролями больше не нужен: shred -u <vds.conf>
 

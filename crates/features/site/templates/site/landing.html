@@ -28,8 +28,8 @@
       <div class="lang-switch" role="group" aria-label="{{ self.t("nav.language") }}">
         {% for l in p.langs %}<a href="/?lang={{ l.code() }}" class="lang-link" hreflang="{{ l.code() }}" lang="{{ l.code() }}"{% if *l == lang %} aria-current="true"{% endif %}>{{ l.upper() }}</a>{% endfor %}
       </div>
-      <a class="btn-ghost hide-sm" href="/auth/login">{{ self.t("nav.login") }}</a>
-      <a class="btn-primary" href="/auth/register">{{ self.t("cta.create") }}</a>
+      {% if open_registration %}<a class="btn-ghost hide-sm" href="/auth/login">{{ self.t("nav.login") }}</a>
+      {% endif %}<a class="btn-primary" href="{{ self.cta_href() }}">{{ self.cta_text() }}</a>
     </nav>
   </div>
 </header>
@@ -41,9 +41,7 @@
         <h1 class="hero-title">{{ self.t("hero.title") }}</h1>
         <p class="hero-subtitle">{{ self.t("hero.subtitle") }}</p>
         <div class="hero-actions">
-          <a class="btn-primary btn-lg" href="/auth/register">{{ self.t("cta.create") }}</a>
-          <a class="btn-secondary btn-lg" href="/auth/login"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("brand-github") }}"></use></svg>{{ self.t("cta.github") }}</a>
-          <a class="btn-secondary btn-lg" href="/auth/login"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("brand-facebook") }}"></use></svg>{{ self.t("cta.facebook") }}</a>
+          <a class="btn-primary btn-lg" href="{{ self.cta_href() }}">{{ self.cta_text() }}</a>
         </div>
         {% if guest_demo %}
         {# Сессии ещё нет — токена _csrf тоже: POST /demo защищён проверкой Origin. name="demo" — исключение для ZAP (ci.yml). #}
@@ -118,7 +116,7 @@
     <div class="site-wrap text-center">
       <h2 class="site-h2" id="final">{{ self.t("final.title") }}</h2>
       <p class="text-muted mb-6">{{ self.t("final.text") }}</p>
-      <a class="btn-primary btn-lg" href="/auth/register">{{ self.t("cta.create") }}</a>
+      <a class="btn-primary btn-lg" href="{{ self.cta_href() }}">{{ self.cta_text() }}</a>
     </div>
   </section>
 </main>

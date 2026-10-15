@@ -172,10 +172,10 @@ async fn login(State(svc): Svc, headers: HeaderMap, Query(q): Query<NextQuery>) 
     Ok((AppendHeaders([c]), Redirect::to(&url)).into_response())
 }
 
-/// «Создать бюджет»: страница регистрации Rauthy, после неё — обычный вход.
+/// «Создать бюджет»: страница регистрации Rauthy, после неё — обычный вход. Регистрация закрыта — сразу вход.
 async fn register(State(svc): Svc) -> Response {
     match &svc.config().oidc {
-        Some(o) if svc.oidc_enabled() => {
+        Some(o) if svc.oidc_enabled() && svc.config().open_registration => {
             let back = format!("{}/auth/login", svc.config().base_url);
             Redirect::to(&format!("{}?redirect_uri={}", o.register_url, kernel::web::url_encode(&back))).into_response()
         }

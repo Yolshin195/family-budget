@@ -21,8 +21,9 @@
 `ProjectBootstrap` (базовая валюта + дерево категорий), `ProjectPurge` (удаление данных проекта во всех фичах)
 → `app/wiring/wire_projects.rs`.
 
-Публично: `/auth/login`, `/auth/register`, `/auth/callback`, `/auth/logout` (POST + CSRF), `/auth/dev`
-(только `APP_ENV=dev`), `/demo` (гость — VIEWER демо-проекта), `/lang/{ru|en|th}`.
+Публично: `/auth/login`, `/auth/register` (при `OPEN_REGISTRATION=false` — на вход), `/auth/callback`,
+`/auth/logout` (POST + CSRF), `/auth/dev` (только `APP_ENV=dev`), `/demo` (гость — VIEWER демо-проекта),
+`/lang/{ru|en|th}`.
 Аккаунт (без проекта): `/onboarding` — имя, базовая валюта, язык → личный проект.
 Под сессией: `/projects` (проекты, участники, роли, 2FA, удаление проекта), `/profile` (имя, язык, тема,
 удаление аккаунта), `/profile/security` (устройства, «Выйти везде», API-токены, журнал, кабинет Rauthy).

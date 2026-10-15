@@ -40,6 +40,7 @@ BACKUP_AGE_RECIPIENT=
 #TIMEZONE=Europe/Moscow        # часовой пояс сервера: расписание cron и время в логах
 #APP_IMAGE_TAG=latest          # latest, версия (0.2.0) или sha-<коммит>
 #GUEST_DEMO=1                  # кнопка «Посмотреть демо» на лендинге; 0 — убрать
+#OPEN_REGISTRATION=false       # true — свободная регистрация («Создать бюджет» на лендинге)
 
 # Только если пакет ghcr.io/yolshin195/family-budget приватный: логин GitHub и classic-токен с правом read:packages.
 #GHCR_USER=

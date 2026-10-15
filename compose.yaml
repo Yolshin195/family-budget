@@ -65,8 +65,9 @@ services:
       # Клиент family-budget и (для разработки) демо-пользователи — при первом старте пустой базы.
       BOOTSTRAP_DIR: /app/bootstrap
       GENERATED_SECRETS_TTL: "0"
-      # Открытая регистрация; второй фактор — 6-значный код по email (ТЗ, разделы 12–13).
-      OPEN_USER_REG: "true"
+      # Свободная регистрация — OPEN_REGISTRATION в .env (по умолчанию закрыта: пользователей заводит
+      # администратор). Второй фактор — 6-значный код по email (ТЗ, разделы 12–13).
+      OPEN_USER_REG: ${OPEN_REGISTRATION:-false}
       OTP_ENABLE: "true"
       OTP_LENGTH: "6"
       OTP_EMAIL_ENABLE: "true"
@@ -107,6 +108,7 @@ services:
       RAUTHY_ADMIN_API_KEY: ${RAUTHY_ADMIN_API_KEY:-}
       SEED_DEMO: ${SEED_DEMO:-1}
       GUEST_DEMO: ${GUEST_DEMO:-1}
+      OPEN_REGISTRATION: ${OPEN_REGISTRATION:-false}
       # Swagger UI (/docs). Не задан — по APP_ENV: в dev включён, в prod выключен (SWAGGER=1 там запрещён).
       SWAGGER:
       CONTACT_EMAIL: ${CONTACT_EMAIL:-}

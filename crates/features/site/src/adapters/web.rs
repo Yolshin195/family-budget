@@ -122,11 +122,19 @@ struct LandingPage {
     lang: Lang,
     p: Public,
     guest_demo: bool,
+    open_registration: bool,
 }
 
 impl LandingPage {
     fn t(&self, key: &str) -> String {
         self.p.t(key)
+    }
+    /// Главная кнопка: «Создать бюджет» при свободной регистрации, иначе «Войти».
+    fn cta_href(&self) -> &'static str {
+        if self.open_registration { "/auth/register" } else { "/auth/login" }
+    }
+    fn cta_text(&self) -> String {
+        self.t(if self.open_registration { "cta.create" } else { "nav.login" })
     }
     fn asset(&self, name: &str) -> String {
         self.p.asset(name)
@@ -143,7 +151,8 @@ async fn landing(State(st): St, Extension(user): Extension<MaybeUser>, headers: 
     }
     st.svc.record_visit();
     let (lang, explicit) = page_lang(&q, &headers);
-    let page = LandingPage { lang, p: Public::new(&st.config, lang, "/"), guest_demo: st.config.guest_demo };
+    let (guest_demo, open_registration) = (st.config.guest_demo, st.config.open_registration);
+    let page = LandingPage { lang, p: Public::new(&st.config, lang, "/"), guest_demo, open_registration };
     with_lang_cookie(&st.config, lang, explicit, render(&page))
 }
 
@@ -245,4 +254,32 @@ async fn manifest(State(st): St, headers: HeaderMap) -> Response {
     });
     let _ = &st;
     text("application/manifest+json; charset=utf-8", m.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn landing_html(lang: Lang, open_registration: bool) -> String {
+        let cfg = Config::test();
+        LandingPage { lang, p: Public::new(&cfg, lang, "/"), guest_demo: true, open_registration }.render().unwrap()
+    }
+
+    #[test]
+    fn landing_registration_follows_config() {
+        let closed = landing_html(Lang::Ru, false);
+        assert!(!closed.contains("/auth/register"), "регистрация закрыта — «Создать бюджет» не показываем");
+        assert!(closed.contains(r#"href="/auth/login""#));
+        assert!(landing_html(Lang::Ru, true).contains(r#"href="/auth/register""#));
+    }
+
+    #[test]
+    fn landing_has_no_github_or_facebook_sign_in() {
+        for lang in Lang::ALL {
+            for open in [false, true] {
+                let html = landing_html(lang, open);
+                assert!(!html.contains("GitHub") && !html.contains("Facebook"), "{lang:?}: вход через GitHub/Facebook на лендинге");
+            }
+        }
+    }
 }

@@ -66,6 +66,8 @@ make restart
 - Приложение и Rauthy (`auth.<домен>`) — за обратным прокси с TLS 1.2+; `TRUST_PROXY=1`, `RAUTHY_PROXY_MODE=true`,
   `RAUTHY_COOKIE_MODE=host`, redirect `https://<домен>/auth/callback` в клиенте Rauthy.
 - Админка Rauthy — только администратору, с passkey. GitHub и Facebook — Upstream Auth Providers в админке Rauthy.
+- Свободная регистрация закрыта (`OPEN_REGISTRATION=false`): пользователей заводит администратор в Rauthy, на лендинге
+  только «Войти». `OPEN_REGISTRATION=true` — «Создать бюджет» на лендинге и регистрация в Rauthy (`OPEN_USER_REG`).
 - Резервные копии: `make backup` по cron ежедневно (age-шифрование, 30 дней), `make restore-check` раз в месяц.
 
 ### Готовый образ (GitHub Container Registry)
