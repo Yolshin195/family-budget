@@ -390,6 +390,9 @@ BACKUP_DIR=./backups
 # Заполняется на шаге 13: публичный ключ age (age1…).
 BACKUP_AGE_RECIPIENT=
 BACKUP_KEEP_DAYS=30
+
+# ---------------------------------------------------------------- ошибки приложения в Sentry (шаг 14.4)
+SENTRY_DSN=
 EOF
 ```
 
@@ -792,6 +795,34 @@ sudo /srv/family-budget/scripts/deploy-vds.sh auto-update off  # выключи�
 
 `deploy-vds.sh check` тоже показывает, была ли последняя проверка без ошибок.
 
+### 14.4. Ошибки приложения в Sentry
+
+Автообновление сообщает, что сборка не встала. О том, что у работающего приложения что-то сломалось (ответ 500,
+паника, сбой ночной чистки или сброса демо), сообщает [Sentry](https://sentry.io): одна запись (issue) на одну
+причину, со счётчиком повторов, версией сборки, в которой ошибка появилась, и письмом при новой ошибке.
+
+1. Зарегистрируйтесь в Sentry (регион данных — EU или US — выбирается при создании организации и потом не меняется),
+   создайте проект платформы **Rust**.
+2. Project Settings → Client Keys (DSN) → скопируйте DSN.
+3. Впишите его в `/srv/family-budget/.env` и перезапустите приложение:
+
+   ```bash
+   cd /srv/family-budget
+   nano .env                       # SENTRY_DSN=https://…@o….ingest.de.sentry.io/…
+   docker compose up -d app
+   docker compose logs app | grep Sentry    # «Sentry: ошибки отправляются (окружение production, версия …)»
+   ```
+
+4. Alerts: при создании проекта выберите оповещение о каждой новой issue (позже — Alerts → Create Alert) — письмо
+   придёт при первой же новой ошибке. Slack, Discord и другие каналы — Settings → Integrations.
+
+Что уходит в Sentry: текст ошибки с цепочкой причин, метод и шаблон маршрута (`POST /api/transactions/{id}`),
+версия (`family_budget@0.1.0+<коммит>`), ОС сервера, предшествующие записи журнала уровня INFO/WARN. Чего нет:
+IP, cookie, заголовков, параметров адреса, тела запроса, пользователя — данные бюджета остаются на сервере.
+Окружение — `production` (при `APP_ENV=prod`; другое — `SENTRY_ENVIRONMENT`). Без `SENTRY_DSN` ошибки, как и раньше,
+только в `make logs`. Вместо Sentry подойдёт совместимый [GlitchTip](https://glitchtip.com) на своём сервере — тот же
+`SENTRY_DSN`.
+
 ## 15. Восстановление из копии
 
 На том же сервере или на новом. Для нового сервера пройдите шаги 3–9 с **тем же `.env`** из менеджера паролей:
@@ -858,5 +889,6 @@ docker compose exec db psql -U budget -d family_budget    # консоль БД 
 - [ ] SMTP работает: регистрация и код 2FA приходят на почту
 - [ ] `make backup` в cron, приватный ключ age вне сервера, копии уходят с сервера, `make restore-check` проходит
 - [ ] Автообновление включено, `deploy-vds.sh auto-update test` доходит до Telegram или почты
+- [ ] `SENTRY_DSN` задан, в логе приложения — «Sentry: ошибки отправляются», правило Alerts шлёт письмо о новых ошибках
 - [ ] После `sudo reboot` всё поднимается само
 - [ ] Внешний мониторинг `https://budget.example.com/health` (UptimeRobot, Uptime Kuma и т. п.)

@@ -38,7 +38,10 @@ RUN apt-get update \
  && useradd --system --uid 10001 --no-create-home app
 COPY --from=build /usr/local/bin/family_budget /usr/local/bin/family_budget
 USER app
+# Коммит сборки (CI передаёт github.sha) — версия в Sentry: family_budget@<версия>+<коммит>.
+ARG GIT_SHA=
 ENV BIND_ADDR=0.0.0.0:8080 \
-    TZ=Asia/Bangkok
+    TZ=Asia/Bangkok \
+    GIT_SHA=${GIT_SHA}
 EXPOSE 8080
 CMD ["family_budget"]

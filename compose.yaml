@@ -111,6 +111,9 @@ services:
       SWAGGER:
       CONTACT_EMAIL: ${CONTACT_EMAIL:-}
       TRUST_PROXY: ${TRUST_PROXY:-0}
+      # Ошибки в Sentry (пусто — только журнал).
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-}
       BIND_ADDR: 0.0.0.0:8080
     ports:
       - "${APP_PORT:-8080}:8080"

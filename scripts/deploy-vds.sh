@@ -361,6 +361,10 @@ BACKUP_KEEP_DAYS=30
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 NOTIFY_EMAIL=
+
+# ---------------------------------------------------------------- ошибки приложения в Sentry (шаг 14.4)
+# DSN проекта Sentry или GlitchTip. Пусто — ошибки только в журнале (make logs).
+SENTRY_DSN=$(sq SENTRY_DSN "${SENTRY_DSN:-}")
 EOF
   ok "секреты сгенерированы — сохраните копию .env в менеджер паролей"
 }

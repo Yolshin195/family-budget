@@ -109,7 +109,7 @@ impl ProjectService {
     async fn audit(&self, e: AuditEvent) {
         // Журнал не должен ронять основное действие; ошибка записи — в лог сервера.
         if let Err(err) = self.access.audit(&e).await {
-            eprintln!("audit: {err}");
+            tracing::error!("журнал безопасности не записан: {err}");
         }
     }
 

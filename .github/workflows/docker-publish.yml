@@ -146,6 +146,8 @@ jobs:
           context: .
           platforms: linux/${{ matrix.arch }}
           labels: ${{ needs.prepare.outputs.labels }}
+          # Только в стадии runtime (она и так без кэша): версия в Sentry.
+          build-args: GIT_SHA=${{ github.sha }}
           outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=docker-${{ matrix.arch }}
           no-cache-filters: runtime

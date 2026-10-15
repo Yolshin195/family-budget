@@ -57,7 +57,7 @@ pub async fn run(s: &Services, personal: bool, guest: bool) -> anyhow::Result<()
     // Личные проекты — только новым демо-пользователям (у перенесённых из старой базы они уже есть).
     let fresh = p.projects_of(me).await.map_err(err)?.is_empty();
     if personal && fresh {
-        println!("Демо-данные: пользователи {} и {} с личными проектами…", ALEKSEY.1, ANNA.1);
+        tracing::info!("Демо-данные: пользователи {} и {} с личными проектами…", ALEKSEY.1, ANNA.1);
         p.onboard(me, ALEKSEY.2, "THB", Lang::Ru).await.map_err(err)?;
         p.onboard(anna, ANNA.2, "THB", Lang::Th).await.map_err(err)?;
         fill_personal(s, me).await.map_err(err)?;
@@ -65,7 +65,7 @@ pub async fn run(s: &Services, personal: bool, guest: bool) -> anyhow::Result<()
     let family = p.projects_of(me).await.map_err(err)?.into_iter().find(|(_, k, n)| *k == projects::ProjectKind::Family && n == FAMILY);
     match family {
         None => {
-            println!("Демо-данные: семейный проект «{FAMILY}»…");
+            tracing::info!("Демо-данные: семейный проект «{FAMILY}»…");
             create_family(s, me, anna, guest).await.map_err(err)?;
         }
         // База до обновления: семья уже есть — гостя добавить к ней.
@@ -90,7 +90,7 @@ pub async fn reset_family(s: &Services) -> anyhow::Result<()> {
         }
     }
     create_family(s, me, anna, true).await.map_err(err)?;
-    println!("Демо для гостей: проект «{FAMILY}» пересоздан");
+    tracing::info!("Демо для гостей: проект «{FAMILY}» пересоздан");
     Ok(())
 }
 
