@@ -439,6 +439,7 @@
   .hero-title { @apply text-3xl font-semibold leading-tight md:text-[2.75rem] md:leading-[1.15]; letter-spacing: -0.02em; }
   .hero-subtitle { @apply mt-4 max-w-xl text-base text-muted md:text-xl; }
   .hero-actions { @apply mt-8 flex flex-wrap gap-3; }
+  .have-account { @apply mt-5 text-muted; }
   .hero-demo { @apply mt-5 flex flex-wrap items-center gap-2; }
   .hero-shot { @apply overflow-hidden rounded-xl border border-line bg-surface shadow-2xl; }
   .hero-shot img { @apply block h-auto w-full; }

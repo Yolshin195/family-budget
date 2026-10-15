@@ -155,14 +155,20 @@ struct NextQuery {
     next: String,
 }
 
+/// Есть действующая сессия (или API-токен) — вход и регистрация не нужны.
+async fn signed_in(svc: &ProjectService, headers: &HeaderMap) -> bool {
+    match credential(svc.config(), headers) {
+        Some(cred) => kernel::auth::Authenticator::authenticate(svc, &cred).await.ok().flatten().is_some(),
+        None => false,
+    }
+}
+
 /// «Войти» / «Создать бюджет»: переход в Rauthy (code + PKCE, state и nonce — в подписанной cookie на 10 минут).
 async fn login(State(svc): Svc, headers: HeaderMap, Query(q): Query<NextQuery>) -> PageResult {
     let lang = lang_of(&headers);
     // Уже вошли — сразу в приложение.
-    if let Some(cred) = credential(svc.config(), &headers) {
-        if kernel::auth::Authenticator::authenticate(svc.as_ref(), &cred).await.ok().flatten().is_some() {
-            return Ok(see_other(&crate::domain::safe_next(&q.next)));
-        }
+    if signed_in(&svc, &headers).await {
+        return Ok(see_other(&crate::domain::safe_next(&q.next)));
     }
     if !svc.oidc_enabled() {
         return render(&AuthPage { next: crate::domain::safe_next(&q.next), ..AuthPage::new(&svc, lang) });
@@ -172,8 +178,12 @@ async fn login(State(svc): Svc, headers: HeaderMap, Query(q): Query<NextQuery>) 
     Ok((AppendHeaders([c]), Redirect::to(&url)).into_response())
 }
 
-/// «Создать бюджет»: страница регистрации Rauthy, после неё — обычный вход.
-async fn register(State(svc): Svc) -> Response {
+/// «Создать бюджет»: страница регистрации Rauthy, после неё — обычный вход. Ссылки «Войти» на ней нет,
+/// поэтому вошедшего туда не отправляем — сразу в приложение.
+async fn register(State(svc): Svc, headers: HeaderMap) -> Response {
+    if signed_in(&svc, &headers).await {
+        return see_other("/budget");
+    }
     match &svc.config().oidc {
         Some(o) if svc.oidc_enabled() => {
             let back = format!("{}/auth/login", svc.config().base_url);

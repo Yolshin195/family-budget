@@ -12,6 +12,7 @@ pub fn dict(key: &str) -> Option<Tr> {
         ),
         "nav.login" => ("Войти", "Sign in", "เข้าสู่ระบบ"),
         "cta.create" => ("Создать бюджет", "Create a budget", "สร้างงบประมาณ"),
+        "cta.have_account" => ("Уже есть аккаунт?", "Already have an account?", "มีบัญชีอยู่แล้ว?"),
         "cta.github" => ("Войти через GitHub", "Sign in with GitHub", "เข้าสู่ระบบด้วย GitHub"),
         "cta.facebook" => ("Войти через Facebook", "Sign in with Facebook", "เข้าสู่ระบบด้วย Facebook"),
         "cta.demo" => ("Посмотреть демо", "View the demo", "ดูเดโม"),
