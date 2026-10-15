@@ -70,21 +70,35 @@ fn month_start(s: &str) -> NaiveDate {
     NaiveDate::parse_from_str(&format!("{s}-01"), "%Y-%m-%d").unwrap_or_else(|_| t.with_day(1).unwrap_or(t))
 }
 
-/// Ссылка «Оплатил»: форма транзакции, заполненная из плана.
+/// Ссылка «Оплатил»: форма транзакции, заполненная из плана (у перевода — форма перевода; сумму
+/// зачисления при обмене валют вводят при оплате).
 fn pay_href(o: &OccurrenceDto, lang: Lang, back: &str) -> String {
     let (desc, desc_lang) = o.plan.title_with_lang(lang);
+    let target = match (&o.plan.to_account_code, &o.plan.category_code) {
+        (Some(to), _) => format!("to_account={}", url_encode(to)),
+        (None, Some(c)) => format!("category={}", url_encode(c)),
+        (None, None) => String::new(),
+    };
     format!(
-        "/transactions/new?plan_id={}&plan_date={}&account={}&category={}&amount={}&kind={}&desc={}&desc_lang={}&back={}",
+        "/transactions/new?plan_id={}&plan_date={}&account={}&{target}&amount={}&kind={}&desc={}&desc_lang={}&back={}",
         o.plan.id,
         o.date,
         url_encode(&o.plan.account_code),
-        url_encode(&o.plan.category_code),
         o.plan.amount.normalize(),
         o.plan.tx_kind,
         url_encode(&desc),
         desc_lang.upper(),
         url_encode(back)
     )
+}
+
+/// Куда идут деньги плана: категория или «→ счёт зачисления».
+fn target(plan: &PlanDto, categories: &HashMap<String, String>, accounts: &HashMap<String, String>) -> String {
+    match (&plan.to_account_code, &plan.category_code) {
+        (Some(to), _) => format!("→ {}", accounts.get(to).cloned().unwrap_or_else(|| to.clone())),
+        (None, Some(c)) => categories.get(c).cloned().unwrap_or_else(|| c.clone()),
+        (None, None) => String::new(),
+    }
 }
 
 // ---------------------------------------------------------------- календарь
@@ -95,6 +109,7 @@ struct OccView {
     amount: String,
     status: String,
     is_expense: bool,
+    is_transfer: bool,
 }
 
 struct DayCell {
@@ -149,7 +164,12 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
     let back = format!("/planning?month={}", ym(first));
     for o in &occ {
         let in_month = o.date >= first && o.date <= last;
-        if in_month {
+        // Плановый перевод не расход и не доход: в сводке месяца только как просроченный.
+        if in_month && o.plan.is_transfer() {
+            if o.status == "OVERDUE" {
+                overdue += 1;
+            }
+        } else if in_month {
             match (o.plan.is_expense(), o.is_open(), o.status.as_str()) {
                 (true, true, s) => {
                     to_pay += o.plan.amount;
@@ -170,6 +190,7 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
             amount: money_in(lang, amount),
             status: o.status.clone(),
             is_expense: o.plan.is_expense(),
+            is_transfer: o.plan.is_transfer(),
         });
     }
     let mut weeks = Vec::new();
@@ -185,7 +206,7 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
                 agenda.push(AgendaDay {
                     label: format!("{wd}, {}", page.date(&d)),
                     is_today: d == t,
-                    items: items.iter().map(|o| OccView { href: o.href.clone(), title: o.title.clone(), amount: o.amount.clone(), status: o.status.clone(), is_expense: o.is_expense }).collect(),
+                    items: items.iter().map(|o| OccView { href: o.href.clone(), title: o.title.clone(), amount: o.amount.clone(), status: o.status.clone(), is_expense: o.is_expense, is_transfer: o.is_transfer }).collect(),
                 });
             }
             week.push(DayCell { day: d.day(), in_month, is_today: d == t, items });
@@ -240,9 +261,10 @@ async fn occurrence(
     let p = page.session.project_id;
     let o = svc.occurrence(p, plan, date, today()).await?;
     let titles: HashMap<String, String> = svc.category_titles(p, page.lang).await?.into_iter().collect();
+    let accounts: HashMap<String, String> = svc.account_choices(p, page.lang).await?.into_iter().map(|a| (a.code, a.label)).collect();
     let back = safe_back(&q.back);
     render(&OccurrencePage {
-        category: titles.get(&o.plan.category_code).cloned().unwrap_or_else(|| o.plan.category_code.clone()),
+        category: target(&o.plan, &titles, &accounts),
         pay_href: pay_href(&o, page.lang, &back),
         o,
         back,
@@ -283,12 +305,13 @@ struct PlansPage {
 async fn plans(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
     let p = page.session.project_id;
     let titles: HashMap<String, String> = svc.category_titles(p, page.lang).await?.into_iter().collect();
+    let accounts: HashMap<String, String> = svc.account_choices(p, page.lang).await?.into_iter().map(|a| (a.code, a.label)).collect();
     let plans = svc
         .list(p)
         .await?
         .into_iter()
         .map(|x| {
-            let cat = titles.get(&x.category_code).cloned().unwrap_or_else(|| x.category_code.clone());
+            let cat = target(&x, &titles, &accounts);
             let amount = money_in(page.lang, x.amount);
             (x, cat, amount)
         })
@@ -307,6 +330,7 @@ struct PlanForm {
     tx_kind: String,
     account_code: String,
     category_code: String,
+    to_account_code: String,
     amount: String,
     recurrence: String,
     interval: String,
@@ -342,7 +366,8 @@ impl PlanForm {
             name_th: opt(&self.name_th),
             tx_kind: self.tx_kind.clone(),
             account_code: self.account_code.clone(),
-            category_code: self.category_code.clone(),
+            category_code: if self.tx_kind == "TRANSFER" { None } else { opt(&self.category_code) },
+            to_account_code: if self.tx_kind == "TRANSFER" { opt(&self.to_account_code) } else { None },
             amount: parse_money("amount", &self.amount).map_err(v)?,
             recurrence: self.recurrence.clone(),
             interval: self.interval.trim().parse().map_err(|_| v("interval: целое число ≥ 1".into()))?,
@@ -361,7 +386,8 @@ impl PlanForm {
             name_th: p.name_th.unwrap_or_default(),
             tx_kind: p.tx_kind,
             account_code: p.account_code,
-            category_code: p.category_code,
+            category_code: p.category_code.unwrap_or_default(),
+            to_account_code: p.to_account_code.unwrap_or_default(),
             amount: p.amount.normalize().to_string(),
             recurrence: p.recurrence,
             interval: p.interval.to_string(),

@@ -155,13 +155,14 @@
 </div>
 
 {% if page.can_write() %}
-<dialog id="quick" class="dialog quick" aria-labelledby="quick-title" data-title-expense="{{ page.t("quick.expense") }}" data-title-income="{{ page.t("quick.income") }}">
+<dialog id="quick" class="dialog quick" aria-labelledby="quick-title" data-title-expense="{{ page.t("quick.expense") }}" data-title-income="{{ page.t("quick.income") }}" data-title-transfer="{{ page.t("quick.transfer") }}">
   <form id="quick-form" method="dialog" class="quick-form" autocomplete="off">
     <div class="dialog-head">
       <h2 id="quick-title" class="dialog-title">{{ page.t("quick.expense") }}</h2>
       <div class="seg seg-sm" role="radiogroup" aria-label="{{ page.t("kind") }}">
         <label class="seg-item"><input type="radio" name="tx_kind" value="EXPENSE" checked><span>{{ page.t("expense") }}</span></label>
         <label class="seg-item"><input type="radio" name="tx_kind" value="INCOME"><span>{{ page.t("income") }}</span></label>
+        <label class="seg-item"><input type="radio" name="tx_kind" value="TRANSFER"><span>{{ page.t("transfer") }}</span></label>
       </div>
       <button type="button" class="btn-icon" data-close aria-label="{{ page.t("close") }} (Esc)" title="{{ page.t("close") }} (Esc)">
         <svg class="icon" aria-hidden="true"><use href="{{ page.icon("x") }}"></use></svg></button>
@@ -179,7 +180,7 @@
         <p class="field-error" id="q-amount-err" hidden></p>
       </div>
 
-      <fieldset class="field">
+      <fieldset class="field" data-q-flow>
         <legend class="label" id="q-cat-label">{{ page.t("category") }}</legend>
         <div class="chips" id="q-chips" aria-describedby="q-cat-err"></div>
         <div class="combo">
@@ -194,7 +195,7 @@
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="field">
-          <label class="label" for="q-account">{{ page.t("account") }}</label>
+          <label class="label" for="q-account" data-label-flow="{{ page.t("account") }}" data-label-transfer="{{ page.t("quick.from") }}">{{ page.t("account") }}</label>
           <select id="q-account" class="input" name="account_code"></select>
         </div>
         <fieldset class="field">
@@ -207,6 +208,19 @@
           <input id="q-date" class="input mt-2" type="date" name="occurred_on" aria-label="{{ page.t("date") }}" hidden>
         </fieldset>
       </div>
+
+      <fieldset class="field space-y-3" data-q-transfer hidden>
+        <legend class="sr-only">{{ page.t("transfer") }}</legend>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="field"><label class="label" for="q-to">{{ page.t("quick.to") }}</label>
+            <select id="q-to" class="input" name="to_account_code" aria-describedby="q-to-err"></select>
+            <p class="field-error" id="q-to-err" hidden></p></div>
+          <div class="field" id="q-exchange" hidden><label class="label" for="q-to-amount">{{ page.t("quick.received") }} <span class="label-note" id="q-to-cur"></span></label>
+            <input id="q-to-amount" class="input num" inputmode="decimal" placeholder="0.00" aria-describedby="q-to-amount-err">
+            <p class="field-error" id="q-to-amount-err" hidden></p></div>
+        </div>
+        <p class="rate-line" id="q-rate" aria-live="polite"></p>
+      </fieldset>
 
       <div class="field">
         <label class="label" for="q-desc">{{ page.t("description") }} <span class="label-note">· {{ page.t("optional") }}</span></label>
@@ -225,8 +239,8 @@
     </div>
 
     <div class="dialog-foot">
-      <a href="/transactions/new" class="btn-ghost" id="q-split">
-        <svg class="icon" aria-hidden="true"><use href="{{ page.icon("split") }}"></use></svg>{{ page.t("quick.split") }}</a>
+      <a href="/transactions/new" class="btn-ghost" id="q-split" data-label-flow="{{ page.t("quick.split") }}" data-label-transfer="{{ page.t("quick.details") }}">
+        <svg class="icon" aria-hidden="true"><use href="{{ page.icon("split") }}"></use></svg><span>{{ page.t("quick.split") }}</span></a>
       <span class="grow"></span>
       <!-- «Сохранить» — первая кнопка отправки: её нажимает Enter. Визуально — справа. -->
       <button type="submit" class="btn-primary order-last" value="save" title="Enter">{{ page.t("save") }}</button>
@@ -244,6 +258,7 @@
   <dl class="keys">
     <div><dt><kbd>N</kbd></dt><dd>{{ page.t("keys.n") }}</dd></div>
     <div><dt><kbd>I</kbd></dt><dd>{{ page.t("keys.i") }}</dd></div>
+    <div><dt><kbd>T</kbd></dt><dd>{{ page.t("keys.t") }}</dd></div>
     <div><dt><kbd>Enter</kbd></dt><dd>{{ page.t("keys.enter") }}</dd></div>
     <div><dt><kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></dt><dd>{{ page.t("keys.ctrl_enter") }}</dd></div>
     <div><dt><kbd>Esc</kbd></dt><dd>{{ page.t("keys.esc") }}</dd></div>
@@ -270,6 +285,8 @@
   data-warn="{{ page.t("quick.warn") }}" data-anyway="{{ page.t("quick.saved_anyway") }}" data-choose="{{ page.t("quick.choose_category") }}"
   data-no-match="{{ page.t("quick.no_match") }}" data-no-accounts="{{ page.t("quick.no_accounts") }}" data-failed="{{ page.t("quick.failed") }}"
   data-undone="{{ page.t("quick.undone") }}" data-frequent="{{ page.t("quick.frequent") }}" data-amount-required="{{ page.t("quick.amount_hint") }}"
+  data-transfer="{{ page.t("transfer") }}" data-choose-to="{{ page.t("quick.choose_to") }}" data-received-required="{{ page.t("quick.received_required") }}"
+  data-rate="{{ page.t("quick.rate") }}" data-rate-ref="{{ page.t("quick.rate_ref") }}"
   data-icon-x="{{ page.icon("x") }}"></div>
 </body>
 </html>

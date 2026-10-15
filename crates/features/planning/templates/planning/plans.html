@@ -21,7 +21,7 @@
         <td class="text-muted">{{ cat }}</td>
         <td class="text-muted">{{ page.t(p.recurrence) }}{% if p.interval > 1 %} × {{ p.interval }}{% endif %}</td>
         <td class="text-muted tabular-nums whitespace-nowrap">{{ page.date(p.start_on) }}{% if let Some(e) = p.end_on %} — {{ page.date(e) }}{% endif %}</td>
-        <td class="num font-medium{% if !p.is_expense() %} text-income{% endif %}">{% if p.is_expense() %}−{% else %}+{% endif %}{{ amount }}</td>
+        <td class="num font-medium{% if !p.is_expense() && !p.is_transfer() %} text-income{% endif %}">{% if p.is_transfer() %}⇄ {% else if p.is_expense() %}−{% else %}+{% endif %}{{ amount }}</td>
         <td class="text-right whitespace-nowrap">{% if page.can_write() %}
           <form method="post" action="/planning/plans/{{ p.id }}/toggle" class="inline"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
             <input type="hidden" name="active" value="{% if p.active %}0{% else %}1{% endif %}">

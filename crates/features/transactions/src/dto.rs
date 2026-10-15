@@ -1,4 +1,6 @@
 //! Контракт HTTP API фичи «Транзакции» и преобразования DTO ⇄ домен.
+//!
+//! Клиент присылает тип и поля формы, сервер строит из них проводки; ответ всегда содержит проводки.
 
 use chrono::NaiveDate;
 use kernel::i18n::{Lang, Localized};
@@ -7,12 +9,12 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::domain::{Description, Line, Transaction, TransactionData, TxKind};
+use crate::domain::{Body, Description, Fee, Line, Transaction, TransactionData, TxKind};
 
-/// Позиция транзакции.
+/// Позиция чека (расход и доход).
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct LineDto {
-    /// Категория; её тип должен совпадать с `tx_kind`
+    /// Категория; расход — `EXPENSE`, доход — `INCOME`
     #[schema(example = "FOOD_GROCERIES")]
     pub category_code: String,
     /// Сумма > 0 в валюте счёта
@@ -22,14 +24,53 @@ pub struct LineDto {
     pub note: Option<String>,
 }
 
-/// Тело запроса на создание и изменение. Сумма транзакции = сумма позиций.
+/// Проводка: куда относится, валюта и сумма со знаком. Сумма проводок по каждой валюте = 0.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PostingDto {
+    /// ACCOUNT — счёт, CATEGORY — категория, SYSTEM — системный счёт (EXCHANGE, OPENING)
+    #[schema(example = "ACCOUNT")]
+    pub ref_kind: String,
+    #[schema(example = "CARD_KBANK")]
+    pub ref_code: String,
+    #[schema(example = "THB")]
+    pub currency_code: String,
+    /// «+» — счёт пополнился или деньги ушли на категорию расхода; «−» — наоборот
+    #[schema(value_type = String, example = "-1250.00")]
+    pub amount: Decimal,
+    pub note: Option<String>,
+}
+
+/// Тело запроса на создание и изменение: тип и поля формы.
+///
+/// - `EXPENSE` / `INCOME`: `account_code`, `lines`, необязательно `refund` (возврат — обратные знаки).
+/// - `TRANSFER`: `account_code` (откуда), `to_account_code` (куда), `amount` (списано всего, вместе с
+///   комиссией), `to_amount` (зачислено — только при разных валютах), необязательно
+///   `fee_category_code` + `fee_amount` (комиссия, расход в валюте списания).
+/// - `OPENING`: `account_code`, `amount` (начальный остаток, может быть отрицательным).
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct TransactionInput {
     pub occurred_on: NaiveDate,
-    #[schema(example = "CARD_KBANK")]
-    pub account_code: String,
     #[schema(example = "EXPENSE")]
     pub tx_kind: String,
+    #[schema(example = "CARD_KBANK")]
+    pub account_code: String,
+    #[serde(default)]
+    pub refund: bool,
+    #[serde(default)]
+    pub lines: Vec<LineDto>,
+    #[serde(default)]
+    pub to_account_code: Option<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>, example = "10050.00")]
+    pub amount: Option<Decimal>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>, example = "3912.40")]
+    pub to_amount: Option<Decimal>,
+    #[serde(default)]
+    pub fee_category_code: Option<String>,
+    #[serde(default)]
+    #[schema(value_type = Option<String>, example = "50.00")]
+    pub fee_amount: Option<Decimal>,
     /// Описание на языке ввода
     #[serde(default)]
     pub description: Option<String>,
@@ -47,7 +88,6 @@ pub struct TransactionInput {
     pub plan_id: Option<Uuid>,
     #[serde(default)]
     pub plan_date: Option<NaiveDate>,
-    pub lines: Vec<LineDto>,
 }
 
 /// Переводы описания (оригинал не меняется).
@@ -65,9 +105,29 @@ pub struct TranslationInput {
 pub struct TransactionDto {
     pub id: Uuid,
     pub occurred_on: NaiveDate,
-    pub account_code: String,
     #[schema(example = "EXPENSE")]
     pub tx_kind: String,
+    /// Счёт; у перевода — счёт списания
+    pub account_code: String,
+    /// Счёт зачисления (перевод)
+    pub to_account_code: Option<String>,
+    /// Возврат (расход или доход с обратными знаками)
+    pub refund: bool,
+    /// Позиции (расход и доход)
+    pub lines: Vec<LineDto>,
+    /// Сумма транзакции: сумма позиций; у перевода — списано всего; у начального остатка — остаток
+    #[schema(value_type = String)]
+    pub total: Decimal,
+    /// Зачислено (перевод с обменом валют)
+    #[schema(value_type = Option<String>)]
+    pub to_amount: Option<Decimal>,
+    pub fee_category_code: Option<String>,
+    #[schema(value_type = Option<String>)]
+    pub fee_amount: Option<Decimal>,
+    /// Валюта счёта (у перевода — счёта списания)
+    pub currency: String,
+    /// Валюта счёта зачисления (перевод)
+    pub to_currency: Option<String>,
     pub description: Option<String>,
     #[schema(example = "RU")]
     pub description_lang: String,
@@ -78,10 +138,7 @@ pub struct TransactionDto {
     pub created_by: Uuid,
     pub plan_id: Option<Uuid>,
     pub plan_date: Option<NaiveDate>,
-    pub lines: Vec<LineDto>,
-    /// Сумма позиций
-    #[schema(value_type = String)]
-    pub total: Decimal,
+    pub postings: Vec<PostingDto>,
 }
 
 /// Фильтр списка.
@@ -89,7 +146,10 @@ pub struct TransactionDto {
 pub struct ListQuery {
     pub from: Option<NaiveDate>,
     pub to: Option<NaiveDate>,
+    /// Транзакции с проводкой на этот счёт
     pub account_code: Option<String>,
+    /// Тип: EXPENSE / INCOME / TRANSFER / OPENING
+    pub tx_kind: Option<String>,
     pub created_by: Option<Uuid>,
     /// Только без перевода описания на этот язык (ru / en / th)
     pub untranslated: Option<String>,
@@ -98,11 +158,26 @@ pub struct ListQuery {
 impl From<Transaction> for TransactionDto {
     fn from(x: Transaction) -> Self {
         let total = x.total();
+        let currency_of = |code: &str| x.postings.iter().find(|p| p.is_account(code)).map(|p| p.currency.clone()).unwrap_or_default();
+        let (account_code, to_account_code, refund, lines, to_amount, fee) = match x.body() {
+            Body::Flow { account, lines, refund, .. } => (account, None, refund, lines, None, None),
+            Body::Transfer { from, to, to_amount, fee, .. } => (from, Some(to), false, Vec::new(), to_amount, fee),
+            Body::Opening { account, .. } => (account, None, false, Vec::new(), None, None),
+        };
         Self {
             id: x.id,
             occurred_on: x.occurred_on,
-            account_code: x.account_code,
             tx_kind: x.tx_kind.as_str().to_string(),
+            currency: currency_of(&account_code),
+            to_currency: to_account_code.as_deref().map(currency_of),
+            account_code,
+            to_account_code,
+            refund,
+            lines: lines.into_iter().map(|l| LineDto { category_code: l.category_code, amount: l.amount, note: l.note }).collect(),
+            total,
+            to_amount,
+            fee_category_code: fee.as_ref().map(|f| f.category_code.clone()),
+            fee_amount: fee.map(|f| f.amount),
             description: x.description.text,
             description_lang: x.description.lang.upper().to_string(),
             description_ru: x.description.ru,
@@ -111,8 +186,11 @@ impl From<Transaction> for TransactionDto {
             created_by: x.created_by,
             plan_id: x.plan.map(|p| p.0),
             plan_date: x.plan.map(|p| p.1),
-            lines: x.lines.into_iter().map(|l| LineDto { category_code: l.category_code, amount: l.amount, note: l.note }).collect(),
-            total,
+            postings: x
+                .postings
+                .into_iter()
+                .map(|p| PostingDto { ref_kind: p.ref_kind.as_str().into(), ref_code: p.ref_code, currency_code: p.currency, amount: p.amount, note: p.note })
+                .collect(),
         }
     }
 }
@@ -128,19 +206,30 @@ impl TransactionInput {
             (None, None) => None,
             _ => return Err("plan_id и plan_date задаются вместе".into()),
         };
+        let lines = || self.lines.iter().map(|l| Line { category_code: l.category_code.clone(), amount: l.amount, note: l.note.clone() }).collect();
+        let body = match tx_kind {
+            TxKind::Expense | TxKind::Income => {
+                Body::Flow { income: tx_kind == TxKind::Income, account: self.account_code.clone(), lines: lines(), refund: self.refund }
+            }
+            TxKind::Transfer => Body::Transfer {
+                from: self.account_code.clone(),
+                to: self.to_account_code.clone().filter(|s| !s.trim().is_empty()).ok_or("to_account_code: выберите счёт зачисления")?,
+                amount: self.amount.ok_or("amount: введите сумму списания")?,
+                to_amount: self.to_amount,
+                fee: match (self.fee_category_code.clone().filter(|s| !s.trim().is_empty()), self.fee_amount) {
+                    (Some(category_code), Some(amount)) => Some(Fee { category_code, amount }),
+                    (None, None) => None,
+                    (None, Some(_)) => return Err("fee_category_code: выберите категорию комиссии".into()),
+                    (Some(_), None) => return Err("fee_amount: введите сумму комиссии".into()),
+                },
+            },
+            TxKind::Opening => Body::Opening { account: self.account_code.clone(), amount: self.amount.ok_or("amount: введите остаток")? },
+        };
         Ok(TransactionData {
             occurred_on: self.occurred_on,
-            account_code: self.account_code,
-            tx_kind,
-            description: Description {
-                text: self.description,
-                lang,
-                ru: self.description_ru,
-                en: self.description_en,
-                th: self.description_th,
-            },
+            description: Description { text: self.description, lang, ru: self.description_ru, en: self.description_en, th: self.description_th },
             plan,
-            lines: self.lines.into_iter().map(|l| Line { category_code: l.category_code, amount: l.amount, note: l.note }).collect(),
+            body,
         })
     }
 }
@@ -171,6 +260,28 @@ impl TransactionDto {
     pub fn is_expense(&self) -> bool {
         self.tx_kind == "EXPENSE"
     }
+
+    pub fn is_income(&self) -> bool {
+        self.tx_kind == "INCOME"
+    }
+
+    pub fn is_transfer(&self) -> bool {
+        self.tx_kind == "TRANSFER"
+    }
+
+    pub fn is_opening(&self) -> bool {
+        self.tx_kind == "OPENING"
+    }
+
+    /// Как транзакция изменила остаток счёта.
+    pub fn amount_on(&self, account: &str) -> Decimal {
+        self.postings.iter().filter(|p| p.ref_kind == "ACCOUNT" && p.ref_code == account).map(|p| p.amount).sum()
+    }
+
+    /// Сколько ушло на перевод без комиссии.
+    pub fn sent(&self) -> Decimal {
+        self.total - self.fee_amount.unwrap_or_default()
+    }
 }
 
 /// Счёт в форме быстрого расхода.
@@ -181,7 +292,7 @@ pub struct QuickAccountDto {
     pub currency: String,
     /// Символ валюты для показа рядом с суммой (฿, $)
     pub symbol: String,
-    /// Курс 1 единицы валюты счёта к базовой валюте на дату (для предупреждения о лимите)
+    /// Курс 1 единицы валюты счёта к базовой валюте на дату (для предупреждения о лимите и курса перевода)
     #[schema(value_type = String)]
     pub rate_to_base: Decimal,
 }
@@ -214,8 +325,10 @@ pub struct QuickCategoryDto {
 pub struct QuickDefaultsDto {
     pub date: NaiveDate,
     pub base_currency: String,
-    /// Последний счёт, которым пользователь пользовался в проекте
+    /// Последний счёт, которым пользователь пользовался в расходах и доходах проекта
     pub default_account: Option<String>,
+    /// Счета последнего перевода пользователя: (откуда, куда)
+    pub last_transfer: Option<(String, String)>,
     pub accounts: Vec<QuickAccountDto>,
     /// До 6 частых категорий расходов пользователя за 30 дней
     pub frequent_expense: Vec<String>,
@@ -227,5 +340,19 @@ pub struct QuickDefaultsDto {
 #[derive(Debug, Default, Deserialize, IntoParams)]
 pub struct QuickQuery {
     /// Дата операции (по умолчанию — сегодня): от неё считаются месяц лимитов и курсы
+    pub date: Option<NaiveDate>,
+}
+
+/// Остаток счёта на дату.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct BalanceDto {
+    pub account_code: String,
+    #[schema(value_type = String)]
+    pub balance: Decimal,
+}
+
+#[derive(Debug, Default, Deserialize, IntoParams)]
+pub struct BalanceQuery {
+    /// Дата (по умолчанию — сегодня)
     pub date: Option<NaiveDate>,
 }

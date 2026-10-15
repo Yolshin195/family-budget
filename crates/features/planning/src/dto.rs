@@ -23,10 +23,17 @@ pub struct PlanInput {
     pub name_en: Option<String>,
     #[serde(default)]
     pub name_th: Option<String>,
+    /// EXPENSE / INCOME / TRANSFER
     #[schema(example = "EXPENSE")]
     pub tx_kind: String,
+    /// Счёт; у перевода — счёт списания
     pub account_code: String,
-    pub category_code: String,
+    /// Категория (расход и доход)
+    #[serde(default)]
+    pub category_code: Option<String>,
+    /// Счёт зачисления (перевод)
+    #[serde(default)]
+    pub to_account_code: Option<String>,
     /// Ожидаемая сумма в валюте счёта
     #[schema(value_type = String, example = "15000")]
     pub amount: Decimal,
@@ -60,7 +67,8 @@ pub struct PlanDto {
     pub name_th: Option<String>,
     pub tx_kind: String,
     pub account_code: String,
-    pub category_code: String,
+    pub category_code: Option<String>,
+    pub to_account_code: Option<String>,
     #[schema(value_type = String)]
     pub amount: Decimal,
     pub recurrence: String,
@@ -107,6 +115,7 @@ impl PlanInput {
             tx_kind: self.tx_kind,
             account_code: self.account_code,
             category_code: self.category_code,
+            to_account_code: self.to_account_code,
             amount: self.amount,
             recurrence: Recurrence::parse(&self.recurrence)
                 .ok_or_else(|| format!("recurrence: '{}' — ожидается одно из {:?}", self.recurrence, Recurrence::VALUES))?,
@@ -130,6 +139,7 @@ impl From<Plan> for PlanDto {
             tx_kind: p.tx_kind,
             account_code: p.account_code,
             category_code: p.category_code,
+            to_account_code: p.to_account_code,
             amount: p.amount,
             recurrence: p.recurrence.as_str().into(),
             interval: p.interval,
@@ -168,6 +178,10 @@ impl PlanDto {
 
     pub fn is_expense(&self) -> bool {
         self.tx_kind == "EXPENSE"
+    }
+
+    pub fn is_transfer(&self) -> bool {
+        self.tx_kind == "TRANSFER"
     }
 }
 

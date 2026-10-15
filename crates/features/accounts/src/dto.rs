@@ -30,8 +30,6 @@ pub struct CreateAccountDto {
     pub account_kind: String,
     /// Валюта счёта
     pub currency_code: String,
-    /// Начальный остаток
-    pub opening_balance: rust_decimal::Decimal,
     /// Держатель счёта (участник проекта)
     #[serde(default)]
     pub holder_user_id: Option<uuid::Uuid>,
@@ -59,8 +57,6 @@ pub struct UpdateAccountDto {
     pub account_kind: String,
     /// Валюта счёта
     pub currency_code: String,
-    /// Начальный остаток
-    pub opening_balance: rust_decimal::Decimal,
     /// Держатель счёта (участник проекта)
     #[serde(default)]
     pub holder_user_id: Option<uuid::Uuid>,
@@ -86,8 +82,6 @@ pub struct AccountDto {
     pub account_kind: String,
     /// Валюта счёта
     pub currency_code: String,
-    /// Начальный остаток
-    pub opening_balance: rust_decimal::Decimal,
     /// Держатель счёта (участник проекта)
     pub holder_user_id: Option<uuid::Uuid>,
 }
@@ -112,7 +106,6 @@ impl From<Account> for AccountDto {
             name_th: x.name_th,
             account_kind: x.account_kind.as_str().to_string(),
             currency_code: x.currency_code,
-            opening_balance: x.opening_balance,
             holder_user_id: x.holder_user_id,
         }
     }
@@ -129,7 +122,6 @@ impl CreateAccountDto {
             name_th: self.name_th,
             account_kind: parse_account_kind(&self.account_kind)?,
             currency_code: self.currency_code,
-            opening_balance: self.opening_balance,
             holder_user_id: self.holder_user_id,
         })
     }
@@ -146,7 +138,6 @@ impl UpdateAccountDto {
             name_th: self.name_th,
             account_kind: parse_account_kind(&self.account_kind)?,
             currency_code: self.currency_code,
-            opening_balance: self.opening_balance,
             holder_user_id: self.holder_user_id,
         })
     }

@@ -7,7 +7,11 @@ use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use kernel::error::AppError;
-use kernel::web::{Flash, see_other_flash, Choice, PageCtx, PageError, PageResult, parse_money, render, see_other};
+use std::collections::HashMap;
+
+use chrono::NaiveDate;
+use kernel::web::{Flash, see_other_flash, Choice, PageCtx, PageError, PageResult, money_in, parse_money, render, see_other};
+use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -42,7 +46,8 @@ fn form_ctx(page: PageCtx) -> PageCtx {
 #[template(path = "accounts/list.html")]
 struct ListPage {
     page: PageCtx,
-    rows: Vec<AccountDto>,
+    /// Счёт и его текущий остаток (сумма проводок на сегодня).
+    rows: Vec<(AccountDto, String, bool)>,
 }
 
 #[derive(Template)]
@@ -67,7 +72,9 @@ pub struct AccountForm {
     name_th: String,
     account_kind: String,
     currency_code: String,
+    /// Начальный остаток — транзакция `OPENING` в журнале операций.
     opening_balance: String,
+    opening_date: String,
     holder_user_id: String,
 }
 
@@ -86,9 +93,16 @@ impl AccountForm {
             name_th: a.name_th.unwrap_or_default(),
             account_kind: a.account_kind,
             currency_code: a.currency_code,
-            opening_balance: a.opening_balance.to_string(),
+            opening_balance: "0".into(),
+            opening_date: today().to_string(),
             holder_user_id: a.holder_user_id.map(|u| u.to_string()).unwrap_or_default(),
         }
+    }
+
+    fn opening(&self) -> Result<(Decimal, NaiveDate), AppError> {
+        let amount = if self.opening_balance.trim().is_empty() { Decimal::ZERO } else { parse_money("opening_balance", &self.opening_balance).map_err(AppError::Validation)? };
+        let date = self.opening_date.parse().map_err(|_| AppError::Validation("opening_date: неверная дата".into()))?;
+        Ok((amount, date))
     }
 
     fn holder(&self) -> Result<Option<Uuid>, AppError> {
@@ -104,8 +118,22 @@ async fn form_page(svc: &AccountService, page: PageCtx, is_new: bool, f: Account
     render(&FormPage { page: form_ctx(page), is_new, f, kinds: &AccountAccountKind::VALUES, currencies, error })
 }
 
+fn today() -> NaiveDate {
+    chrono::Local::now().date_naive()
+}
+
 async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
-    let rows = svc.all(page.session.project_id, true).await?;
+    let p = page.session.project_id;
+    let balances: HashMap<String, Decimal> = svc.balances(p, today()).await?.into_iter().collect();
+    let rows = svc
+        .all(p, true)
+        .await?
+        .into_iter()
+        .map(|a| {
+            let b = balances.get(&a.code).copied().unwrap_or_default();
+            (a, money_in(page.lang, b), b < Decimal::ZERO)
+        })
+        .collect();
     render(&ListPage { page: ctx(page), rows })
 }
 
@@ -115,6 +143,7 @@ async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageR
         account_kind: "CARD".into(),
         currency_code: page.session.base_currency.clone(),
         opening_balance: "0".into(),
+        opening_date: today().to_string(),
         ..Default::default()
     };
     form_page(&svc, page, true, f, None).await
@@ -131,22 +160,36 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): F
             name_th: tr(&f.name_th),
             account_kind: f.account_kind.clone(),
             currency_code: f.currency_code.clone(),
-            opening_balance: parse_money("opening_balance", &f.opening_balance).map_err(AppError::Validation)?,
             holder_user_id: f.holder()?,
         };
-        svc.create(page.session.project_id, dto).await
+        let (amount, date) = f.opening()?;
+        let s = page.session.scope();
+        let a = svc.create(s.project_id, dto).await?;
+        Ok(svc.set_opening(s.project_id, s.user_id, &a.code, amount, date).await.err().map(|e| (a.code, e)))
     }
     .await;
     match result {
-        Ok(_) => Ok(see_other("/accounts")),
+        Ok(None) => Ok(see_other("/accounts")),
+        // Счёт создан, а начальный остаток не принят: дальше — форма редактирования с ошибкой.
+        Ok(Some((code, AppError::Validation(m)))) => {
+            let text = m.split_once(": ").map(|x| x.1.to_string()).unwrap_or(m);
+            Ok(see_other_flash(&page.config, &format!("/accounts/{}/edit", kernel::web::url_encode(&code)), Flash::error(text)))
+        }
+        Ok(Some((_, e))) => Err(PageError(e)),
         Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, true, f, Some(m)).await,
         Err(e) => Err(PageError(e)),
     }
 }
 
 async fn edit_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
-    let a = svc.get(page.session.project_id, &code).await?;
-    form_page(&svc, page, false, AccountForm::from_dto(a), None).await
+    let p = page.session.project_id;
+    let a = svc.get(p, &code).await?;
+    let mut f = AccountForm::from_dto(a);
+    if let Some((amount, date)) = svc.opening(p, &code).await? {
+        f.opening_balance = amount.normalize().to_string();
+        f.opening_date = date.to_string();
+    }
+    form_page(&svc, page, false, f, None).await
 }
 
 async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>, Form(mut f): Form<AccountForm>) -> PageResult {
@@ -162,10 +205,12 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
             name_th: tr(&f.name_th),
             account_kind: f.account_kind.clone(),
             currency_code: f.currency_code.clone(),
-            opening_balance: parse_money("opening_balance", &f.opening_balance).map_err(AppError::Validation)?,
             holder_user_id: f.holder()?,
         };
-        svc.update(page.session.project_id, &code, dto).await
+        let (amount, date) = f.opening()?;
+        let s = page.session.scope();
+        svc.update(s.project_id, &code, dto).await?;
+        svc.set_opening(s.project_id, s.user_id, &code, amount, date).await
     }
     .await;
     match result {
@@ -177,7 +222,15 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
 
 /// Архив без «Вы уверены?»: тост с «Отменить» на 5 секунд.
 async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
-    svc.archive(page.session.project_id, &code).await?;
+    // Счёт с остатком в архив не уходит: тост с причиной.
+    match svc.archive(page.session.project_id, &code).await {
+        Ok(()) => {}
+        Err(AppError::Conflict(m)) => {
+            let text = m.split_once(": ").map(|x| x.1.to_string()).unwrap_or(m);
+            return Ok(see_other_flash(&page.config, &format!("/accounts/{}/edit", kernel::web::url_encode(&code)), Flash::error(text)));
+        }
+        Err(e) => return Err(PageError(e)),
+    }
     let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/accounts/{}/restore", kernel::web::url_encode(&code)));
     Ok(see_other_flash(&page.config, "/accounts", flash))
 }

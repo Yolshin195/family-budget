@@ -35,6 +35,9 @@ pub struct Report {
     pub income_fact: Decimal,
     pub income_planned: Decimal,
     pub accounts: Vec<AccountBalance>,
+    /// Курсовая разница за период в базовой валюте: «−» — потеряно на обмене, «+» — выиграно.
+    /// В доходы и расходы не входит.
+    pub fx_result: Decimal,
     /// Нерешённые вхождения планов за период (в базовой валюте), по дате.
     pub upcoming: Vec<PlannedRec>,
     /// Валюты без курса к базовой — их суммы посчитаны как 1:1.
@@ -70,10 +73,11 @@ impl BudgetService {
         let facts = d.facts.lines(project_id, period.from, period.to).await?;
         let planned = d.plans.open(project_id, period.from, period.to, today, lang).await?;
 
+        let exchange = d.facts.exchange(project_id, period.from, period.to).await?;
+
         let currency_of: HashMap<&str, &str> = accounts.iter().map(|a| (a.code.as_str(), a.currency.as_str())).collect();
         let mut missing = BTreeSet::new();
-        let mut to_base = |account: &str, amount: Decimal, date: NaiveDate| -> Decimal {
-            let cur = currency_of.get(account).copied().unwrap_or(base_currency);
+        let mut to_base = |cur: &str, amount: Decimal, date: NaiveDate| -> Decimal {
             match rate_on(&rates, cur, base_currency, date) {
                 Some(r) => (amount * r).round_dp(2),
                 None => {
@@ -82,20 +86,27 @@ impl BudgetService {
                 }
             }
         };
+        let mine = |who: Uuid| member.is_none_or(|m| who == m);
 
         let (mut exp_f, mut exp_p, mut inc_f, mut inc_p) = (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO, Decimal::ZERO);
         let mut fact_amounts = Vec::new();
-        for f in facts.iter().filter(|f| member.is_none_or(|m| f.created_by == m)) {
-            let a = to_base(&f.account_code, f.amount, f.date);
+        for f in facts.iter().filter(|f| mine(f.created_by)) {
+            let a = to_base(&f.currency, f.amount, f.date);
             if f.kind == "EXPENSE" { exp_f += a } else { inc_f += a }
             fact_amounts.push(Amount { category_code: f.category_code.clone(), amount: a });
         }
+        // Обмен валют: проводки «Обмен валют» в базовой валюте. Отдали больше, чем получили, — потеря.
+        let fx_result = -exchange.iter().filter(|x| mine(x.created_by)).map(|x| to_base(&x.currency, x.amount, x.date)).sum::<Decimal>();
         let mut plan_amounts = Vec::new();
         let mut upcoming = Vec::new();
         for p in planned {
-            let a = to_base(&p.account_code, p.amount, p.date);
-            if p.kind == "EXPENSE" { exp_p += a } else { inc_p += a }
-            plan_amounts.push(Amount { category_code: p.category_code.clone(), amount: a });
+            let cur = currency_of.get(p.account_code.as_str()).copied().unwrap_or(base_currency);
+            let a = to_base(cur, p.amount, p.date);
+            // Плановый перевод не меняет доходы и расходы — он только виден в «Предстоящих».
+            if let Some(code) = p.category_code.clone().filter(|_| p.kind != "TRANSFER") {
+                if p.kind == "EXPENSE" { exp_p += a } else { inc_p += a }
+                plan_amounts.push(Amount { category_code: code, amount: a });
+            }
             upcoming.push(PlannedRec { amount: a, ..p });
         }
         upcoming.sort_by_key(|p| p.date);
@@ -109,15 +120,12 @@ impl BudgetService {
         };
         let (expenses, incomes): (Vec<Row>, Vec<Row>) = rows.into_iter().filter(visible).partition(|r| r.kind == "EXPENSE");
 
-        let turnover: HashMap<String, (Decimal, Decimal)> =
-            d.facts.turnover(project_id, period.to).await?.into_iter().map(|(c, i, e)| (c, (i, e))).collect();
+        // Остаток счёта = сумма его проводок (начальный остаток — тоже проводка).
+        let balances: HashMap<String, Decimal> = d.facts.balances(project_id, period.to).await?.into_iter().collect();
         let accounts = accounts
             .into_iter()
             .filter(|a| !a.archived)
-            .map(|a| {
-                let (inc, exp) = turnover.get(&a.code).copied().unwrap_or_default();
-                AccountBalance { balance: a.opening + inc - exp, code: a.code, title: a.title, currency: a.currency }
-            })
+            .map(|a| AccountBalance { balance: balances.get(&a.code).copied().unwrap_or_default(), code: a.code, title: a.title, currency: a.currency })
             .collect();
 
         Ok(Report {
@@ -130,6 +138,7 @@ impl BudgetService {
             income_fact: inc_f,
             income_planned: inc_p,
             accounts,
+            fx_result,
             upcoming,
             missing_rates: missing.into_iter().collect(),
         })

@@ -30,7 +30,7 @@ impl PaymentsLookup for Arc<FakePayments> {
 #[async_trait::async_trait]
 impl AccountsLookup for FakeAccounts {
     async fn exists(&self, _p: Uuid, code: &str) -> AppResult<bool> {
-        Ok(code == "CARD")
+        Ok(code == "CARD" || code == "SAVINGS")
     }
     async fn choices(&self, _p: Uuid, _l: Lang) -> AppResult<Vec<Choice>> {
         Ok(vec![])
@@ -76,7 +76,8 @@ fn rent() -> PlanInput {
         name_th: None,
         tx_kind: "EXPENSE".into(),
         account_code: "card".into(),
-        category_code: "rent".into(),
+        category_code: Some("rent".into()),
+        to_account_code: None,
         amount: Decimal::from(15000),
         recurrence: "MONTHLY".into(),
         interval: 1,
@@ -115,11 +116,25 @@ async fn calendar_statuses() {
 async fn category_kind_and_refs() {
     let (svc, _) = setup();
     let mut bad = rent();
-    bad.category_code = "SALARY".into();
+    bad.category_code = Some("SALARY".into());
     assert!(matches!(svc.create(Uuid::new_v4(), Uuid::new_v4(), bad).await.unwrap_err(), AppError::Validation(_)));
     let mut bad = rent();
     bad.account_code = "NOPE".into();
     assert!(matches!(svc.create(Uuid::new_v4(), Uuid::new_v4(), bad).await.unwrap_err(), AppError::Validation(_)));
+}
+
+/// Плановый перевод (в копилку каждый месяц): счёт зачисления вместо категории.
+#[tokio::test]
+async fn transfer_plan() {
+    let (svc, _) = setup();
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    let savings = || PlanInput { tx_kind: "TRANSFER".into(), category_code: Some("ignored".into()), to_account_code: Some("savings".into()), ..rent() };
+    let plan = svc.create(p, u, savings()).await.unwrap();
+    assert_eq!((plan.category_code, plan.to_account_code.as_deref()), (None, Some("SAVINGS")));
+    assert!(svc.create(p, u, PlanInput { to_account_code: None, ..savings() }).await.is_err(), "нужен счёт зачисления");
+    assert!(svc.create(p, u, PlanInput { to_account_code: Some("card".into()), ..savings() }).await.is_err(), "тот же счёт");
+    assert!(svc.create(p, u, PlanInput { to_account_code: Some("nope".into()), ..savings() }).await.is_err(), "счёт не найден");
+    assert!(svc.create(p, u, PlanInput { category_code: None, ..rent() }).await.is_err(), "у расхода нужна категория");
 }
 
 #[tokio::test]

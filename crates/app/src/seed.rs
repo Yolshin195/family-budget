@@ -112,7 +112,9 @@ fn err(e: kernel::error::AppError) -> anyhow::Error {
     anyhow::anyhow!("seed: {e}")
 }
 
-async fn account(s: &Services, p: Uuid, code: &str, kind: &str, cur: &str, opening: &str, holder: Option<Uuid>, lang: Lang, names: (&str, &str, &str)) -> AppResult<()> {
+/// Счёт и его начальный остаток (транзакция `OPENING` на начало демо-периода).
+#[allow(clippy::too_many_arguments)]
+async fn account(s: &Services, p: Uuid, by: Uuid, code: &str, kind: &str, cur: &str, opening: &str, holder: Option<Uuid>, lang: Lang, names: (&str, &str, &str)) -> AppResult<()> {
     let (name, name_lang, name_ru, name_en, name_th) = localized(lang, names.0, names.1, names.2);
     s.accounts
         .create(p, accounts::dto::CreateAccountDto {
@@ -124,11 +126,10 @@ async fn account(s: &Services, p: Uuid, code: &str, kind: &str, cur: &str, openi
             name_th,
             account_kind: kind.into(),
             currency_code: cur.into(),
-            opening_balance: dec(opening),
             holder_user_id: holder,
         })
-        .await
-        .map(|_| ())
+        .await?;
+    s.accounts.set_opening(p, by, code, dec(opening), day(3, 1)).await
 }
 
 struct Tx<'a> {
@@ -151,6 +152,12 @@ async fn tx(s: &Services, p: Uuid, t: Tx<'_>) -> AppResult<()> {
         occurred_on: t.date,
         account_code: t.account.into(),
         tx_kind: t.kind.into(),
+        refund: false,
+        to_account_code: None,
+        amount: None,
+        to_amount: None,
+        fee_category_code: None,
+        fee_amount: None,
         description: t.desc.map(|d| d.0.to_string()),
         description_lang: t.desc.map(|d| d.1).unwrap_or(Lang::Ru).upper().into(),
         description_ru: t.tr.0.map(Into::into),
@@ -167,6 +174,45 @@ async fn tx(s: &Services, p: Uuid, t: Tx<'_>) -> AppResult<()> {
     s.transactions.create(p, t.by, input).await.map(|_| ())
 }
 
+/// Перевод между счетами: `to_amount` — при обмене валют, `fee` — комиссия (категория, сумма).
+struct Transfer<'a> {
+    date: NaiveDate,
+    from: &'a str,
+    to: &'a str,
+    amount: &'a str,
+    to_amount: Option<&'a str>,
+    fee: Option<(&'a str, &'a str)>,
+    desc: (&'a str, Lang),
+    plan: Option<(Uuid, NaiveDate)>,
+    by: Uuid,
+}
+
+async fn transfer(s: &Services, p: Uuid, t: Transfer<'_>) -> AppResult<()> {
+    if t.date > chrono::Local::now().date_naive() {
+        return Ok(());
+    }
+    let input = transactions::dto::TransactionInput {
+        occurred_on: t.date,
+        tx_kind: "TRANSFER".into(),
+        account_code: t.from.into(),
+        refund: false,
+        lines: Vec::new(),
+        to_account_code: Some(t.to.into()),
+        amount: Some(dec(t.amount)),
+        to_amount: t.to_amount.map(dec),
+        fee_category_code: t.fee.map(|f| f.0.into()),
+        fee_amount: t.fee.map(|f| dec(f.1)),
+        description: Some(t.desc.0.into()),
+        description_lang: t.desc.1.upper().into(),
+        description_ru: None,
+        description_en: None,
+        description_th: None,
+        plan_id: t.plan.map(|x| x.0),
+        plan_date: t.plan.map(|x| x.1),
+    };
+    s.transactions.create(p, t.by, input).await.map(|_| ())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn plan(s: &Services, p: Uuid, by: Uuid, lang: Lang, names: (&str, &str, &str), kind: &str, acc: &str, cat: &str, amount: &str, rec: &str, start: NaiveDate) -> AppResult<Uuid> {
     let (name, name_lang, name_ru, name_en, name_th) = localized(lang, names.0, names.1, names.2);
@@ -178,7 +224,8 @@ async fn plan(s: &Services, p: Uuid, by: Uuid, lang: Lang, names: (&str, &str, &
         name_th,
         tx_kind: kind.into(),
         account_code: acc.into(),
-        category_code: cat.into(),
+        category_code: (kind != "TRANSFER").then(|| cat.into()),
+        to_account_code: (kind == "TRANSFER").then(|| cat.into()),
         amount: dec(amount),
         recurrence: rec.into(),
         interval: 1,
@@ -204,11 +251,13 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
     for (cur, rate, back) in [("USD", "33.80", 2), ("USD", "33.25", 0), ("RUB", "0.39", 2), ("RUB", "0.37", 0)] {
         s.rates.create(p, rates::dto::RateInput { rate_date: day(back, 1), currency_code: cur.into(), rate: dec(rate) }).await?;
     }
-    account(s, p, "CASH", "CASH", "THB", "4500", None, ru, ("Наличные", "Cash", "เงินสด")).await?;
-    account(s, p, "CARD_KBANK", "CARD", "THB", "62000", Some(me), ru, ("Карта KBank", "KBank card", "บัตรกสิกร")).await?;
+    account(s, p, me, "CASH", "CASH", "THB", "4500", None, ru, ("Наличные", "Cash", "เงินสด")).await?;
+    account(s, p, me, "CARD_KBANK", "CARD", "THB", "62000", Some(me), ru, ("Карта KBank", "KBank card", "บัตรกสิกร")).await?;
     // Счёт заведён Анной на тайском — переводы на ru/en есть, видно в справочнике.
-    account(s, p, "CARD_SCB", "CARD", "THB", "18000", Some(anna), Lang::Th, ("Карта SCB", "SCB card", "บัตรไทยพาณิชย์")).await?;
-    account(s, p, "WISE_USD", "BANK", "USD", "850", Some(me), Lang::En, ("Wise доллары", "Wise USD", "Wise ดอลลาร์")).await?;
+    account(s, p, anna, "CARD_SCB", "CARD", "THB", "18000", Some(anna), Lang::Th, ("Карта SCB", "SCB card", "บัตรไทยพาณิชย์")).await?;
+    account(s, p, me, "WISE_USD", "BANK", "USD", "850", Some(me), Lang::En, ("Wise доллары", "Wise USD", "Wise ดอลลาร์")).await?;
+    // Рубли из России: каждый месяц меняются на баты через приложение (перевод с обменом и комиссией).
+    account(s, p, me, "TINKOFF_RUB", "CARD", "RUB", "120000", Some(me), ru, ("Тинькофф рубли", "Tinkoff RUB", "Tinkoff รูเบิล")).await?;
 
     let start = day(3, 1);
     for (cat, period, amount) in [
@@ -237,7 +286,8 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
             name_th: None,
             tx_kind: "EXPENSE".into(),
             account_code: "CARD_SCB".into(),
-            category_code: "HOME_INTERNET".into(),
+            category_code: Some("HOME_INTERNET".into()),
+            to_account_code: None,
             amount: dec("649"),
             recurrence: "MONTHLY".into(),
             interval: 1,
@@ -251,6 +301,8 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
     let salary = plan(s, p, me, ru, ("Зарплата Алексея", "Aleksey's salary", "เงินเดือนอเล็กเซย์"), "INCOME", "CARD_KBANK", "SALARY", "85000", "MONTHLY", day(9, 1)).await?;
     let freelance = plan(s, p, anna, Lang::Th, ("Подработка Анны", "Anna's side gig", "งานเสริมของแอนนา"), "INCOME", "CARD_SCB", "FREELANCE", "12000", "MONTHLY", day(9, 25)).await?;
     plan(s, p, me, ru, ("Страховка авто", "Car insurance", "ประกันรถ"), "EXPENSE", "CARD_KBANK", "TRANSPORT", "7200", "ONCE", day(0, 27)).await?;
+    // Плановый перевод: рубли → баты 2-го числа (сумму зачисления вводят при оплате).
+    let exchange = plan(s, p, me, ru, ("Обмен рублей на баты", "RUB to THB exchange", "แลกรูเบิลเป็นบาท"), "TRANSFER", "TINKOFF_RUB", "CARD_KBANK", "20050", "MONTHLY", day(9, 2)).await?;
 
     // Прошлый месяц: все планы оплачены (кроме подработки — пропуск), плюс повседневные траты.
     for back in [1u32, 0] {
@@ -260,6 +312,11 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
         tx(s, p, Tx { date: day(back, 3), account: "CARD_SCB", kind: "EXPENSE", desc: Some(("ท็อปส์ ซูเปอร์มาร์เก็ต", Lang::Th)), tr: (Some("Tops, супермаркет"), None, None),
             lines: vec![("FOOD_GROCERIES", "1640", Some("овощи, мясо")), ("HOUSEHOLD", "385", Some("средства для стирки")), ("FOOD_CAFE", "120", Some("кофе"))], plan: None, by: anna }).await?;
         tx(s, p, Tx { date: day(back, 4), account: "CASH", kind: "EXPENSE", desc: Some(("Grab до офиса", ru)), tr: (None, None, None), lines: vec![("TRANSPORT_TAXI", "210", None)], plan: None, by: me }).await?;
+        // Обмен через приложение: списано 20 050 ₽ (из них 50 ₽ комиссия), зачислено по курсу хуже справочного.
+        let got = if back == 1 { "7640" } else { "7280" };
+        transfer(s, p, Transfer { date: day(back, 2), from: "TINKOFF_RUB", to: "CARD_KBANK", amount: "20050", to_amount: Some(got), fee: Some(("FEES", "50")),
+            desc: ("Обмен через приложение", ru), plan: Some(pay(exchange, 2)), by: me }).await?;
+        transfer(s, p, Transfer { date: day(back, 10), from: "CARD_KBANK", to: "CASH", amount: "5000", to_amount: None, fee: None, desc: ("Снял наличные", ru), plan: None, by: me }).await?;
         tx(s, p, Tx { date: day(back, 7), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Ужин с друзьями", ru)), tr: (None, Some("Dinner with friends"), None), lines: vec![("FOOD_CAFE", "2450", None)], plan: None, by: me }).await?;
         tx(s, p, Tx { date: day(back, 8), account: "CARD_SCB", kind: "EXPENSE", desc: Some(("Big C", Lang::En)), tr: (None, None, Some("บิ๊กซี")),
             lines: vec![("FOOD_GROCERIES", "2180", None), ("KIDS", "690", Some("краски")), ("HOUSEHOLD", "240", None)], plan: None, by: anna }).await?;
@@ -281,7 +338,7 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
 async fn fill_personal(s: &Services, me: Uuid) -> AppResult<()> {
     let session = Memberships::session(s.projects.as_ref(), me, None).await?.ok_or_else(|| kernel::error::AppError::NotFound("personal".into()))?;
     let p = session.project_id;
-    account(s, p, "CASH", "CASH", "THB", "2000", Some(me), Lang::Ru, ("Мои наличные", "My cash", "เงินสดของฉัน")).await?;
+    account(s, p, me, "CASH", "CASH", "THB", "2000", Some(me), Lang::Ru, ("Мои наличные", "My cash", "เงินสดของฉัน")).await?;
     tx(s, p, Tx { date: day(0, 2), account: "CASH", kind: "EXPENSE", desc: Some(("Книги по Rust", Lang::Ru)), tr: (None, Some("Rust books"), None), lines: vec![("FUN", "890", None)], plan: None, by: me }).await?;
     Ok(())
 }

@@ -3,7 +3,7 @@
 {% block title %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit_title") }} {{ f.code }}{% endif %}{% endblock %}
 {% block heading %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit_title") }} <span class="font-mono">{{ f.code }}</span>{% endif %}{% endblock %}
 {% block content %}
-{% call m::form_alert(error, "code,name,account_kind,currency_code,opening_balance,holder_user_id") %}{% endcall %}
+{% call m::form_alert(error, "code,name,account_kind,currency_code,opening_balance,opening_date,holder_user_id") %}{% endcall %}
 <form method="post" class="card card-pad form max-w-2xl" data-form>
   <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
   <div class="field">
@@ -22,8 +22,11 @@
         {% for c in currencies %}<option value="{{ c.code }}" {% if f.currency_code == c.code %}selected{% endif %}>{{ c.code }} · {{ c.label }}</option>{% endfor %}
       </select>{% call m::err(error, "currency_code") %}{% endcall %}</div>
     <div class="field"><label class="label" for="opening_balance">{{ page.t("opening_balance") }}</label>
-      <input class="input num" id="opening_balance" name="opening_balance" value="{{ f.opening_balance }}" inputmode="decimal" required{% call m::aria(error, "opening_balance") %}{% endcall %}>
-      {% call m::err(error, "opening_balance") %}{% endcall %}</div>
+      <input class="input num" id="opening_balance" name="opening_balance" value="{{ f.opening_balance }}" inputmode="decimal" aria-describedby="opening-hint opening_balance-err"{% if kernel::web::field_error(error, "opening_balance").is_some() %} aria-invalid="true"{% endif %}>
+      <p class="hint" id="opening-hint">{{ page.t("opening_hint") }}</p>{% call m::err(error, "opening_balance") %}{% endcall %}</div>
+    <div class="field"><label class="label" for="opening_date">{{ page.t("opening_date") }}</label>
+      <input class="input" type="date" id="opening_date" name="opening_date" value="{{ f.opening_date }}" required{% call m::aria(error, "opening_date") %}{% endcall %}>
+      {% call m::err(error, "opening_date") %}{% endcall %}</div>
     <div class="field"><label class="label" for="holder_user_id">{{ page.t("holder") }}</label>
       <select class="input" id="holder_user_id" name="holder_user_id">
         <option value="">{{ page.t("nobody") }}</option>

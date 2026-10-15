@@ -45,14 +45,23 @@ impl FactsSource for Fake {
         if p != P {
             return Ok(vec![]);
         }
-        let f = |acc: &str, k: &str, c: &str, a: &str, who| FactRec { date: d(10, 3), account_code: acc.into(), kind: k.into(), category_code: c.into(), amount: dec(a), created_by: who };
-        Ok(vec![f("CARD", "EXPENSE", "CAFE", "300", self.me), f("USD_CARD", "EXPENSE", "FOOD", "10", self.partner), f("CARD", "INCOME", "SALARY", "50000", self.me)])
+        let f = |cur: &str, k: &str, c: &str, a: &str, who| FactRec { date: d(10, 3), currency: cur.into(), kind: k.into(), category_code: c.into(), amount: dec(a), created_by: who };
+        Ok(vec![f("THB", "EXPENSE", "CAFE", "300", self.me), f("USD", "EXPENSE", "FOOD", "10", self.partner), f("THB", "INCOME", "SALARY", "50000", self.me)])
     }
-    async fn turnover(&self, p: Uuid, _: NaiveDate) -> AppResult<Vec<(String, Decimal, Decimal)>> {
+    async fn balances(&self, p: Uuid, _: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
         if p != P {
             return Ok(vec![]);
         }
-        Ok(vec![("CARD".into(), dec("50000"), dec("300"))])
+        // начальный остаток 1000 + 50000 − 300 − перевод 3300 на USD-карту; USD: +100 − 10
+        Ok(vec![("CARD".into(), dec("47400")), ("USD_CARD".into(), dec("90"))])
+    }
+    async fn exchange(&self, p: Uuid, _: NaiveDate, _: NaiveDate) -> AppResult<Vec<ExchangeRec>> {
+        if p != P {
+            return Ok(vec![]);
+        }
+        // Обмен 3 400 ฿ → 100 $: по справочнику 100 $ = 3 300 ฿, потеряно 100 ฿.
+        let x = |cur: &str, a: &str| ExchangeRec { date: d(10, 3), currency: cur.into(), amount: dec(a), created_by: self.me };
+        Ok(vec![x("THB", "3400"), x("USD", "-100")])
     }
 }
 
@@ -62,7 +71,17 @@ impl PlansSource for Fake {
         if p != P {
             return Ok(vec![]);
         }
-        Ok(vec![PlannedRec { plan_id: Uuid::nil(), date: d(10, 20), kind: "EXPENSE".into(), account_code: "CARD".into(), category_code: "FOOD".into(), amount: dec("1000"), title: "x".into(), status: "EXPECTED".into() }])
+        let plan = |kind: &str, cat: Option<&str>, amount: &str| PlannedRec {
+            plan_id: Uuid::nil(),
+            date: d(10, 20),
+            kind: kind.into(),
+            account_code: "CARD".into(),
+            category_code: cat.map(Into::into),
+            amount: dec(amount),
+            title: "x".into(),
+            status: "EXPECTED".into(),
+        };
+        Ok(vec![plan("EXPENSE", Some("FOOD"), "1000"), plan("TRANSFER", None, "5000")])
     }
 }
 
@@ -83,8 +102,8 @@ impl AccountsSource for Fake {
             return Ok(vec![]);
         }
         Ok(vec![
-            AccountRec { code: "CARD".into(), title: "Card".into(), currency: "THB".into(), opening: dec("1000"), archived: false },
-            AccountRec { code: "USD_CARD".into(), title: "USD".into(), currency: "USD".into(), opening: dec("0"), archived: false },
+            AccountRec { code: "CARD".into(), title: "Card".into(), currency: "THB".into(), archived: false },
+            AccountRec { code: "USD_CARD".into(), title: "USD".into(), currency: "USD".into(), archived: false },
         ])
     }
 }
@@ -114,7 +133,11 @@ async fn report_converts_currency_and_rolls_up() {
     assert_eq!((food.fact, food.planned, food.forecast), (dec("630"), dec("1000"), dec("1630")));
     assert_eq!(food.available, Some(dec("370")));
     assert_eq!(r.income_fact, dec("50000"));
-    assert_eq!(r.accounts[0].balance, dec("50700"));
+    assert_eq!((r.accounts[0].balance, r.accounts[1].balance), (dec("47400"), dec("90")), "остатки — суммы проводок");
+    assert_eq!(r.expense_planned, dec("1000"), "плановый перевод не входит в расходы");
+    assert_eq!(r.upcoming.len(), 2, "но виден в «Предстоящих»");
+    assert_eq!(r.fx_result, dec("-100"), "курсовая разница — отдельно от расходов");
+    assert_eq!(r.expense_fact, dec("630"));
     assert!(r.missing_rates.is_empty());
     // фильтр по участнику: факт только мои 300
     let mine = svc.report(Uuid::nil(), "THB", period, Lang::Ru, Some(fake.me), d(10, 9)).await.unwrap();

@@ -144,6 +144,7 @@
   .card-current { box-shadow: 0 0 0 2px rgb(var(--accent)); @apply border-transparent; }
   .card-dashed { @apply border-dashed border-line-strong; }
   .card-link { @apply relative transition-colors hover:border-line-strong; }
+  .account-actions { @apply relative z-10 -mx-2 mt-3 flex flex-wrap gap-1; }
   .stretched::after { content: ''; @apply absolute inset-0 rounded-xl; }
   .section-title { @apply text-base font-semibold; }
   /* relative: скрытые подписи (sr-only, absolute) остаются внутри прокрутки и не растягивают страницу на телефоне */
@@ -364,6 +365,12 @@
   .tx-dot { @apply mt-1.5 h-2.5 w-2.5 flex-none rounded-full; }
   .tx-expense { @apply bg-line-strong; }
   .tx-income { @apply bg-income; }
+  .tx-opening { @apply bg-accent; }
+  .tx-icon { @apply mt-0.5 flex-none text-subtle; }
+  .rate-line { @apply text-sm tabular-nums text-muted; }
+  .rate-line:empty { @apply hidden; }
+  .postings { @apply max-w-lg space-y-1 text-sm; }
+  .postings li { @apply flex justify-between gap-3; }
   .tx-lines { @apply mt-2 max-w-lg space-y-0.5 text-sm text-muted; }
   .tx-lines li { @apply flex justify-between gap-3; }
   .tx-side { @apply flex flex-none flex-col items-end gap-1 text-right; }
