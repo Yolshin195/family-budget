@@ -1,4 +1,4 @@
-//! @generated rust-hex-api v1 (journal). Правки допустимы — при upgrade они сливаются 3-way merge.
+//! @generated rust-hex-api v2 (journal). Правки допустимы — при upgrade они сливаются 3-way merge.
 //! Фича «Лимиты» (`limits`): журнал (записи с датой, ключ — id). Поля и эндпоинты — FEATURE.md, спецификация — feature.json.
 //!
 //! Гексагональная схема: adapters/http → service → ports ← adapters/postgres | adapters/memory; domain — чистые правила.

@@ -6,7 +6,7 @@
 - **Крейт:** `crates/features/limits` (Cargo-флаг приложения `limits`)
 - **Зависит от:** `categories` — через порты `CategoriesLookup`, связка в `crates/app/src/wiring/wire_limits.rs`
 - **Таблица:** `fb_limits`
-- **Сгенерирована** из `feature.json` по эталону v1
+- **Сгенерирована** из `feature.json` по эталону v2
 
 ## Поля
 

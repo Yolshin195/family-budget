@@ -1,4 +1,4 @@
-//! @generated rust-hex-api v1 (directory). Правки допустимы — при upgrade они сливаются 3-way merge.
+//! @generated rust-hex-api v2 (directory). Правки допустимы — при upgrade они сливаются 3-way merge.
 //! Фича «Категории» (`categories`): справочник. Поля и эндпоинты — FEATURE.md, спецификация — feature.json.
 //!
 //! Гексагональная схема: adapters/http → service → ports ← adapters/postgres | adapters/memory; domain — чистые правила.

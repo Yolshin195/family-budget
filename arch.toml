@@ -1,6 +1,6 @@
 # rust-hex-api: параметры эталонной архитектуры проекта. version меняет только `arch.py upgrade`.
 [arch]
-version = 1
+version = 2
 
 [project]
 title = "Семейная бухгалтерия"
