@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 # Развёртывание на VDS по docs/deploy-vds.md: готовый образ из ghcr.io, Docker, Caddy, Rauthy. Ubuntu 24.04 / Debian 12.
 #
-#   sudo ./deploy-vds.sh install vds.conf   чистый сервер → приложение по HTTPS (шаги 3–13). Повторный запуск безопасен:
-#                                          готовое пропускается, .env не перезаписывается. Образец: deploy/vds.conf.example
+#   sudo ./deploy-vds.sh install vds.conf   чистый сервер → приложение по HTTPS (шаги 3–13, 14.3). Повторный запуск
+#                                          безопасен: готовое пропускается, .env не перезаписывается. Образец: deploy/vds.conf.example
 #   ./deploy-vds.sh update [ТЕГ]            копия БД → git pull → новый образ → перезапуск (шаг 14.1)
 #   ./deploy-vds.sh rollback [ТЕГ]          откат на образ, работавший до последнего update, или на ТЕГ (шаг 14.2)
+#   ./deploy-vds.sh auto-update             в ghcr.io новый образ → update; не поднялся → rollback; уведомление (шаг 14.3).
+#                                          Раз в 5 минут это делает таймер systemd
+#   sudo ./deploy-vds.sh auto-update on|off включить или выключить таймер
+#   ./deploy-vds.sh auto-update status|test состояние таймера и последние запуски | пробное уведомление
 #   ./deploy-vds.sh check                   проверки шага 12
 #
-# update, rollback и check запускаются от пользователя deploy (или через sudo) и берут настройки из .env.
+# update, rollback, auto-update и check запускаются от пользователя deploy (или через sudo) и берут настройки из .env.
 # Вручную остаётся то, что требует человека: пароль и passkey администратора Rauthy (шаг 11.1),
 # хранение .env и приватного ключа age вне сервера.
 set -euo pipefail
+SELF=$(realpath "$0")
 
 if [ -t 1 ]; then B=$'\033[1m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' N=$'\033[0m'; else B='' G='' Y='' R='' N=''; fi
 WARNINGS=()
@@ -37,6 +42,7 @@ sq() {
   printf "'%s'" "$2"
 }
 env_get() { sed -n "s/^$1=//p" "$APP_DIR/.env" | tail -n 1 | sed "s/^'\(.*\)'\$/\1/; s/^\"\(.*\)\"\$/\1/"; }
+git_exclude() { grep -qxF "$1" "$APP_DIR/.git/info/exclude" 2>/dev/null || echo "$1" >> "$APP_DIR/.git/info/exclude"; }
 # Заменить или добавить KEY=VALUE в .env; владелец и права файла сохраняются.
 env_set() {
   local tmp; tmp=$(mktemp)
@@ -102,24 +108,34 @@ load_conf() {
   SMTP_USERNAME=${SMTP_USERNAME:-} SMTP_PASSWORD=${SMTP_PASSWORD:-}
   SWAP_SIZE=${SWAP_SIZE:-2G}
   SSH_HARDEN=${SSH_HARDEN:-1}
+  AUTO_UPDATE=${AUTO_UPDATE:-1}
 
   local v
-  for v in DOMAIN AUTH_DOMAIN ADMIN_EMAIL; do
+  for v in DOMAIN ADMIN_EMAIL; do
     [ -n "${!v:-}" ] || die "не задан $v (vds.conf, образец — deploy/vds.conf.example)"
   done
+  # Без AUTH_DOMAIN (или с тем же, что DOMAIN) Rauthy живёт на домене приложения: все его адреса — /auth/v1/…
+  AUTH_DOMAIN=${AUTH_DOMAIN:-}
+  [ "$AUTH_DOMAIN" != "$DOMAIN" ] || AUTH_DOMAIN=''
+  AUTH_HOST=${AUTH_DOMAIN:-$DOMAIN}
   for v in DOMAIN AUTH_DOMAIN; do
+    [ -n "${!v}" ] || continue
     [[ ${!v} =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || die "$v=${!v}: нужно имя домена без схемы и пути"
     [[ ${!v} != *example.com ]] || die "$v=${!v} — значение из образца, впишите свой домен"
   done
-  [ "$DOMAIN" != "$AUTH_DOMAIN" ] || die "DOMAIN и AUTH_DOMAIN должны различаться"
   [[ $ADMIN_EMAIL =~ ^[^@[:space:]\'\"]+@[^@[:space:]\'\"]+$ ]] || die "ADMIN_EMAIL=$ADMIN_EMAIL: некорректный email"
+  [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [[ $TELEGRAM_BOT_TOKEN =~ ^[0-9]+:[A-Za-z0-9_-]+$ ]] \
+    || die "TELEGRAM_BOT_TOKEN: нужен токен от @BotFather вида 123456:ABC…"
+  [ -z "${TELEGRAM_CHAT_ID:-}" ] || [[ $TELEGRAM_CHAT_ID =~ ^-?[0-9]+$ ]] || die "TELEGRAM_CHAT_ID: нужно число (id чата)"
   [[ $SMTP_PORT =~ ^[0-9]+$ ]] || die "SMTP_PORT должен быть числом"
   valid_tag "$APP_IMAGE_TAG"
   [ -z "${GHCR_TOKEN:-}" ] || [ -n "${GHCR_USER:-}" ] || die "GHCR_TOKEN задан без GHCR_USER (логин GitHub)"
   [ -z "${BACKUP_AGE_RECIPIENT:-}" ] || [[ $BACKUP_AGE_RECIPIENT =~ ^age1[0-9a-z]+$ ]] \
     || die "BACKUP_AGE_RECIPIENT — публичный ключ age (age1…), не приватный"
   [ "$DEPLOY_USER" != root ] || die "DEPLOY_USER не может быть root"
-  SMTP_FROM=${SMTP_FROM:-Семейный бюджет <no-reply@$DOMAIN>}
+  # Яндекс, Mail.ru, Gmail отправляют только от адреса, под которым вошли: логин-email и есть отправитель.
+  if [[ $SMTP_USERNAME == *@* ]]; then SMTP_FROM=${SMTP_FROM:-Семейный бюджет <$SMTP_USERNAME>}
+  else SMTP_FROM=${SMTP_FROM:-Семейный бюджет <no-reply@$DOMAIN>}; fi
   APP_USER=$DEPLOY_USER
   [ -n "$SMTP_URL" ] || warn "SMTP не настроен: без писем Rauthy войти сможет только администратор (заполните SMTP_* в .env)"
 }
@@ -261,8 +277,8 @@ install_repo() {
   cd "$APP_DIR"
   # Серверные файлы — мимо git, чтобы git pull не мешал (шаг 8.3).
   local f
-  for f in compose.override.yaml deploy/rauthy/bootstrap-prod/ backups/ .previous-image-tag; do
-    grep -qxF "$f" .git/info/exclude 2>/dev/null || echo "$f" >> .git/info/exclude
+  for f in compose.override.yaml deploy/rauthy/bootstrap-prod/ backups/ .previous-image-tag .auto-update-failed; do
+    git_exclude "$f"
   done
   ok "$(as_app git log -1 --format='%h %s')"
 }
@@ -303,7 +319,7 @@ APP_DB_PASSWORD=$(openssl rand -hex 24)
 RAUTHY_DB_PASSWORD=$(openssl rand -hex 24)
 
 # ---------------------------------------------------------------- вход через Rauthy (OIDC)
-OIDC_ISSUER=https://${AUTH_DOMAIN}/auth/v1/
+OIDC_ISSUER=https://${AUTH_HOST}/auth/v1/
 OIDC_CLIENT_ID=family-budget
 # Заполняет deploy-vds.sh после первого старта Rauthy (то же, что make rauthy-secrets).
 OIDC_CLIENT_SECRET=
@@ -313,7 +329,7 @@ RAUTHY_ADMIN_API_KEY=
 
 # ---------------------------------------------------------------- Rauthy
 RAUTHY_PORT=8443
-RAUTHY_PUB_URL=${AUTH_DOMAIN}
+RAUTHY_PUB_URL=${AUTH_HOST}
 RAUTHY_ADMIN_EMAIL=${ADMIN_EMAIL}
 RAUTHY_SECRET_RAFT=$(openssl rand -hex 24)
 RAUTHY_SECRET_API=$(openssl rand -hex 24)
@@ -323,8 +339,8 @@ RAUTHY_PROXY_MODE=true
 # Сети Docker: Caddy приходит через шлюз сети compose, приложение — из этой же сети.
 RAUTHY_TRUSTED_PROXIES=172.16.0.0/12
 RAUTHY_COOKIE_MODE=host
-RAUTHY_RP_ID=${AUTH_DOMAIN}
-RAUTHY_RP_ORIGIN=https://${AUTH_DOMAIN}:443
+RAUTHY_RP_ID=${AUTH_HOST}
+RAUTHY_RP_ORIGIN=https://${AUTH_HOST}:443
 
 # Письма Rauthy: регистрация, сброс пароля, код 2FA.
 SMTP_URL=${smtp_url}
@@ -339,6 +355,12 @@ BACKUP_DIR=./backups
 # Публичный ключ age (age1…), шаг 13.
 BACKUP_AGE_RECIPIENT=
 BACKUP_KEEP_DAYS=30
+
+# ---------------------------------------------------------------- уведомления автообновления (шаг 14.3)
+# Telegram: токен бота от @BotFather и id чата с ним. Почта — через SMTP_* выше на NOTIFY_EMAIL (пусто — CONTACT_EMAIL).
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+NOTIFY_EMAIL=
 EOF
   ok "секреты сгенерированы — сохраните копию .env в менеджер паролей"
 }
@@ -407,7 +429,7 @@ check_dns() {
   step "DNS (шаг 2)"
   local host resolved ip mine found
   mine=" $(hostname -I 2>/dev/null) "
-  for host in "$DOMAIN" "$AUTH_DOMAIN"; do
+  for host in "$DOMAIN" ${AUTH_DOMAIN:+"$AUTH_DOMAIN"}; do
     resolved=$(getent ahostsv4 "$host" | awk '{ print $1 }' | sort -u | xargs) || true
     if [ -z "$resolved" ]; then
       warn "$host не резолвится: пока нет A-записи на этот сервер, Caddy не получит сертификат"
@@ -426,7 +448,8 @@ install_caddyfile() {
   step "Конфигурация Caddy (шаг 9)"
   local new out
   new=$(mktemp)
-  cat > "$new" <<EOF
+  if [ -n "$AUTH_DOMAIN" ]; then
+    cat > "$new" <<EOF
 {
 	email ${ADMIN_EMAIL}
 }
@@ -439,6 +462,23 @@ ${AUTH_DOMAIN} {
 	reverse_proxy 127.0.0.1:8443
 }
 EOF
+  else
+    # Один домен: у Rauthy все адреса начинаются с /auth/v1, у приложения таких нет (у него /auth/login, /auth/callback…).
+    cat > "$new" <<EOF
+{
+	email ${ADMIN_EMAIL}
+}
+
+${DOMAIN} {
+	handle /auth/v1* {
+		reverse_proxy 127.0.0.1:8443
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8080
+	}
+}
+EOF
+  fi
   if cmp -s "$new" /etc/caddy/Caddyfile; then
     info "не изменилась"
     rm -f "$new"
@@ -447,7 +487,7 @@ EOF
     install -m 644 "$new" /etc/caddy/Caddyfile
     rm -f "$new"
     out=$(caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1) || { echo "$out" >&2; die "Caddyfile не прошёл проверку"; }
-    ok "/etc/caddy/Caddyfile: $DOMAIN → :8080, $AUTH_DOMAIN → :8443"
+    ok "/etc/caddy/Caddyfile: $DOMAIN → :8080, ${AUTH_DOMAIN:-$DOMAIN/auth/v1} → :8443"
   fi
   systemctl enable caddy >/dev/null 2>&1
   systemctl reload-or-restart caddy
@@ -532,6 +572,22 @@ install_backups() {
   as_app env ENGINE=docker make --no-print-directory backup
 }
 
+install_auto_update() {
+  local v
+  for v in TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID NOTIFY_EMAIL; do
+    [ -z "${!v:-}" ] || env_set "$v" "$(sq "$v" "${!v}")"
+  done
+  if [ "$AUTO_UPDATE" != 1 ]; then
+    step "Автообновление (шаг 14.3)"
+    info "пропущено (AUTO_UPDATE=0); включить позже: sudo $APP_DIR/scripts/deploy-vds.sh auto-update on"
+  elif [ -z "$(env_get BACKUP_AGE_RECIPIENT)" ]; then
+    step "Автообновление (шаг 14.3)"
+    warn "автообновление не включено: перед каждым обновлением нужна копия БД, а копии не настроены (BACKUP_AGE_RECIPIENT)"
+  else
+    auto_update_on
+  fi
+}
+
 harden_ssh() {
   step "SSH: только ключи, без входа root (шаг 3.3)"
   if [ "$SSH_HARDEN" != 1 ]; then info "пропущено (SSH_HARDEN=0)"; return; fi
@@ -563,7 +619,7 @@ install_summary() {
     Осталось вручную:
     1. Пароль администратора Rauthy — в логах первого старта:
          cd $APP_DIR && docker compose logs rauthy 2>&1 | grep -i -B2 -A2 password
-       Войдите в https://$AUTH_DOMAIN/auth/v1/admin как $ADMIN_EMAIL, смените пароль и добавьте passkey (шаг 11.1).
+       Войдите в https://$AUTH_HOST/auth/v1/admin как $ADMIN_EMAIL, смените пароль и добавьте passkey (шаг 11.1).
     2. Сохраните копию .env в менеджер паролей: sudo cat $APP_DIR/.env
     3. В НОВОМ терминале проверьте вход: ssh $APP_USER@${ip:-<IP сервера>}${SSH_HARDENED:+ — под root войти больше нельзя}.
     4. В браузере: регистрация → письмо → вход → 2FA (шаг 12).
@@ -571,6 +627,7 @@ install_summary() {
     6. Файл настроек с паролями больше не нужен: shred -u <vds.conf>
 
     Обновление: $APP_DIR/scripts/deploy-vds.sh update   Откат: … rollback   Проверка: … check
+    Автообновление: … auto-update status | test (пробное уведомление) | sudo … auto-update off
 EOF
   if [ -n "${GENERATED_PASSWORD:-}" ]; then
     printf '\n    %sПароль sudo для %s: %s%s — сохраните его и смените командой passwd.\n' "$B" "$APP_USER" "$GENERATED_PASSWORD" "$N"
@@ -599,6 +656,7 @@ cmd_install() {
   install_caddyfile
   start_stack
   install_backups
+  install_auto_update
   harden_ssh
   step "Ждём сертификаты Let's Encrypt"
   if wait_for 120 "https://$DOMAIN/health" http_ok "https://$DOMAIN/health"; then
@@ -636,6 +694,11 @@ cmd_check() {
   check_item "HTTPS с заголовком Strict-Transport-Security" has_hsts "$base/"
   check_item "порты 8080, 8443, 5432 — только на 127.0.0.1" ports_local
   check_item "резервные копии настроены (BACKUP_AGE_RECIPIENT)" test -n "$(env_get BACKUP_AGE_RECIPIENT)"
+  if systemctl is-enabled --quiet "$UPDATE_UNIT.timer" 2>/dev/null; then
+    check_item "автообновление: последняя проверка без ошибок" test "$(systemctl show -P Result "$UPDATE_UNIT.service")" = success
+  else
+    info "автообновление выключено (sudo $0 auto-update on, шаг 14.3)"
+  fi
   [ "$CHECK_FAILS" -eq 0 ]
 }
 
@@ -643,6 +706,7 @@ cmd_update() {
   app_context
   local tag=${1:-} prev=''
   [ -z "$tag" ] || valid_tag "$tag"
+  deploy_lock -w 900 || die "другое обновление или откат не закончились за 15 минут"
   step "Обновление (шаг 14.1)"
   if prev=$(running_tag); then
     printf '%s\n' "$prev" | as_app tee .previous-image-tag >/dev/null
@@ -663,6 +727,7 @@ cmd_update() {
   compose up -d
   wait_app
   as_app docker image prune -f >/dev/null
+  rm -f .auto-update-failed
   ok "работает $(running_tag || env_get APP_IMAGE_TAG)"
   [ -z "$prev" ] || info "откат на $prev: $0 rollback"
 }
@@ -673,6 +738,7 @@ cmd_rollback() {
   [ -n "$tag" ] || tag=$(cat .previous-image-tag 2>/dev/null) || true
   [ -n "$tag" ] || die "укажите тег: $0 rollback sha-<коммит> (теги — GitHub → Packages → family-budget)"
   valid_tag "$tag"
+  deploy_lock -w 900 || die "другое обновление или откат не закончились за 15 минут"
   step "Откат приложения на $tag (шаг 14.2)"
   env_set APP_IMAGE_TAG "$tag"
   compose pull --quiet app
@@ -682,6 +748,190 @@ cmd_rollback() {
   info "Миграции БД идут только вперёд: если старый образ не работает с новой схемой — восстановите копию (шаг 15)."
 }
 
+# ---------------------------------------------------------------- автообновление (шаг 14.3)
+
+# Pull-модель, как Flux/Argo CD: сервер сам раз в 5 минут смотрит в ghcr.io, GitHub к серверу доступа не имеет.
+# Следит за тегом из APP_IMAGE_TAG: latest — каждая сборка main; sha-<коммит> (его ставит rollback) не меняется,
+# значит после отката автообновление само встаёт на паузу до `update latest`.
+UPDATE_UNIT=family-budget-update
+
+# Не больше одного update/rollback одновременно: блокировка на каталоге приложения. auto-update запускает update и
+# rollback отдельным процессом и передаёт им уже взятую блокировку (FB_DEPLOY_LOCKED=1).
+deploy_lock() {
+  [ "${FB_DEPLOY_LOCKED:-}" != 1 ] || return 0
+  exec 9<"$APP_DIR"
+  flock "$@" 9
+}
+
+# Значение для конфигурации curl в двойных кавычках.
+curl_quote() { sed 's/[\\"]/\\&/g' <<< "$1"; }
+mime_word() { printf '=?UTF-8?B?%s?=' "$(printf '%s' "$1" | base64 -w0)"; }
+
+# notify ТЕМА ТЕКСТ — в Telegram (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID) и/или письмом через SMTP_* на NOTIFY_EMAIL
+# (по умолчанию CONTACT_EMAIL). Код возврата 1 — не ушло ни одного уведомления. Секреты — в конфиге curl, не в argv.
+notify() {
+  local subject="Семейный бюджет: $1" body=$2 sent=1 token chat host to port from addr name cfg
+  local -a tls=()
+  token=$(env_get TELEGRAM_BOT_TOKEN) chat=$(env_get TELEGRAM_CHAT_ID)
+  if [ -n "$token" ] && [ -n "$chat" ]; then
+    if printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$(curl_quote "$token")" \
+      | curl -fsS --max-time 30 -o /dev/null -K - --data-urlencode "chat_id=$chat" \
+        --data-urlencode "text=$subject"$'\n\n'"${body:0:3500}"; then
+      sent=0
+    else
+      warn "Telegram не принял уведомление: проверьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в .env (шаг 14.3)"
+    fi
+  fi
+
+  host=$(env_get SMTP_URL) to=$(env_get NOTIFY_EMAIL)
+  [ -n "$to" ] || to=$(env_get CONTACT_EMAIL)
+  if [ -n "$host" ] && [ -n "$to" ]; then
+    port=$(env_get SMTP_PORT) from=$(env_get SMTP_FROM)
+    port=${port:-587} addr=$from name=''
+    local re='^(.*[^[:space:]])?[[:space:]]*<([^>]+)>' # «Имя <адрес>» или просто адрес
+    if [[ $from =~ $re ]]; then name=${BASH_REMATCH[1]} addr=${BASH_REMATCH[2]}; fi
+    cfg=$(mktemp)
+    {
+      if [ "$port" = 465 ]; then echo "url = \"smtps://$host:$port\""
+      else echo "url = \"smtp://$host:$port\""; [ "$(env_get SMTP_TLS_MODE)" = plain ] || tls=(--ssl-reqd); fi
+      [ -z "$(env_get SMTP_USERNAME)" ] \
+        || printf 'user = "%s:%s"\n' "$(curl_quote "$(env_get SMTP_USERNAME)")" "$(curl_quote "$(env_get SMTP_PASSWORD)")"
+    } > "$cfg"
+    if printf 'From: %s<%s>\nTo: <%s>\nSubject: %s\nDate: %s\nMIME-Version: 1.0\nContent-Type: text/plain; charset=UTF-8\nContent-Transfer-Encoding: 8bit\n\n%s\n' \
+        "${name:+$(mime_word "$name") }" "$addr" "$to" "$(mime_word "$subject")" "$(LC_ALL=C date -R)" "$body" \
+      | curl -fsS --max-time 60 -K "$cfg" "${tls[@]}" --crlf --mail-from "$addr" --mail-rcpt "$to" -T -; then
+      sent=0
+    else
+      warn "письмо на $to не ушло: проверьте SMTP_* в .env"
+    fi
+    rm -f "$cfg"
+  fi
+  return "$sent"
+}
+
+auto_update_run() {
+  app_context
+  deploy_lock -n || { info "идёт update или rollback — проверю в следующий раз"; return 0; }
+  local id running image fresh prev log result
+  id=$(compose ps -q app 2>/dev/null) || true
+  [ -n "$id" ] || { info "app не запущен — пропускаю (запуск: docker compose up -d)"; return 0; }
+  running=$(as_app docker inspect -f '{{.Image}}' "$id")
+  image=$(compose config --format json | jq -r '.services.app.image // empty')
+  [[ $image == ghcr.io/* ]] || die "образ app не из ghcr.io (${image:-собирается на сервере}): см. compose.override.yaml, шаг 8.1"
+  compose pull --quiet app || die "не удалось проверить $image в реестре"
+  fresh=$(as_app docker image inspect -f '{{.Id}}' "$image")
+  if [ "$fresh" = "$running" ]; then info "работает последняя сборка $image"; return 0; fi
+  if [ "$fresh" = "$(cat .auto-update-failed 2>/dev/null)" ]; then
+    info "сборку ${fresh:7:12} поставить уже не удалось — жду следующую (или update вручную)"
+    return 0
+  fi
+
+  prev=$(running_tag) || prev=''
+  step "Новая сборка $image (${fresh:7:12}), сейчас ${prev:-неизвестная версия}"
+  log=$(mktemp)
+  if FB_DEPLOY_LOCKED=1 "$BASH" "$SELF" update 2>&1 | tee "$log"; then
+    rm -f "$log"
+    notify "обновлено до $(running_tag || echo "${fresh:7:12}")" \
+      "$(env_get APP_BASE_URL) обновлён${prev:+ (было $prev)}. Код: $(as_app git log -1 --format='%h %s')" || true
+    return 0
+  fi
+
+  # Сборку, которая не встала, не повторяем каждые 5 минут — до следующей сборки или ручного update.
+  printf '%s\n' "$fresh" | as_app tee .auto-update-failed >/dev/null
+  if http_ok "$(local_app_url)/health"; then
+    result="Обновление не выполнено, приложение работает на прежней версии${prev:+ $prev}."
+  elif [ -n "$prev" ] && FB_DEPLOY_LOCKED=1 "$BASH" "$SELF" rollback "$prev" 2>&1 | tee -a "$log"; then
+    result="Новая версия не поднялась, вернул $prev. Автообновление на паузе (APP_IMAGE_TAG=$prev);
+после исправления: $APP_DIR/scripts/deploy-vds.sh update latest"
+  else
+    result="Новая версия не поднялась, откатить не удалось — приложение НЕ работает. docs/deploy-vds.md, шаги 14.2, 15, 16."
+  fi
+  notify "обновление не удалось" "$result"$'\n\n'"Конец журнала:"$'\n'"$(tail -n 25 "$log")" || true
+  rm -f "$log"
+  die "$result"
+}
+
+auto_update_on() {
+  step "Автообновление: таймер $UPDATE_UNIT.timer (шаг 14.3)"
+  cat > "/etc/systemd/system/$UPDATE_UNIT.service" <<EOF
+[Unit]
+Description=Семейная бухгалтерия: новая сборка в ghcr.io → обновление (deploy-vds.sh auto-update)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=$APP_USER
+Environment=APP_DIR=$APP_DIR
+ExecStart=/bin/bash $APP_DIR/scripts/deploy-vds.sh auto-update
+TimeoutStartSec=30min
+EOF
+  # OnUnitInactiveSec — от конца прошлой проверки: долгое обновление не наложится на следующее.
+  cat > "/etc/systemd/system/$UPDATE_UNIT.timer" <<EOF
+[Unit]
+Description=Семейная бухгалтерия: проверка новой сборки каждые 5 минут
+
+[Timer]
+OnActiveSec=2min
+OnUnitInactiveSec=5min
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "$UPDATE_UNIT.timer" >/dev/null 2>&1
+  git_exclude .auto-update-failed
+  ok "проверка каждые 5 минут; журнал: sudo journalctl -u $UPDATE_UNIT"
+  [ -n "$(env_get BACKUP_AGE_RECIPIENT)" ] \
+    || warn "резервные копии не настроены (шаг 13): update без копии откажется работать, автообновление тоже"
+  if notify "автообновление включено" "$(env_get APP_BASE_URL): сюда придут сообщения об обновлениях и сбоях."; then
+    ok "пробное уведомление отправлено"
+  else
+    warn "уведомления не настроены: без них о сбое автообновления вы не узнаете. Telegram или SMTP — шаг 14.3"
+  fi
+}
+
+auto_update_off() {
+  step "Автообновление: выключение"
+  systemctl disable --now "$UPDATE_UNIT.timer" >/dev/null 2>&1 || true
+  rm -f "/etc/systemd/system/$UPDATE_UNIT.service" "/etc/systemd/system/$UPDATE_UNIT.timer"
+  systemctl daemon-reload
+  ok "выключено; обновление — вручную: $APP_DIR/scripts/deploy-vds.sh update"
+}
+
+auto_update_status() {
+  local tag; tag=$(env_get APP_IMAGE_TAG)
+  if ! systemctl is-enabled --quiet "$UPDATE_UNIT.timer" 2>/dev/null; then
+    info "автообновление выключено (включить: sudo $0 auto-update on)"
+    return
+  fi
+  systemctl list-timers "$UPDATE_UNIT.timer" --all --no-pager
+  info "следит за ghcr.io/yolshin195/family-budget:${tag:-latest}, сейчас работает $(running_tag || echo '?')"
+  [[ ${tag:-latest} != sha-* ]] || warn "APP_IMAGE_TAG=$tag закреплён (rollback) — обновлений не будет до: $0 update latest"
+  [ ! -s .auto-update-failed ] || warn "сборку $(cut -c8-19 .auto-update-failed) поставить не удалось — жду следующую"
+  journalctl -u "$UPDATE_UNIT" -n 20 --no-pager -o short-iso 2>/dev/null || true
+}
+
+cmd_auto_update() {
+  case ${1:-} in
+    '') auto_update_run ;;
+    on | off)
+      [ "$(id -u)" -eq 0 ] || die "auto-update $1 меняет настройки systemd — запустите через sudo"
+      app_context
+      "auto_update_$1"
+      ;;
+    status) app_context; auto_update_status ;;
+    test)
+      app_context
+      notify "проверка уведомлений" "$(env_get APP_BASE_URL): уведомления об обновлениях работают." \
+        || die "уведомление не ушло: заполните TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID или SMTP_* в $APP_DIR/.env (шаг 14.3)"
+      ok "уведомление отправлено"
+      ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
 main() {
   local cmd=${1:-help}
   [ $# -eq 0 ] || shift
@@ -689,6 +939,7 @@ main() {
     install) cmd_install "$@" ;;
     update) cmd_update "$@" ;;
     rollback) cmd_rollback "$@" ;;
+    auto-update) cmd_auto_update "$@" ;;
     check) cmd_check ;;
     help | -h | --help) usage ;;
     *) usage >&2; exit 2 ;;
