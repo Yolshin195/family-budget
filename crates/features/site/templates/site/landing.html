@@ -28,8 +28,9 @@
       <div class="lang-switch" role="group" aria-label="{{ self.t("nav.language") }}">
         {% for l in p.langs %}<a href="/?lang={{ l.code() }}" class="lang-link" hreflang="{{ l.code() }}" lang="{{ l.code() }}"{% if *l == lang %} aria-current="true"{% endif %}>{{ l.upper() }}</a>{% endfor %}
       </div>
-      <a class="btn-ghost hide-sm" href="/auth/login">{{ self.t("nav.login") }}</a>
-      <a class="btn-primary" href="/auth/register">{{ self.t("cta.create") }}</a>
+      {# На телефоне места на две кнопки нет: остаётся «Войти» — «Создать бюджет» есть на первом экране. #}
+      <a class="btn-ghost" href="/auth/login">{{ self.t("nav.login") }}</a>
+      <a class="btn-primary hide-sm" href="/auth/register">{{ self.t("cta.create") }}</a>
     </nav>
   </div>
 </header>
@@ -45,6 +46,7 @@
           <a class="btn-secondary btn-lg" href="/auth/login"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("brand-github") }}"></use></svg>{{ self.t("cta.github") }}</a>
           <a class="btn-secondary btn-lg" href="/auth/login"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("brand-facebook") }}"></use></svg>{{ self.t("cta.facebook") }}</a>
         </div>
+        <p class="have-account">{{ self.t("cta.have_account") }} <a class="link-button" href="/auth/login">{{ self.t("nav.login") }}</a></p>
         {% if guest_demo %}
         {# Сессии ещё нет — токена _csrf тоже: POST /demo защищён проверкой Origin. name="demo" — исключение для ZAP (ci.yml). #}
         <form method="post" action="/demo" name="demo" class="hero-demo">
@@ -119,6 +121,7 @@
       <h2 class="site-h2" id="final">{{ self.t("final.title") }}</h2>
       <p class="text-muted mb-6">{{ self.t("final.text") }}</p>
       <a class="btn-primary btn-lg" href="/auth/register">{{ self.t("cta.create") }}</a>
+      <p class="have-account">{{ self.t("cta.have_account") }} <a class="link-button" href="/auth/login">{{ self.t("nav.login") }}</a></p>
     </div>
   </section>
 </main>
