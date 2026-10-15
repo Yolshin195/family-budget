@@ -12,7 +12,7 @@ use kernel::i18n::Lang;
 use uuid::Uuid;
 
 use crate::adapters::memory::InMemoryProjectRepository;
-use crate::domain::{PendingLogin, ProjectKind, VerifiedLogin};
+use crate::domain::{AccessToken, PendingLogin, ProjectKind, VerifiedLogin};
 use crate::ports::{AuthRequest, Deps, IdentityProvider, ProjectBootstrap, ProjectPurge};
 use crate::service::ProjectService;
 
@@ -62,6 +62,16 @@ impl IdentityProvider for Arc<FakeRauthy> {
     }
     async fn delete_user(&self, _sub: &str) -> AppResult<bool> {
         Ok(true)
+    }
+    async fn issuer(&self) -> Option<String> {
+        Some("https://auth.test/".into())
+    }
+    /// Access-токен понарошку: `at:<sub>:<клиент>:<ресурс>`.
+    async fn verify_access_token(&self, token: &str, audience: &str) -> AppResult<Option<AccessToken>> {
+        Ok(match token.splitn(4, ':').collect::<Vec<_>>()[..] {
+            ["at", sub, client, aud] if aud == audience => Some(AccessToken { sub: sub.into(), client_id: client.into() }),
+            _ => None,
+        })
     }
 }
 
@@ -317,4 +327,18 @@ async fn demo_guest_cannot_change_shared_account_or_projects() {
     assert!(forbidden(e.svc.create_token(guest, family, "t", &["read".into()], 30, false, &meta()).await.map(|_| ())));
     assert!(forbidden(e.svc.update_profile(guest, "Vandal", Lang::Ru, kernel::auth::Theme::Dark).await));
     assert!(e.svc.guest_login(&meta()).await.is_ok(), "демо по-прежнему работает");
+}
+
+/// Access-токен провайдера (MCP): пользователь находится по `sub`, токен для чужого ресурса и
+/// неизвестный пользователь — нет доступа.
+#[tokio::test]
+async fn provider_access_token_maps_to_our_user() {
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    let resource = "https://budget.test/mcp";
+    let ok = e.svc.verify_access_token(&format!("at:sub-me:claude:{resource}"), resource).await.unwrap();
+    assert_eq!(ok, Some((me, "claude".to_string())));
+    assert_eq!(e.svc.verify_access_token("at:sub-me:claude:https://other.test/mcp", resource).await.unwrap(), None, "чужой ресурс");
+    assert_eq!(e.svc.verify_access_token(&format!("at:sub-nobody:claude:{resource}"), resource).await.unwrap(), None, "нет такого пользователя");
+    assert_eq!(e.svc.token_issuer().await.as_deref(), Some("https://auth.test/"));
 }

@@ -105,6 +105,9 @@ services:
       # Браузер ходит в Rauthy на localhost:8443, приложение в контейнере — по внутреннему адресу.
       OIDC_INTERNAL_URL: ${OIDC_INTERNAL_URL:-http://rauthy:8443}
       RAUTHY_ADMIN_API_KEY: ${RAUTHY_ADMIN_API_KEY:-}
+      # MCP: OAuth-клиент ассистента в Rauthy (docs/mcp.md).
+      MCP_OAUTH_CLIENT_ID: ${MCP_OAUTH_CLIENT_ID:-claude}
+      MCP_OAUTH_SCOPE: ${MCP_OAUTH_SCOPE:-openid}
       SEED_DEMO: ${SEED_DEMO:-1}
       GUEST_DEMO: ${GUEST_DEMO:-1}
       # Swagger UI (/docs). Не задан — по APP_ENV: в dev включён, в prod выключен (SWAGGER=1 там запрещён).

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{{ page.t("title") }}{% endblock %}
+{% block heading %}{{ page.t("title") }}{% endblock %}
+{% block content %}
+<div class="space-y-6 max-w-4xl">
+  <p class="text-muted">{{ page.t("intro") }}</p>
+
+  {% if guest %}
+  <div class="alert alert-error" role="status"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("circle-alert") }}"></use></svg><span>{{ page.t("guest") }}</span></div>
+  {% else %}
+  <section class="card" aria-labelledby="access">
+    <div class="card-head">
+      <h2 class="section-title" id="access">{{ page.t("access") }}</h2>
+      {% if grant.is_some() %}<span class="badge badge-income"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("shield-check") }}"></use></svg>{{ page.t("status_on") }}</span>
+      {% else %}<span class="badge">{{ page.t("status_off") }}</span>{% endif %}
+    </div>
+    <div class="px-5 pb-5">
+      {% if let Some(g) = grant %}
+      <dl class="grid gap-3 sm:grid-cols-2 mb-5">
+        <div><dt class="label">{{ page.t("project") }}</dt><dd class="font-medium">{{ g.project }}</dd></div>
+        <div><dt class="label">{{ page.t("permissions") }}</dt><dd>{% for s in g.scopes %}<span class="badge badge-accent mr-1 mb-1">{{ s }}</span>{% endfor %}</dd></div>
+        <div><dt class="label">{{ page.t("granted_on") }}</dt><dd class="tabular-nums">{{ g.created }}</dd></div>
+        <div><dt class="label">{{ page.t("last_used") }}</dt><dd class="tabular-nums">{{ g.last_used }}</dd></div>
+      </dl>
+      {% else %}
+      <p class="hint mb-4">{{ page.t("status_off_hint") }}</p>
+      {% endif %}
+      {% call m::form_alert(error, "project,scopes") %}{% endcall %}
+      <form method="post" action="/assistants/grant" class="grid gap-4 sm:grid-cols-2 items-start">
+        <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+        <div class="field !mb-0"><label class="label" for="as-project">{{ page.t("project") }}</label>
+          <select class="input" id="as-project" name="project">{% for p in projects %}<option value="{{ p.id }}"{% if p.id == selected_project %} selected{% endif %}>{{ p.name }} · {{ p.role }}</option>{% endfor %}</select>
+          {% if has_viewer %}<p class="hint mt-1">{{ page.t("viewer_hint") }}</p>{% endif %}</div>
+        <fieldset class="field !mb-0"><legend class="label">{{ page.t("permissions") }}</legend>
+          {% for s in scopes %}
+          <label class="flex items-center gap-2 py-1">
+            {% if *s == "read" %}<input type="checkbox" checked disabled><input type="hidden" name="scope" value="read">
+            {% else %}<input type="checkbox" name="scope" value="{{ s }}"{% if self.checked(s) %} checked{% endif %}>{% endif %}
+            <span>{{ page.t(&format!("scope.{}", s)) }}{% if *s == "read" %} <span class="text-subtle text-xs">({{ page.t("scope_read_always") }})</span>{% endif %}</span>
+          </label>
+          {% endfor %}
+          <p class="hint mt-1">{{ page.t("no_delete") }}</p>
+        </fieldset>
+        <div class="sm:col-span-2 flex flex-wrap gap-3"><button class="btn-primary">{{ page.t("save") }}</button></div>
+      </form>
+      {% if grant.is_some() %}
+      <form method="post" action="/assistants/revoke" class="mt-3"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+        <button class="btn-ghost btn-sm text-danger">{{ page.t("revoke") }}</button></form>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="connect">
+    <div class="card-head"><h2 class="section-title" id="connect">{{ page.t("connect") }}</h2></div>
+    <div class="px-5 pb-5 space-y-5">
+      <div>
+        <h3 class="font-medium mb-2">{{ page.t("connect_claude") }}</h3>
+        {% if oauth_ready %}
+        <ol class="list-decimal pl-5 space-y-2">
+          <li>{{ page.t("step1") }}</li>
+          <li>{{ page.t("step2") }}
+            <div class="flex gap-2 mt-1 items-center"><code class="code grow break-all" id="mcp-url">{{ mcp_url }}</code>
+              <button type="button" class="btn-secondary btn-sm" data-copy="#mcp-url" data-copied="{{ page.t("copied") }}">{{ page.t("copy") }}</button></div></li>
+          <li>{{ page.t("step3") }}
+            <div class="flex gap-2 mt-1 items-center"><code class="code grow break-all" id="mcp-client">{{ client_id }}</code>
+              <button type="button" class="btn-secondary btn-sm" data-copy="#mcp-client" data-copied="{{ page.t("copied") }}">{{ page.t("copy") }}</button></div></li>
+          <li>{{ page.t("step4") }}</li>
+        </ol>
+        {% else %}
+        <p class="hint">{{ page.t("oauth_off") }}</p>
+        {% endif %}
+      </div>
+      <div>
+        <h3 class="font-medium mb-2">{{ page.t("connect_code") }}</h3>
+        <p class="hint mb-2">{{ page.t("code_hint") }}</p>
+        <code class="code block break-all">claude mcp add --transport http family-budget {{ mcp_url }} --header "Authorization: Bearer fbt_…"</code>
+        <a class="btn-secondary btn-sm mt-3" href="/profile/security">{{ page.t("to_tokens") }}</a>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

@@ -125,6 +125,7 @@ purge_one!("rates", ::rates::Service);
 purge_one!("accounts", ::accounts::Service);
 purge_one!("categories", ::categories::Service);
 purge_one!("currencies", ::currencies::Service);
+purge_one!("mcp", ::mcp::Service);
 
 /// Порт `ProjectPurge`: по очереди во всех включённых фичах (сначала зависящие — потом справочники).
 #[derive(Clone, Default)]

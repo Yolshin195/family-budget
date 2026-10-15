@@ -30,12 +30,13 @@ limits = { path = "../features/limits", optional = true }
 planning = { path = "../features/planning", optional = true }
 budget = { path = "../features/budget", optional = true }
 site = { path = "../features/site", optional = true }
+mcp = { path = "../features/mcp", optional = true }
 # @arch:deps:end
 
 [features]
 # Включённые фичи = default. Блок ведёт arch.py.
 # @arch:features:begin
-default = ["projects", "currencies", "rates", "accounts", "categories", "transactions", "limits", "planning", "budget", "seed", "site"]
+default = ["projects", "currencies", "rates", "accounts", "categories", "transactions", "limits", "planning", "budget", "seed", "site", "mcp"]
 projects = ["dep:projects", "currencies", "categories"]
 currencies = ["dep:currencies"]
 rates = ["dep:rates", "currencies"]
@@ -46,6 +47,7 @@ limits = ["dep:limits", "categories"]
 planning = ["dep:planning", "transactions"]
 budget = ["dep:budget", "transactions", "planning", "limits", "rates"]
 site = ["dep:site"]
+mcp = ["dep:mcp", "projects", "transactions", "budget", "planning"]
 # @arch:features:end
 # Демо-данные при пустой БД (не фича предметной области — флаг приложения).
 seed = ["budget"]

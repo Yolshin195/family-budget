@@ -2,7 +2,7 @@
 //! Блоки между маркерами @arch:* ведёт `arch.py`: каждая строка помечена `// @f:<фича>`.
 //! Связки (адаптеры портов «потребитель → поставщик») лежат в wire_<потребитель>.rs.
 //!
-//! В этом проекте строки фич projects, accounts, transactions, planning, budget написаны вручную
+//! В этом проекте строки фич projects, accounts, transactions, planning, budget, mcp написаны вручную
 //! (у этих фич нет feature.json — `upgrade` их не трогает): их порты шире, чем `exists`.
 
 #[allow(unused_imports)]
@@ -20,6 +20,7 @@ use kernel::feature::Feature;
 #[cfg(feature = "planning")] mod wire_planning; // @f:planning
 #[cfg(feature = "budget")] mod wire_budget; // @f:budget
 #[cfg(feature = "site")] mod wire_site; // @f:site
+#[cfg(feature = "mcp")] mod wire_mcp; // @f:mcp
 // @arch:mods:end
 
 /// Собранные фичи + сервисы, которые нужны приложению напрямую (auth, демо-данные).
@@ -60,9 +61,11 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "planning")] list.push(planning::feature(planning_api.clone())); // @f:planning
     #[cfg(feature = "budget")] let budget_api = budget::api(ctx, budget::Deps { categories: Arc::new(wire_budget::CategoriesAdapter(categories_api.clone())), facts: Arc::new(wire_budget::FactsAdapter(transactions_api.clone())), plans: Arc::new(wire_budget::PlansAdapter(planning_api.clone())), limits: Arc::new(wire_budget::LimitsAdapter(limits_api.clone())), accounts: Arc::new(wire_budget::AccountsAdapter(accounts_api.clone())), rates: Arc::new(wire_budget::RatesAdapter(rates_api.clone())) }); // @f:budget
     #[cfg(feature = "budget")] let _ = budget_view.0.set(budget_api.clone()); // @f:budget
-    #[cfg(feature = "budget")] list.push(budget::feature(budget_api)); // @f:budget
+    #[cfg(feature = "budget")] list.push(budget::feature(budget_api.clone())); // @f:budget
     #[cfg(feature = "site")] let site_api = site::api(ctx, site::Deps { funnel: Arc::new(wire_site::FunnelAdapter { projects: projects_api.clone(), #[cfg(feature = "transactions")] transactions: transactions_api.clone() }) }); // @f:site
     #[cfg(feature = "site")] list.push(site::feature(ctx, site_api.clone())); // @f:site
+    #[cfg(feature = "mcp")] let mcp_api = mcp::api(ctx, mcp::Deps { ledger: Arc::new(wire_mcp::LedgerAdapter(transactions_api.clone())), budget: Arc::new(wire_mcp::BudgetAdapter(budget_api.clone())), plans: Arc::new(wire_mcp::PlansAdapter(planning_api.clone())), accounts: Arc::new(wire_mcp::AccountsAdapter(projects_api.clone())), authenticator: projects_api.clone(), memberships: projects_api.clone() }); // @f:mcp
+    #[cfg(feature = "mcp")] list.push(mcp::feature(ctx, mcp_api.clone())); // @f:mcp
     // @arch:build:end
     // Очистка данных проекта: сначала операции и планы, потом справочники.
     #[cfg(feature = "projects")]
@@ -76,6 +79,7 @@ pub fn features(ctx: &AppContext) -> Wired {
         #[cfg(feature = "accounts")] targets.list.push(accounts_api.clone());
         #[cfg(feature = "categories")] targets.list.push(categories_api.clone());
         #[cfg(feature = "currencies")] targets.list.push(currencies_api.clone());
+        #[cfg(feature = "mcp")] targets.list.push(mcp_api.clone());
         let _ = purge.0.set(targets);
     }
     Wired {

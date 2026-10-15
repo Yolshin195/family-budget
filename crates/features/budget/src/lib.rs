@@ -17,9 +17,9 @@ use kernel::feature::Feature;
 use kernel::web::{NavGroup, NavItem, Web};
 use utoipa::OpenApi;
 
-pub use domain::{LimitRule, Node, View};
+pub use domain::{Level, LimitRule, Node, Period, Row, View};
 pub use ports::{AccountRec, AccountsSource, CategoriesSource, Deps, ExchangeRec, FactRec, FactsSource, LimitsSource, PlannedRec, PlansSource, RatesSource};
-pub use service::{BudgetService as Service, CategoryLimit};
+pub use service::{AccountBalance, BudgetService as Service, CategoryLimit, Report};
 
 pub const NAME: &str = "budget";
 pub const MOUNT: &str = "/budget";

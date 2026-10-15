@@ -118,6 +118,15 @@ pub fn check_members(kind: ProjectKind, members: &[Member]) -> Result<(), String
 
 // ---------------------------------------------------------------- вход через Rauthy
 
+/// Проверенный access-токен провайдера входа (например, выданный ассистенту для MCP).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccessToken {
+    /// Пользователь у провайдера (`sub`).
+    pub sub: String,
+    /// OAuth-клиент, которому выдан токен (`azp` / `client_id`).
+    pub client_id: String,
+}
+
 /// Пользователь, подтверждённый Rauthy (проверенный ID-токен).
 #[derive(Debug, Clone, PartialEq)]
 pub struct VerifiedLogin {
