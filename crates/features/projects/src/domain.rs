@@ -116,6 +116,91 @@ pub fn check_members(kind: ProjectKind, members: &[Member]) -> Result<(), String
     Ok(())
 }
 
+/// Название семейного проекта, в который превратили личный с названием по умолчанию.
+pub fn family_name(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Ru => "Семейный бюджет",
+        Lang::En => "Family budget",
+        Lang::Th => "งบครอบครัว",
+    }
+}
+
+/// Название личного проекта по умолчанию (на любом языке) — его стоит сменить, когда проект станет семейным.
+pub fn is_default_personal_name(name: &str) -> bool {
+    Lang::ALL.iter().any(|l| personal_name(*l) == name)
+}
+
+// ---------------------------------------------------------------- приглашения
+
+/// Срок действия приглашения.
+pub const INVITE_TTL: Duration = Duration::days(7);
+/// Действующих приглашений на проект — не больше (защита от забытых ссылок).
+pub const MAX_ACTIVE_INVITES: usize = 20;
+
+/// Приглашение в семейный проект по ссылке или QR-коду: одно приглашение — один человек.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Invite {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub role: Role,
+    pub created_by: Uuid,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub used_by: Option<Uuid>,
+    pub used_at: Option<DateTime<Utc>>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InviteState {
+    Active,
+    Used,
+    Expired,
+    Revoked,
+}
+
+impl InviteState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            InviteState::Active => "active",
+            InviteState::Used => "used",
+            InviteState::Expired => "expired",
+            InviteState::Revoked => "revoked",
+        }
+    }
+}
+
+impl Invite {
+    /// Новое приглашение. Владельцем по ссылке не стать — только редактор или наблюдатель.
+    pub fn new(project_id: Uuid, role: Role, created_by: Uuid, now: DateTime<Utc>) -> Result<Self, String> {
+        if role == Role::Owner {
+            return Err("role: по приглашению можно стать редактором или наблюдателем; владельца назначают в «Участниках»".into());
+        }
+        Ok(Self { id: Uuid::new_v4(), project_id, role, created_by, created_at: now, expires_at: now + INVITE_TTL, used_by: None, used_at: None, revoked_at: None })
+    }
+
+    pub fn state(&self, now: DateTime<Utc>) -> InviteState {
+        if self.used_at.is_some() {
+            InviteState::Used
+        } else if self.revoked_at.is_some() {
+            InviteState::Revoked
+        } else if now >= self.expires_at {
+            InviteState::Expired
+        } else {
+            InviteState::Active
+        }
+    }
+}
+
+/// Код приглашения в ссылке: `<id без дефисов>.<HMAC>`; разбор без проверки подписи.
+pub fn split_invite_code(code: &str) -> Option<(Uuid, &str)> {
+    let (id, sig) = code.split_once('.')?;
+    if id.len() != 32 || sig.is_empty() || !sig.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return None;
+    }
+    Some((Uuid::try_parse(id).ok()?, sig))
+}
+
 // ---------------------------------------------------------------- вход через Rauthy
 
 /// Пользователь, подтверждённый Rauthy (проверенный ID-токен).
@@ -270,6 +355,10 @@ pub mod action {
     pub const MEMBER_ADDED: &str = "member_added";
     pub const MEMBER_ROLE: &str = "member_role_changed";
     pub const MEMBER_REMOVED: &str = "member_removed";
+    pub const MEMBER_JOINED: &str = "member_joined";
+    pub const INVITE_CREATED: &str = "invite_created";
+    pub const INVITE_REVOKED: &str = "invite_revoked";
+    pub const PROJECT_MADE_FAMILY: &str = "project_made_family";
     pub const REQUIRE_2FA: &str = "require_2fa_changed";
     pub const TOKEN_CREATED: &str = "api_token_created";
     pub const TOKEN_REVOKED: &str = "api_token_revoked";
@@ -312,6 +401,23 @@ mod tests {
         assert!(check_members(ProjectKind::Family, &[m(Role::Owner), m(Role::Viewer)]).is_ok());
         assert!(check_members(ProjectKind::Personal, &[m(Role::Owner), m(Role::Editor)]).is_err());
         assert!(check_members(ProjectKind::Family, &[m(Role::Editor)]).is_err());
+    }
+
+    #[test]
+    fn invite_rules_and_states() {
+        let now = Utc::now();
+        assert!(Invite::new(Uuid::nil(), Role::Owner, Uuid::nil(), now).is_err(), "владельцем по ссылке не стать");
+        let i = Invite::new(Uuid::nil(), Role::Editor, Uuid::nil(), now).unwrap();
+        assert_eq!(i.state(now), InviteState::Active);
+        assert_eq!(i.state(now + Duration::days(7)), InviteState::Expired);
+        assert_eq!(Invite { revoked_at: Some(now), ..i.clone() }.state(now), InviteState::Revoked);
+        assert_eq!(Invite { used_at: Some(now), revoked_at: Some(now), ..i.clone() }.state(now), InviteState::Used);
+        let id = Uuid::new_v4();
+        assert_eq!(split_invite_code(&format!("{}.abc-_9", id.simple())), Some((id, "abc-_9")));
+        assert_eq!(split_invite_code(&format!("{id}.abc")), None, "id только без дефисов");
+        assert_eq!(split_invite_code(&format!("{}./x", id.simple())), None);
+        assert_eq!(split_invite_code("abc"), None);
+        assert!(is_default_personal_name("Personal budget") && !is_default_personal_name("Дом"));
     }
 
     #[test]

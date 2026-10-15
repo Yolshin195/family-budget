@@ -127,6 +127,11 @@
   .disclosure { @apply rounded-lg border border-dashed border-line-strong px-3 py-2; }
   .disclosure > summary { @apply flex min-h-8 items-center gap-2 text-sm text-muted; }
   .disclosure[open] > summary { @apply text-default; }
+  /* приглашение: QR-код (тёмное на белом в любой теме — так его читает любая камера) и ссылка */
+  .invite-body { @apply mt-3 flex flex-col gap-4 sm:flex-row sm:items-start; }
+  .qr { @apply w-44 shrink-0 self-center rounded-lg bg-white p-2 sm:self-start; }
+  .qr svg { @apply block h-auto w-full; }
+  .invite-url { @apply break-all rounded-lg bg-sunken px-3 py-2 font-mono text-xs text-muted; }
 
   /* сегментированный переключатель (тип операции, период, язык) */
   .seg { @apply inline-flex w-full rounded-lg border border-line-strong bg-sunken p-0.5 sm:w-auto; }

@@ -199,6 +199,14 @@
     var src = $(b.dataset.copy);
     if (src && navigator.clipboard) navigator.clipboard.writeText(src.textContent.trim()).then(function () { b.textContent = b.dataset.copied || 'OK'; });
   });
+  // «Поделиться» приглашением: системное меню телефона (Telegram, WhatsApp…), без него — копирование ссылки.
+  doc.addEventListener('click', function (e) {
+    var b = e.target.closest && e.target.closest('[data-share]');
+    if (!b) return;
+    var url = b.dataset.share;
+    if (navigator.share) { navigator.share({ text: b.dataset.shareText || '', url: url }).catch(function () {}); return; }
+    if (navigator.clipboard) navigator.clipboard.writeText(url).then(function () { b.textContent = b.dataset.copied || 'OK'; });
+  });
   // Ошибка поля — сразу, при уходе из поля (HTML5-валидация), введённое не теряется.
   doc.addEventListener('focusout', function (e) {
     var i = e.target;

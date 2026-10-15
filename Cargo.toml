@@ -20,6 +20,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 hex = "0.4"
 hmac = "0.12"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 openidconnect = { version = "4", default-features = false, features = ["reqwest", "rustls-tls"] }
 rand = "0.8"
 rust_decimal = { version = "1", features = ["serde-with-float"] }

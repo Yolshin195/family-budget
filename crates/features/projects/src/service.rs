@@ -1,11 +1,11 @@
 //! Use cases фичи «Проекты»: вход через Rauthy и серверные сессии, онбординг, профиль, API-токены,
-//! журнал безопасности, проекты и участники. Реализует порты ядра `Memberships` (какой проект и
+//! журнал безопасности, проекты, участники и приглашения по ссылке. Реализует порты ядра `Memberships` (какой проект и
 //! роль) и `Authenticator` (проверка сессий и токенов).
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use kernel::auth::{API_TOKEN_PREFIX, Authenticator, Credential, Identity, MemberRef, Memberships, ProjectRef, RequestMeta, Role, SessionInfo, Theme, Via};
 use kernel::code::require_text;
 use kernel::config::Config;
@@ -15,8 +15,9 @@ use kernel::i18n::Lang;
 use uuid::Uuid;
 
 use crate::domain::{
-    ApiToken, AuditEvent, Member, PendingLogin, Project, ProjectKind, SessionRecord, TOKEN_TERMS, User, action, check_members, normalize_currency,
-    normalize_email, normalize_name, normalize_scopes, personal_name, safe_next,
+    ApiToken, AuditEvent, Invite, InviteState, MAX_ACTIVE_INVITES, Member, PendingLogin, Project, ProjectKind, SessionRecord, TOKEN_TERMS, User, action,
+    check_members, family_name, is_default_personal_name, normalize_currency, normalize_email, normalize_name, normalize_scopes, personal_name, safe_next,
+    split_invite_code,
 };
 use crate::ports::{AccessRepository, Deps, ProjectRepository};
 
@@ -40,6 +41,28 @@ pub struct ProjectView {
     pub role: Role,
     pub require_2fa: bool,
     pub members: Vec<MemberView>,
+    /// Действующие приглашения (видит только владелец семейного проекта).
+    pub invites: Vec<InviteView>,
+}
+
+/// Действующее приглашение: ссылку и QR-код можно показать в любой момент, пока оно не использовано.
+#[derive(Debug, Clone)]
+pub struct InviteView {
+    pub id: Uuid,
+    pub role: Role,
+    pub expires_at: DateTime<Utc>,
+    pub url: String,
+}
+
+/// Что видит человек, открывший ссылку-приглашение.
+#[derive(Debug, Clone)]
+pub struct InvitePreview {
+    pub project_name: String,
+    pub inviter_name: String,
+    pub role: Role,
+    pub state: InviteState,
+    /// Открывший ссылку уже участник проекта.
+    pub member: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +88,16 @@ pub struct LoginResult {
 pub struct Deleted {
     /// Пользователь удалён и в Rauthy (иначе — удалить в личном кабинете Rauthy).
     pub rauthy: bool,
+}
+
+/// Длина подписи в коде приглашения: 132 бита HMAC — не подобрать, а QR-код остаётся крупным и читается легко.
+const INVITE_SIG_LEN: usize = 22;
+
+/// Состояние приглашения с учётом пригласившего: перестал быть владельцем проекта — приглашение не действует.
+fn invite_state(invite: &Invite, members: &[Member], now: DateTime<Utc>) -> InviteState {
+    let state = invite.state(now);
+    let owner = members.iter().any(|m| m.user_id == invite.created_by && m.role == Role::Owner);
+    if state == InviteState::Active && !owner { InviteState::Revoked } else { state }
 }
 
 fn audit_event(user: Option<Uuid>, project: Option<Uuid>, act: &str, meta: &RequestMeta, details: &[(&str, String)]) -> AuditEvent {
@@ -416,14 +449,22 @@ impl ProjectService {
     /// Проекты пользователя с участниками.
     pub async fn overview(&self, user_id: Uuid) -> AppResult<Vec<ProjectView>> {
         let mut out = Vec::new();
+        let now = Utc::now();
         for (p, me) in self.repo.projects_of(user_id).await? {
-            let members = self
-                .repo
-                .members(p.id)
-                .await?
-                .into_iter()
-                .map(|(m, u)| MemberView { user_id: u.id, name: u.display_name, email: u.email, role: m.role })
-                .collect();
+            let rows = self.repo.members(p.id).await?;
+            let raw: Vec<Member> = rows.iter().map(|(m, _)| m.clone()).collect();
+            let invites = if me.role == Role::Owner && p.kind == ProjectKind::Family {
+                self.repo
+                    .invites_of(p.id)
+                    .await?
+                    .into_iter()
+                    .filter(|i| invite_state(i, &raw, now) == InviteState::Active)
+                    .map(|i| InviteView { url: self.invite_url(i.id), id: i.id, role: i.role, expires_at: i.expires_at })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let members = rows.into_iter().map(|(m, u)| MemberView { user_id: u.id, name: u.display_name, email: u.email, role: m.role }).collect();
             out.push(ProjectView {
                 id: p.id,
                 name: p.name,
@@ -432,6 +473,7 @@ impl ProjectService {
                 role: me.role,
                 require_2fa: p.require_2fa,
                 members,
+                invites,
             });
         }
         Ok(out)
@@ -488,6 +530,123 @@ impl ProjectService {
         Ok(())
     }
 
+    /// Личный проект → семейный, чтобы пригласить близких. Только владелец. Название по умолчанию
+    /// («Личный бюджет») меняется на «Семейный бюджет», своё название остаётся.
+    pub async fn make_family(&self, by: Uuid, project_id: Uuid, meta: &RequestMeta) -> AppResult<()> {
+        self.deny_guest(by).await?;
+        let project = self.require_owner(by, project_id).await?;
+        if project.kind == ProjectKind::Family {
+            return Ok(());
+        }
+        let name = if is_default_personal_name(&project.name) { family_name(self.user(by).await?.lang).to_string() } else { project.name };
+        self.repo.set_kind(project_id, ProjectKind::Family, &name).await?;
+        self.audit(audit_event(Some(by), Some(project_id), action::PROJECT_MADE_FAMILY, meta, &[])).await;
+        Ok(())
+    }
+
+    // ------------------------------------------------------------ приглашения по ссылке и QR-коду
+
+    /// Код для ссылки: id приглашения и HMAC-подпись секретом приложения. В БД кода нет — копия базы
+    /// не даёт рабочих ссылок, а владелец может показать ссылку повторно.
+    fn invite_code(&self, id: Uuid) -> String {
+        let id = id.simple().to_string();
+        let sig = self.config.signer.sign("invite", &id);
+        format!("{id}.{}", &sig[..INVITE_SIG_LEN])
+    }
+
+    /// Полная ссылка-приглашение (её же кодирует QR).
+    pub fn invite_url(&self, id: Uuid) -> String {
+        format!("{}/join/{}", self.config.base_url.trim_end_matches('/'), self.invite_code(id))
+    }
+
+    /// Приглашение по коду из ссылки; неверная подпись — как несуществующее приглашение.
+    async fn invite_by_code(&self, code: &str) -> AppResult<Invite> {
+        let gone = || AppError::NotFound("приглашение не найдено: проверьте ссылку или попросите новую".into());
+        let (id, _) = split_invite_code(code).ok_or_else(gone)?;
+        if !ct_eq(code, &self.invite_code(id)) {
+            return Err(gone());
+        }
+        self.repo.invite(id).await?.ok_or_else(gone)
+    }
+
+    /// Новое приглашение в семейный проект (редактор или наблюдатель, 7 дней, один человек). Только владелец.
+    pub async fn create_invite(&self, by: Uuid, project_id: Uuid, role: Role, meta: &RequestMeta) -> AppResult<Uuid> {
+        self.deny_guest(by).await?;
+        let project = self.require_owner(by, project_id).await?;
+        if project.kind != ProjectKind::Family {
+            return Err(AppError::Validation("личный проект — только для одного человека: сделайте его семейным, чтобы пригласить близких".into()));
+        }
+        let now = Utc::now();
+        let active = self.repo.invites_of(project_id).await?.iter().filter(|i| i.state(now) == InviteState::Active).count();
+        if active >= MAX_ACTIVE_INVITES {
+            return Err(AppError::Validation(format!("действующих приглашений уже {MAX_ACTIVE_INVITES}: отзовите ненужные")));
+        }
+        let invite = Invite::new(project_id, role, by, now).map_err(AppError::Validation)?;
+        self.repo.insert_invite(&invite).await?;
+        self.audit(audit_event(Some(by), Some(project_id), action::INVITE_CREATED, meta, &[("invite", invite.id.to_string()), ("role", role.as_str().into())])).await;
+        Ok(invite.id)
+    }
+
+    /// Отозвать приглашение — ссылка и QR-код перестают работать. Только владелец.
+    pub async fn revoke_invite(&self, by: Uuid, project_id: Uuid, invite_id: Uuid, meta: &RequestMeta) -> AppResult<()> {
+        self.deny_guest(by).await?;
+        self.require_owner(by, project_id).await?;
+        if !self.repo.revoke_invite(project_id, invite_id, Utc::now()).await? {
+            return Err(AppError::NotFound("приглашение не найдено или уже использовано".into()));
+        }
+        self.audit(audit_event(Some(by), Some(project_id), action::INVITE_REVOKED, meta, &[("invite", invite_id.to_string())])).await;
+        Ok(())
+    }
+
+    /// Страница приглашения: куда зовут, кто и с какой ролью. Ничего не меняет — превью ссылки
+    /// в мессенджере приглашение не расходует.
+    pub async fn invite_preview(&self, code: &str, viewer: Option<Uuid>) -> AppResult<InvitePreview> {
+        let invite = self.invite_by_code(code).await?;
+        let project = self.load_project(invite.project_id).await?;
+        let rows = self.repo.members(project.id).await?;
+        let members: Vec<Member> = rows.iter().map(|(m, _)| m.clone()).collect();
+        let inviter_name = match rows.iter().find(|(m, _)| m.user_id == invite.created_by) {
+            Some((_, u)) => u.display_name.clone(),
+            None => self.repo.user(invite.created_by).await?.map(|u| u.display_name).unwrap_or_default(),
+        };
+        Ok(InvitePreview {
+            project_name: project.name,
+            inviter_name,
+            role: invite.role,
+            state: invite_state(&invite, &members, Utc::now()),
+            member: viewer.is_some_and(|v| members.iter().any(|m| m.user_id == v)),
+        })
+    }
+
+    /// Принять приглашение: пользователь становится участником с ролью из приглашения, приглашение
+    /// расходуется (атомарно — по одной ссылке войдёт один человек). Уже участник — просто проект.
+    pub async fn accept_invite(&self, user_id: Uuid, code: &str, meta: &RequestMeta) -> AppResult<Uuid> {
+        self.deny_guest(user_id).await?;
+        let invite = self.invite_by_code(code).await?;
+        let project = self.load_project(invite.project_id).await?;
+        let mut members: Vec<Member> = self.repo.members(project.id).await?.into_iter().map(|(m, _)| m).collect();
+        if members.iter().any(|m| m.user_id == user_id) {
+            return Ok(project.id);
+        }
+        let now = Utc::now();
+        let used = || AppError::Validation("приглашением уже воспользовались — попросите новое".into());
+        match invite_state(&invite, &members, now) {
+            InviteState::Active => {}
+            InviteState::Used => return Err(used()),
+            InviteState::Expired => return Err(AppError::Validation("срок приглашения истёк — попросите новое".into())),
+            InviteState::Revoked => return Err(AppError::Validation("приглашение отозвано — попросите новое".into())),
+        }
+        let member = Member { project_id: project.id, user_id, role: invite.role };
+        members.push(member.clone());
+        check_members(project.kind, &members).map_err(AppError::Validation)?;
+        if !self.repo.accept_invite(invite.id, &member, now).await? {
+            return Err(used());
+        }
+        let details = [("invite", invite.id.to_string()), ("role", invite.role.as_str().into()), ("invited_by", invite.created_by.to_string())];
+        self.audit(audit_event(Some(user_id), Some(project.id), action::MEMBER_JOINED, meta, &details)).await;
+        Ok(project.id)
+    }
+
     async fn change_members(&self, project: &Project, f: impl FnOnce(&mut Vec<Member>)) -> AppResult<()> {
         let mut ms: Vec<Member> = self.repo.members(project.id).await?.into_iter().map(|(m, _)| m).collect();
         f(&mut ms);
@@ -513,11 +672,12 @@ impl ProjectService {
 
     // ------------------------------------------------------------ обслуживание и демо
 
-    /// Чистка: истёкшие сессии (старше 30 дней) и журнал старше года.
+    /// Чистка: истёкшие сессии (старше 30 дней), приглашения, истёкшие больше 30 дней назад, и журнал старше года.
     pub async fn cleanup(&self) -> AppResult<(u64, u64)> {
         let now = Utc::now();
         let s = self.access.purge_sessions(now - Duration::days(30)).await?;
         let a = self.access.purge_audit(now - crate::domain::AUDIT_RETENTION).await?;
+        self.repo.purge_invites(now - Duration::days(30)).await?;
         Ok((s, a))
     }
 
