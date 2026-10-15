@@ -2,7 +2,7 @@
 //! Блоки между маркерами @arch:* ведёт `arch.py`: каждая строка помечена `// @f:<фича>`.
 //! Связки (адаптеры портов «потребитель → поставщик») лежат в wire_<потребитель>.rs.
 //!
-//! В этом проекте строки фич projects, transactions, planning, budget написаны вручную
+//! В этом проекте строки фич projects, accounts, transactions, planning, budget написаны вручную
 //! (у этих фич нет feature.json — `upgrade` их не трогает): их порты шире, чем `exists`.
 
 #[allow(unused_imports)]
@@ -46,11 +46,13 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "currencies")] list.push(currencies::feature(currencies_api.clone())); // @f:currencies
     #[cfg(feature = "rates")] let rates_api = rates::api(ctx, rates::Deps { currencies: Arc::new(wire_rates::CurrenciesLookupAdapter(currencies_api.clone())) }); // @f:rates
     #[cfg(feature = "rates")] list.push(rates::feature(rates_api.clone())); // @f:rates
-    #[cfg(feature = "accounts")] let accounts_api = accounts::api(ctx, accounts::Deps { currencies: Arc::new(wire_accounts::CurrenciesLookupAdapter(currencies_api.clone())) }); // @f:accounts
+    #[cfg(feature = "accounts")] let ledger = wire_accounts::LedgerAdapter::default(); // @f:accounts
+    #[cfg(feature = "accounts")] let accounts_api = accounts::api(ctx, accounts::Deps { currencies: Arc::new(wire_accounts::CurrenciesLookupAdapter(currencies_api.clone())), ledger: Arc::new(ledger.clone()) }); // @f:accounts
     #[cfg(feature = "accounts")] list.push(accounts::feature(accounts_api.clone())); // @f:accounts
     #[cfg(feature = "categories")] list.push(categories::feature(categories_api.clone())); // @f:categories
     #[cfg(feature = "transactions")] let budget_view = wire_transactions::BudgetViewAdapter::default(); // @f:transactions
     #[cfg(feature = "transactions")] let transactions_api = transactions::api(ctx, transactions::Deps { accounts: Arc::new(wire_transactions::AccountsLookupAdapter(accounts_api.clone(), currencies_api.clone())), categories: Arc::new(wire_transactions::CategoriesLookupAdapter(categories_api.clone())), budget: Arc::new(budget_view.clone()) }); // @f:transactions
+    #[cfg(feature = "transactions")] let _ = ledger.0.set(transactions_api.clone()); // @f:transactions
     #[cfg(feature = "transactions")] list.push(transactions::feature(transactions_api.clone())); // @f:transactions
     #[cfg(feature = "limits")] let limits_api = limits::api(ctx, limits::Deps { categories: Arc::new(wire_limits::CategoriesLookupAdapter(categories_api.clone())) }); // @f:limits
     #[cfg(feature = "limits")] list.push(limits::feature(limits_api.clone())); // @f:limits

@@ -21,14 +21,59 @@ impl super::ports::CurrenciesLookup for FakeLookup {
     }
 }
 
+/// Фейковый журнал операций: остатки счетов задаются в тесте, начальный остаток — тоже проводка.
+#[derive(Default)]
+struct FakeLedger(std::sync::Mutex<Vec<(String, rust_decimal::Decimal, chrono::NaiveDate)>>);
+
+#[async_trait::async_trait]
+impl super::ports::Ledger for Arc<FakeLedger> {
+    async fn balances(&self, _p: Uuid, date: chrono::NaiveDate) -> kernel::error::AppResult<Vec<(String, rust_decimal::Decimal)>> {
+        Ok(self.0.lock().unwrap().iter().filter(|x| x.2 <= date).map(|x| (x.0.clone(), x.1)).collect())
+    }
+    async fn opening(&self, _p: Uuid, code: &str) -> kernel::error::AppResult<Option<(rust_decimal::Decimal, chrono::NaiveDate)>> {
+        Ok(self.0.lock().unwrap().iter().find(|x| x.0 == code).map(|x| (x.1, x.2)))
+    }
+    async fn set_opening(&self, _p: Uuid, _u: Uuid, code: &str, amount: rust_decimal::Decimal, date: chrono::NaiveDate) -> kernel::error::AppResult<()> {
+        let mut rows = self.0.lock().unwrap();
+        rows.retain(|x| x.0 != code);
+        if !amount.is_zero() {
+            rows.push((code.to_string(), amount, date));
+        }
+        Ok(())
+    }
+    async fn has_postings(&self, _p: Uuid, code: &str) -> kernel::error::AppResult<bool> {
+        Ok(self.0.lock().unwrap().iter().any(|x| x.0 == code))
+    }
+}
+
 fn deps() -> super::ports::Deps {
     super::ports::Deps {
         currencies: Arc::new(FakeLookup),
+        ledger: Arc::new(Arc::new(FakeLedger::default())),
     }
 }
 
 fn service() -> AccountService {
     AccountService::new(Arc::new(InMemoryAccountRepository::default()), deps())
+}
+
+/// Остаток — из журнала: валюту счёта с проводками не сменить, счёт с остатком не архивировать.
+#[tokio::test]
+async fn balance_rules() {
+    let svc = service();
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
+    svc.create(p, create_dto("CARD")).await.unwrap();
+    svc.set_opening(p, u, "card", rust_decimal::Decimal::from(500), day).await.unwrap();
+    assert_eq!(svc.opening(p, "CARD").await.unwrap(), Some((rust_decimal::Decimal::from(500), day)));
+    let mut other = update_dto("Карта");
+    other.currency_code = "REF2".into();
+    let err = svc.update(p, "CARD", other).await.unwrap_err();
+    assert!(matches!(err, AppError::Validation(m) if m.starts_with("currency_code")));
+    assert!(matches!(svc.archive(p, "CARD").await.unwrap_err(), AppError::Conflict(_)), "остаток не нулевой");
+    svc.set_opening(p, u, "CARD", rust_decimal::Decimal::ZERO, day).await.unwrap();
+    svc.archive(p, "CARD").await.unwrap();
+    assert!(svc.set_opening(p, u, "NOPE", rust_decimal::Decimal::ONE, day).await.is_err());
 }
 
 fn create_dto(code: &str) -> CreateAccountDto {
@@ -41,7 +86,6 @@ fn create_dto(code: &str) -> CreateAccountDto {
         name_th: Some("Пример".to_string()),
         account_kind: "CASH".to_string(),
         currency_code: "REF1".to_string(),
-        opening_balance: rust_decimal::Decimal::new(1050, 2),
         holder_user_id: Some(uuid::Uuid::new_v4()),
     }
 }
@@ -56,7 +100,6 @@ fn update_dto(name: &str) -> UpdateAccountDto {
         name_th: Some("Пример".to_string()),
         account_kind: "CASH".to_string(),
         currency_code: "REF1".to_string(),
-        opening_balance: rust_decimal::Decimal::new(1050, 2),
         holder_user_id: Some(uuid::Uuid::new_v4()),
     }
 }

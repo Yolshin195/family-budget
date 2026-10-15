@@ -33,6 +33,8 @@ pub const DEFAULT_CATEGORIES: &[(&str, Option<&str>, &str, &str, &str, &str)] = 
     ("KIDS", None, "EXPENSE", "Дети", "Kids", "ลูก"),
     ("FUN", None, "EXPENSE", "Развлечения", "Entertainment", "ความบันเทิง"),
     ("FUN_SUBSCRIPTIONS", Some("FUN"), "EXPENSE", "Подписки", "Subscriptions", "บริการสมาชิก"),
+    // Комиссии банков и обменников: расход перевода с обменом валют (ТЗ, раздел 4).
+    ("FEES", None, "EXPENSE", "Комиссии", "Fees", "ค่าธรรมเนียม"),
     ("SALARY", None, "INCOME", "Зарплата", "Salary", "เงินเดือน"),
     ("FREELANCE", None, "INCOME", "Подработка", "Side income", "รายได้เสริม"),
     ("OTHER_INCOME", None, "INCOME", "Прочие доходы", "Other income", "รายได้อื่น"),

@@ -1,17 +1,18 @@
 {% extends "base.html" %}
 {% import "macros.html" as m %}
-{% block title %}{{ page.t("title") }}{% endblock %}
-{% block heading %}{{ page.t("title") }}{% endblock %}
+{% block title %}{% if let Some((acc, _)) = statement %}{{ acc }} · {{ page.t("statement") }}{% else %}{{ page.t("title") }}{% endif %}{% endblock %}
+{% block heading %}{% if let Some((acc, _)) = statement %}{{ acc }} · {{ page.t("statement") }}{% else %}{{ page.t("title") }}{% endif %}{% endblock %}
 {% block actions %}{% if page.can_write() %}
+  <a href="/transactions/new?kind=TRANSFER&amp;back={{ page.back() }}{{ account_query }}" class="btn-secondary" data-quick="TRANSFER" title="T"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("arrow-right-left") }}"></use></svg><span class="hide-sm">{{ page.t("transfer") }}</span></a>
   <a href="/transactions/new?kind=INCOME&amp;back={{ page.back() }}" class="btn-secondary" data-quick="INCOME" title="I"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg><span class="hide-sm">{{ page.t("income") }}</span></a>
   <a href="/transactions/new?back={{ page.back() }}" class="btn-primary" data-quick="EXPENSE" title="N"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("expense") }}</a>
 {% endif %}{% endblock %}
 {% block content %}
 <div class="toolbar">
   <nav class="pager" aria-label="{{ page.t("month_nav") }}">
-    <a class="btn-icon" href="?month={{ prev }}&amp;account={{ params.account }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("prev_month") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
+    <a class="btn-icon" href="?month={{ prev }}&amp;account={{ params.account }}&amp;kind={{ params.kind }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("prev_month") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
     <span class="pager-title" aria-live="polite">{{ month_title }}</span>
-    <a class="btn-icon" href="?month={{ next }}&amp;account={{ params.account }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("next_month") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
+    <a class="btn-icon" href="?month={{ next }}&amp;account={{ params.account }}&amp;kind={{ params.kind }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("next_month") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
   </nav>
   <form class="filters" method="get" data-autosubmit>
     <input type="hidden" name="month" value="{{ month }}">
@@ -19,6 +20,11 @@
     <select class="input input-sm" id="f-account" name="account">
       <option value="">{{ page.t("all_accounts") }}</option>
       {% for a in accounts %}<option value="{{ a.code }}" {% if params.account == a.code %}selected{% endif %}>{{ a.label }}</option>{% endfor %}
+    </select>
+    <label class="sr-only" for="f-kind">{{ page.t("kind") }}</label>
+    <select class="input input-sm" id="f-kind" name="kind">
+      <option value="">{{ page.t("all_kinds") }}</option>
+      {% for (code, label) in kinds %}<option value="{{ code }}" {% if params.kind == *code %}selected{% endif %}>{{ label }}</option>{% endfor %}
     </select>
     {% if page.session.members.len() > 1 %}
     <label class="sr-only" for="f-member">{{ page.t("author") }}</label>
@@ -34,47 +40,51 @@
     <button class="btn-secondary btn-sm js-hide">{{ page.t("apply") }}</button>
   </form>
 </div>
-
-<div class="stats stats-3" id="tx-totals">
-  <div class="stat"><p class="stat-label">{{ page.t("income_total") }}</p>
-    {% for (cur, inc, _exp, _net, _neg) in totals %}<p class="stat-value text-income">{% call m::amount(format!("+{}", inc), cur) %}{% endcall %}</p>{% endfor %}</div>
-  <div class="stat"><p class="stat-label">{{ page.t("expense_total") }}</p>
-    {% for (cur, _inc, exp, _net, _neg) in totals %}<p class="stat-value">{% call m::amount(format!("−{}", exp), cur) %}{% endcall %}</p>{% endfor %}</div>
-  <div class="stat"><p class="stat-label">{{ page.t("net") }}</p>
-    {% for (cur, _inc, _exp, net, neg) in totals %}<p class="stat-value{% if *neg %} text-danger{% endif %}">{% call m::amount(net, cur) %}{% endcall %}</p>{% endfor %}</div>
+<div class="stats{% if stats.len() == 3 %} stats-3{% endif %}" id="tx-totals">
+  {% for s in stats %}
+  <div class="stat"><p class="stat-label">{{ s.label }}</p>
+    {% for (v, cur, neg) in s.values %}<p class="stat-value{% if s.income %} text-income{% endif %}{% if *neg %} text-danger{% endif %}">{% call m::amount(v, cur) %}{% endcall %}</p>{% endfor %}</div>
+  {% endfor %}
 </div>
-
+{% if statement.is_some() && page.can_write() %}
+<p class="mb-4 -mt-2 text-sm"><a class="link" href="/transactions/reconcile?account={{ params.account }}">{{ page.t("reconcile") }}</a></p>
+{% endif %}
 {% for g in days %}
   <h2 class="day-title">{{ g.label }}</h2>
   <ul class="card divide-y divide-line" role="list">
   {% for t in g.items %}
     <li class="tx">
-      <span class="tx-dot {% if t.dto.is_expense() %}tx-expense{% else %}tx-income{% endif %}" aria-hidden="true"></span>
+      {% if t.css == "transfer" %}<svg class="icon icon-sm tx-icon" aria-hidden="true"><use href="{{ page.icon("arrow-right-left") }}"></use></svg>{% else %}<span class="tx-dot {% if t.css == "income" %}tx-income{% else if t.css == "opening" %}tx-opening{% else %}tx-expense{% endif %}" aria-hidden="true"></span>{% endif %}
       <div class="min-w-0 grow">
         <p class="flex flex-wrap items-center gap-2">
           <span class="font-medium">{{ t.desc }}</span>
           {% call m::no_tr(page, t.missing) %}{% endcall %}
           {% if t.dto.plan_id.is_some() %}<span class="badge badge-info"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("calendar-check") }}"></use></svg>{{ page.t("from_plan") }}</span>{% endif %}
         </p>
-        <p class="text-xs text-subtle mt-0.5">{{ t.account }} · {{ t.author }}</p>
-        {% if t.lines.len() > 1 || !t.lines[0].note.is_empty() %}
+        <p class="text-xs text-subtle mt-0.5">{{ t.meta }}</p>
+        {% if !t.lines.is_empty() %}
         <ul class="tx-lines">
           {% for l in t.lines %}
             <li><span>{{ l.category }}{% if !l.note.is_empty() %} <span class="text-subtle">— {{ l.note }}</span>{% endif %}</span><span class="amount">{{ l.amount }}</span></li>
           {% endfor %}
         </ul>
-        {% else %}
-          <p class="text-sm text-muted mt-1">{{ t.lines[0].category }}</p>
+        {% else if !t.category.is_empty() %}
+          <p class="text-sm text-muted mt-1">{{ t.category }}</p>
         {% endif %}
+        {% for n in t.notes %}<p class="text-xs text-muted mt-0.5">{{ n }}</p>{% endfor %}
       </div>
       <div class="tx-side">
-        <p class="font-semibold{% if !t.dto.is_expense() %} text-income{% endif %}">{% call m::amount(t.total, t.currency) %}{% endcall %}</p>
+        <p class="font-semibold{% if t.positive %} text-income{% endif %}">{% call m::amount(t.amount, t.currency) %}{% endcall %}</p>
+        {% if let Some((v, cur)) = t.second %}<p class="text-sm font-medium">{% call m::amount(v, cur) %}{% endcall %}</p>{% endif %}
+        {% if let Some(r) = t.running %}<p class="text-xs text-subtle tabular-nums">{{ page.t("running") }} {{ r }}</p>{% endif %}
         {% if page.can_write() %}
         <div class="row-actions">
           {% if t.dto.description.is_some() %}<a class="btn-ghost btn-sm" href="/transactions/{{ t.dto.id }}/translate" aria-label="{{ page.t("translate") }}: {{ t.desc }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("languages") }}"></use></svg><span class="hide-sm">{{ page.t("translate") }}</span></a>{% endif %}
-          <a class="btn-ghost btn-sm" href="/transactions/{{ t.dto.id }}/edit?back={{ page.back() }}" aria-label="{{ page.t("edit") }}: {{ t.desc }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("pencil") }}"></use></svg><span class="hide-sm">{{ page.t("edit") }}</span></a>
+          <a class="btn-ghost btn-sm" href="{{ t.edit_href }}" aria-label="{{ page.t("edit") }}: {{ t.desc }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("pencil") }}"></use></svg><span class="hide-sm">{{ page.t("edit") }}</span></a>
+          {% if !t.dto.is_opening() %}
           <form method="post" action="/transactions/{{ t.dto.id }}/delete"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
             <input type="hidden" name="back" value="{{ page.path }}"><button class="btn-ghost btn-sm text-danger" aria-label="{{ page.t("delete") }}: {{ t.desc }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("trash-2") }}"></use></svg><span class="hide-sm">{{ page.t("delete") }}</span></button></form>
+          {% endif %}
         </div>
         {% endif %}
       </div>

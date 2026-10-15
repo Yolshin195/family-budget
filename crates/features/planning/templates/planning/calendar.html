@@ -40,7 +40,7 @@
       {% for o in c.items %}
         <a href="{{ o.href }}" class="occ occ-{{ o.status|lower }}" title="{{ o.title }} · {{ o.amount }} · {{ page.t(o.status) }}">
           <span class="occ-title">{% if o.status == "PAID" %}<svg class="icon icon-xs" aria-hidden="true"><use href="{{ page.icon("check") }}"></use></svg>{% endif %}{{ o.title }}</span>
-          <span class="occ-amount{% if !o.is_expense %} text-income{% endif %}">{% if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}</span>
+          <span class="occ-amount{% if !o.is_expense && !o.is_transfer %} text-income{% endif %}">{% if o.is_transfer %}⇄ {% else if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}</span>
           <span class="sr-only">{{ page.t(o.status) }}</span>
         </a>
       {% endfor %}
@@ -59,7 +59,7 @@
       <span class="occ-dot occ-{{ o.status|lower }}" aria-hidden="true"></span>
       <span class="grow min-w-0"><span class="block truncate{% if o.status == "SKIPPED" %} line-through text-subtle{% endif %}">{{ o.title }}</span>
         <span class="text-xs {% if o.status == "OVERDUE" %}text-danger{% else %}text-subtle{% endif %}">{{ page.t(o.status) }}</span></span>
-      <span class="amount{% if !o.is_expense %} text-income{% endif %}">{% if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}</span>
+      <span class="amount{% if !o.is_expense && !o.is_transfer %} text-income{% endif %}">{% if o.is_transfer %}⇄ {% else if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}</span>
     </a></li>
     {% endfor %}
   </ul>

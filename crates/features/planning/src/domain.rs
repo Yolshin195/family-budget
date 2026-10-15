@@ -62,10 +62,13 @@ pub struct Plan {
     pub id: Uuid,
     pub project_id: Uuid,
     pub name: Name,
-    /// EXPENSE / INCOME
+    /// EXPENSE / INCOME / TRANSFER
     pub tx_kind: String,
     pub account_code: String,
-    pub category_code: String,
+    /// Категория расхода или дохода; у перевода — нет.
+    pub category_code: Option<String>,
+    /// Счёт зачисления перевода.
+    pub to_account_code: Option<String>,
     /// Ожидаемая сумма в валюте счёта.
     pub amount: Decimal,
     pub recurrence: Recurrence,
@@ -82,7 +85,8 @@ pub struct PlanData {
     pub name: Name,
     pub tx_kind: String,
     pub account_code: String,
-    pub category_code: String,
+    pub category_code: Option<String>,
+    pub to_account_code: Option<String>,
     pub amount: Decimal,
     pub recurrence: Recurrence,
     pub interval: u32,
@@ -102,7 +106,8 @@ impl Plan {
             name: data.name.clone(),
             tx_kind: String::new(),
             account_code: String::new(),
-            category_code: String::new(),
+            category_code: None,
+            to_account_code: None,
             amount: Decimal::ZERO,
             recurrence: data.recurrence,
             interval: 1,
@@ -116,9 +121,21 @@ impl Plan {
     }
 
     pub fn change(&mut self, d: PlanData) -> Result<(), String> {
-        if d.tx_kind != "EXPENSE" && d.tx_kind != "INCOME" {
+        if !["EXPENSE", "INCOME", "TRANSFER"].contains(&d.tx_kind.as_str()) {
             return Err(format!("tx_kind: недопустимое значение '{}'", d.tx_kind));
         }
+        let account_code = normalize("account_code", &d.account_code)?;
+        let present = |v: Option<String>| v.filter(|s| !s.trim().is_empty());
+        // Перевод — счёт зачисления вместо категории; расход и доход — категория.
+        let (category_code, to_account_code) = if d.tx_kind == "TRANSFER" {
+            let to = normalize("to_account_code", &present(d.to_account_code).ok_or("to_account_code: выберите счёт зачисления")?)?;
+            if to == account_code {
+                return Err("to_account_code: счёт зачисления должен отличаться от счёта списания".into());
+            }
+            (None, Some(to))
+        } else {
+            (Some(normalize("category_code", &present(d.category_code).ok_or("category_code: выберите категорию")?)?), None)
+        };
         if d.amount <= Decimal::ZERO {
             return Err("amount: сумма должна быть больше нуля".into());
         }
@@ -138,8 +155,9 @@ impl Plan {
             th: tr(Lang::Th, d.name.th),
         };
         self.tx_kind = d.tx_kind;
-        self.account_code = normalize("account_code", &d.account_code)?;
-        self.category_code = normalize("category_code", &d.category_code)?;
+        self.account_code = account_code;
+        self.category_code = category_code;
+        self.to_account_code = to_account_code;
         self.amount = d.amount;
         self.recurrence = d.recurrence;
         self.interval = d.interval;
@@ -250,7 +268,8 @@ mod tests {
                 name: Name { text: "Аренда".into(), lang: Lang::Ru, ru: Some("x".into()), en: Some("Rent".into()), th: None },
                 tx_kind: "EXPENSE".into(),
                 account_code: "card".into(),
-                category_code: "rent".into(),
+                category_code: Some("rent".into()),
+                to_account_code: None,
                 amount: Decimal::from(15000),
                 recurrence: r,
                 interval,
@@ -310,7 +329,8 @@ mod tests {
             name: Name { text: " ".into(), lang: Lang::Ru, ru: None, en: None, th: None },
             tx_kind: "EXPENSE".into(),
             account_code: "A".into(),
-            category_code: "C".into(),
+            category_code: Some("C".into()),
+            to_account_code: None,
             amount: Decimal::ONE,
             recurrence: Recurrence::Monthly,
             interval: 1,

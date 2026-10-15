@@ -149,6 +149,49 @@
       kindSel.addEventListener('change', sync); sync();
     });
   }
+  // Поля, зависящие от типа (форма плана): [data-kind-show] / [data-kind-hide] — по значению поля «Тип».
+  function bindKindToggles(scope) {
+    $$('form select[name=tx_kind]', scope).forEach(function (sel) {
+      var form = sel.form;
+      if (!form || sel.dataset.toggles) return;
+      sel.dataset.toggles = '1';
+      var sync = function () {
+        $$('[data-kind-show]', form).forEach(function (el) { el.hidden = el.dataset.kindShow !== sel.value; });
+        $$('[data-kind-hide]', form).forEach(function (el) { el.hidden = el.dataset.kindHide === sel.value; });
+      };
+      sel.addEventListener('change', sync); sync();
+    });
+  }
+  // Курс перевода — в направлении, где число больше 1 («1 ฿ = 2,556 ₽»), и отклонение от курса
+  // справочника (`rFrom`, `rTo` — курсы валют к базовой).
+  function fmtRate(v) { return new Intl.NumberFormat(locale, { maximumFractionDigits: 4 }).format(v); }
+  function rateText(sent, from, got, to, rFrom, rTo) {
+    if (!(sent > 0) || !(got > 0)) return '';
+    var up = sent >= got, x = up ? sent / got : got / sent, quote = up ? from : to;
+    var s = (i18n.rate || '') + ' 1 ' + (up ? to : from) + ' = ' + fmtRate(x) + ' ' + quote;
+    if (rFrom > 0 && rTo > 0) {
+      var ref = up ? rTo / rFrom : rFrom / rTo, dev = (x / ref - 1) * 100;
+      var pct = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(Math.abs(dev));
+      s += ' · ' + (i18n.rateRef || '') + ' ' + fmtRate(ref) + ' ' + quote + ' (' + (dev >= 0 ? '+' : '−') + pct + ' %)';
+    }
+    return s;
+  }
+  // «Сверить остаток»: разница с остатком по операциям и категории нужного типа.
+  function bindReconcile(scope) {
+    $$('form[data-reconcile]', scope).forEach(function (form) {
+      if (form.dataset.bound) return;
+      form.dataset.bound = '1';
+      var book = parseFloat(form.dataset.book), input = $('[data-actual]', form), out = $('[data-diff]', form), cat = $('select[data-kind-filtered]', form);
+      var sync = function () {
+        var v = evalAmount(input.value);
+        if (isNaN(v)) { out.textContent = ''; return; }
+        var d = Math.round((v - book) * 10000) / 10000;
+        out.textContent = d === 0 ? out.dataset.same : (d > 0 ? out.dataset.more : out.dataset.less) + ' ' + money(Math.abs(d));
+        if (cat && d !== 0) filterOptions(cat, d > 0 ? 'INCOME' : 'EXPENSE');
+      };
+      input.addEventListener('input', sync); sync();
+    });
+  }
   // Копирование (API-токен).
   doc.addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('[data-copy]');
@@ -175,6 +218,30 @@
     form.dataset.bound = '1';
     var lines = $('[data-lines]', form), totalEl = $('[data-total]', form), curEl = $('[data-cur]', form), note = $('[data-limit-note]', form);
     var kind = function () { var r = $('[name=tx_kind]:checked', form); return r ? r.value : 'EXPENSE'; };
+    var flow = $('[data-section=flow]', form), transfer = $('[data-section=transfer]', form), accLabel = $('label[for=account_code]', form);
+    var refund = $('[data-refund]', form);
+    function opt(sel) { var o = sel && sel.selectedOptions[0]; return o ? { cur: o.dataset.cur || '', rate: parseFloat(o.dataset.rate) } : { cur: '', rate: NaN }; }
+    // Перевод: валюты счетов, «Зачислено» — только при разных валютах, курс из сумм (без комиссии).
+    function syncTransfer() {
+      if (!transfer) return;
+      var f = opt($('[name=account_code]', form)), t = opt($('[name=to_account_code]', form));
+      $$('[data-from-cur]', form).forEach(function (el) { el.textContent = f.cur; });
+      $$('[data-to-cur]', form).forEach(function (el) { el.textContent = t.cur; });
+      var exch = $('[data-exchange]', form), differ = !!(t.cur && f.cur && t.cur !== f.cur);
+      if (exch) { exch.hidden = !differ; $('input', exch).disabled = !differ; }
+      var line = $('[data-rate-line]', form);
+      if (line) {
+        var fee = evalAmount($('[data-fee]', form).value), sent = evalAmount($('[data-sent]', form).value) - (isNaN(fee) ? 0 : fee);
+        line.textContent = differ ? rateText(sent, f.cur, evalAmount($('[data-received]', form).value), t.cur, f.rate, t.rate) : '';
+      }
+    }
+    function syncKind() {
+      var t = kind() === 'TRANSFER';
+      if (flow) { flow.hidden = t; flow.disabled = t; }
+      if (transfer) { transfer.hidden = !t; transfer.disabled = !t; }
+      if (accLabel && accLabel.dataset.labelFlow) accLabel.textContent = t ? accLabel.dataset.labelTransfer : accLabel.dataset.labelFlow;
+      syncTransfer();
+    }
     function filterCats() { $$('select[data-kind-filtered]', form).forEach(function (s) { filterOptions(s, kind()); }); }
     function total() {
       var s = 0;
@@ -185,7 +252,7 @@
       return s;
     }
     function warn() {
-      if (!note || kind() !== 'EXPENSE') { if (note) note.textContent = ''; return; }
+      if (!note || kind() !== 'EXPENSE' || (refund && refund.checked)) { if (note) note.textContent = ''; return; }
       loadLimits().then(function (d) {
         var acc = (d.accounts || []).filter(function (a) { return a.code === ($('[name=account_code]', form) || {}).value; })[0];
         var rate = acc ? parseFloat(acc.rate_to_base) : 1;
@@ -211,10 +278,13 @@
       $$('[id]', row).forEach(function (el) { var id = el.id.replace(/-\d+$/, '-' + n); var lab = $('label[for="' + el.id + '"]', row); el.id = id; if (lab) lab.htmlFor = id; });
       lines.appendChild(row); filterCats(); $('select', row).focus();
     });
-    form.addEventListener('input', function () { total(); });
-    form.addEventListener('change', function () { filterCats(); total(); warn(); });
-    $$('[data-amount]', form).forEach(function (i) { i.addEventListener('blur', function () { var v = evalAmount(i.value); if (!isNaN(v) && /[+*/]|\d-/.test(i.value)) i.value = String(v); }); });
-    filterCats(); total();
+    form.addEventListener('input', function () { total(); syncTransfer(); });
+    form.addEventListener('change', function (e) {
+      if (e.target.name === 'tx_kind') syncKind();
+      filterCats(); total(); warn(); syncTransfer();
+    });
+    $$('[data-amount], [data-sent], [data-received], [data-fee]', form).forEach(function (i) { i.addEventListener('blur', function () { var v = evalAmount(i.value); if (!isNaN(v) && /[+*/]|\d-/.test(i.value)) { i.value = String(v); syncTransfer(); } }); });
+    filterCats(); total(); syncKind();
   });
   }
 
@@ -285,7 +355,7 @@
       });
     }
   }
-  function bindPage(scope) { bindFilters(scope || doc); bindTxForms(scope || doc); }
+  function bindPage(scope) { bindFilters(scope || doc); bindKindToggles(scope || doc); bindTxForms(scope || doc); bindReconcile(scope || doc); }
   bindPage(doc);
 
   /* ---------------------------------------------------------------- быстрый расход (раздел 10) */
@@ -315,11 +385,38 @@
   function account() { return (Q.data.accounts || []).filter(function (a) { return a.code === $('#q-account').value; })[0]; }
   function setKind(kind) {
     Q.kind = kind;
+    var t = kind === 'TRANSFER';
     $$('input[name=tx_kind]', dlg).forEach(function (r) { r.checked = r.value === kind; });
-    $('#quick-title').textContent = kind === 'INCOME' ? dlg.dataset.titleIncome : dlg.dataset.titleExpense;
+    $('#quick-title').textContent = t ? dlg.dataset.titleTransfer : kind === 'INCOME' ? dlg.dataset.titleIncome : dlg.dataset.titleExpense;
+    // Перевод: вместо категории — счёт зачисления; «Счёт» становится «Откуда».
+    $('[data-q-flow]', dlg).hidden = t;
+    $('[data-q-transfer]', dlg).hidden = !t;
+    $$('[data-label-flow]', dlg).forEach(function (el) { var x = $('span', el) || el; x.textContent = t ? el.dataset.labelTransfer : el.dataset.labelFlow; });
     var c = Q.category && catByCode(Q.category);
     if (c && c.kind !== kind) Q.category = '';
-    renderChips(); updateLimit();
+    renderChips(); updateLimit(); if (t) fillTo();
+  }
+  // Счета зачисления — все, кроме счёта списания; по умолчанию — как в прошлом переводе.
+  function fillTo() {
+    if (!Q.data) return;
+    var sel = $('#q-to'), from = $('#q-account').value, keep = sel.value, last = Q.data.last_transfer;
+    sel.textContent = '';
+    (Q.data.accounts || []).forEach(function (a) {
+      if (a.code === from) return;
+      var o = doc.createElement('option'); o.value = a.code; o.textContent = a.title + ' · ' + a.currency; sel.appendChild(o);
+    });
+    var pick = [keep, last && last[0] === from ? last[1] : ''].filter(function (c) { return c && c !== from && $('option[value="' + c + '"]', sel); })[0];
+    if (pick) sel.value = pick;
+    $('#q-to-err').hidden = true;
+    updateTransfer();
+  }
+  function accountBy(code) { return (Q.data.accounts || []).filter(function (a) { return a.code === code; })[0]; }
+  function updateTransfer() {
+    if (!Q.data || Q.kind !== 'TRANSFER') return;
+    var f = account(), t = accountBy($('#q-to').value), differ = !!(f && t && f.currency !== t.currency);
+    $('#q-exchange').hidden = !differ;
+    $('#q-to-cur').textContent = t ? t.currency : '';
+    $('#q-rate').textContent = differ ? rateText(evalAmount($('#q-amount').value), f.currency, evalAmount($('#q-to-amount').value), t.currency, parseFloat(f.rate_to_base), parseFloat(t.rate_to_base)) : '';
   }
   function pickCategory(code) {
     Q.category = code;
@@ -416,7 +513,7 @@
   }
   function showError(msg) { var e = $('#q-error'); e.textContent = msg || ''; e.hidden = !msg; }
   function resetForm(keepAccountDate) {
-    $('#q-amount').value = ''; $('#q-desc').value = ''; Q.category = '';
+    $('#q-amount').value = ''; $('#q-desc').value = ''; Q.category = ''; $('#q-to-amount').value = ''; $('#q-to-amount-err').hidden = true;
     $('#q-amount').removeAttribute('aria-invalid'); $('#q-amount-err').hidden = true; $('#q-cat-err').hidden = true; showError('');
     if (!keepAccountDate) {
       $$('input[name=q_day]', dlg).forEach(function (r) { r.checked = r.value === '0'; });
@@ -424,11 +521,14 @@
     }
     renderChips(); updateLimit();
   }
-  function openQuick(kind, category) {
+  function openQuick(kind, category, accountCode) {
     if (!dlg) return false;
     resetForm(false);
     if (!dlg.open) dlg.showModal();
-    var after = function () { setKind(kind || 'EXPENSE'); if (category) pickCategory(category); $('#q-amount').focus(); };
+    var after = function () {
+      if (accountCode && accountBy(accountCode)) { $('#q-account').value = accountCode; updateCurrency(); }
+      setKind(kind || 'EXPENSE'); if (category) pickCategory(category); $('#q-amount').focus();
+    };
     if (Q.data) { qState('ready'); after(); } else (Q.loading || load()).then(after);
     return true;
   }
@@ -436,7 +536,36 @@
     var r = $('input[name=q_day]:checked', dlg), v = r ? r.value : '0';
     return v === 'other' ? ($('#q-date').value || todayISO(0)) : todayISO(parseInt(v, 10));
   }
+  // Перевод: POST /api/transactions с типом TRANSFER — сервер строит проводки.
+  function saveTransfer(more) {
+    var amount = evalAmount($('#q-amount').value), ok = true, f = account(), t = accountBy($('#q-to').value);
+    var differ = !!(f && t && f.currency !== t.currency), got = evalAmount($('#q-to-amount').value);
+    if (isNaN(amount) || amount <= 0) {
+      $('#q-amount').setAttribute('aria-invalid', 'true');
+      var ae = $('#q-amount-err'); ae.textContent = i18n.amountRequired || ''; ae.hidden = false; ok = false;
+    }
+    if (!t) { var te = $('#q-to-err'); te.textContent = i18n.chooseTo || ''; te.hidden = false; ok = false; }
+    if (differ && (isNaN(got) || got <= 0)) { var ge = $('#q-to-amount-err'); ge.textContent = i18n.receivedRequired || ''; ge.hidden = false; ok = false; }
+    if (!ok) return;
+    var desc = $('#q-desc').value.trim();
+    var payload = {
+      occurred_on: selectedDate(), tx_kind: 'TRANSFER', account_code: f.code, to_account_code: t.code, amount: String(amount),
+      to_amount: differ ? String(got) : null, description: desc || null, description_lang: lang.toUpperCase()
+    };
+    showError('');
+    $$('.dialog-foot button', dlg).forEach(function (b) { b.disabled = true; });
+    api('POST', '/api/transactions', payload).then(function (tx) {
+      var label = (i18n.transfer || '') + ' ' + money(amount) + ' ' + f.symbol + ' → ' + t.title;
+      toast(label, { undo: function () { api('DELETE', '/api/transactions/' + tx.id).then(function () { toast(i18n.undone || ''); refreshPage(); }); } });
+      Q.data.last_transfer = [f.code, t.code];
+      if (more) { resetForm(true); $('#q-amount').focus(); } else dlg.close();
+      refreshPage();
+    }).catch(function (e) {
+      showError((e.body && e.body.message) || i18n.failed || '');
+    }).then(function () { $$('.dialog-foot button', dlg).forEach(function (b) { b.disabled = false; }); });
+  }
   function save(more) {
+    if (Q.kind === 'TRANSFER') return saveTransfer(more);
     var amount = evalAmount($('#q-amount').value), ok = true;
     if (isNaN(amount) || amount <= 0) {
       $('#q-amount').setAttribute('aria-invalid', 'true');
@@ -477,9 +606,11 @@
     $$('input[name=q_day]', dlg).forEach(function (r) {
       r.addEventListener('change', function () { var other = r.value === 'other'; $('#q-date').hidden = !other; if (other) $('#q-date').focus(); });
     });
-    $('#q-amount').addEventListener('input', function () { $('#q-amount').removeAttribute('aria-invalid'); $('#q-amount-err').hidden = true; updateLimit(); });
+    $('#q-amount').addEventListener('input', function () { $('#q-amount').removeAttribute('aria-invalid'); $('#q-amount-err').hidden = true; updateLimit(); updateTransfer(); });
+    $('#q-to').addEventListener('change', function () { $('#q-to-err').hidden = true; updateTransfer(); });
+    $('#q-to-amount').addEventListener('input', function () { $('#q-to-amount-err').hidden = true; updateTransfer(); });
     $('#q-amount').addEventListener('blur', function () { var i = $('#q-amount'), v = evalAmount(i.value); if (!isNaN(v) && /[+*/]|\d-/.test(i.value)) { i.value = String(v); updateLimit(); } });
-    $('#q-account').addEventListener('change', function () { updateCurrency(); updateLimit(); });
+    $('#q-account').addEventListener('change', function () { updateCurrency(); updateLimit(); if (Q.kind === 'TRANSFER') fillTo(); });
     $('[data-action="quick-retry"]', dlg).addEventListener('click', function () { load().then(function () { setKind(Q.kind); $('#q-amount').focus(); }); });
     $$('[data-close]', dlg).forEach(function (b) { b.addEventListener('click', function () { dlg.close(); }); });
     dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
@@ -489,19 +620,20 @@
       var v = evalAmount($('#q-amount').value), q = new URLSearchParams();
       q.set('kind', Q.kind); q.set('back', location.pathname + location.search);
       if (!isNaN(v)) q.set('amount', String(v));
-      if (Q.category) q.set('category', Q.category);
+      if (Q.kind === 'TRANSFER' && $('#q-to').value) q.set('to_account', $('#q-to').value);
+      else if (Q.category) q.set('category', Q.category);
       if ($('#q-account').value) q.set('account', $('#q-account').value);
       q.set('date', selectedDate());
       if ($('#q-desc').value.trim()) { q.set('desc', $('#q-desc').value.trim()); q.set('desc_lang', lang); }
       location.href = '/transactions/new?' + q.toString();
     });
   }
-  // Точки входа: «+ Расход», круглая «+», «+» в строке категории, клавиши N и I.
+  // Точки входа: «+ Расход», круглая «+», «+» в строке категории, «Перевести» у счёта, клавиши N, I и T.
   doc.addEventListener('click', function (e) {
     var t = e.target.closest && e.target.closest('[data-quick]');
     if (!t || !dlg || e.metaKey || e.ctrlKey || e.shiftKey) return;
     e.preventDefault();
-    openQuick(t.dataset.quick, t.dataset.category);
+    openQuick(t.dataset.quick, t.dataset.category, t.dataset.account);
   });
 
   /* ---------------------------------------------------------------- горячие клавиши */
@@ -517,6 +649,7 @@
     if (open) return;
     if ((e.key === 'n' || e.key === 'N' || e.key === 'т' || e.key === 'Т') && canWrite) { e.preventDefault(); openQuick('EXPENSE'); }
     else if ((e.key === 'i' || e.key === 'I' || e.key === 'ш' || e.key === 'Ш') && canWrite) { e.preventDefault(); openQuick('INCOME'); }
+    else if ((e.key === 't' || e.key === 'T' || e.key === 'е' || e.key === 'Е') && canWrite) { e.preventDefault(); openQuick('TRANSFER'); }
     else if (e.key === '?' && keys) { e.preventDefault(); keys.showModal(); }
   });
 

@@ -21,7 +21,8 @@ use kernel::web::{NavGroup, NavItem, Web};
 use utoipa::OpenApi;
 
 pub use ports::Deps;
-pub use ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, FactLine, Payment};
+pub use domain::AccountCurrency;
+pub use ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, ExchangeLine, FactLine, Payment};
 /// Use cases фичи. Другие фичи получают к ним доступ только через свои порты и адаптеры в app/wiring.
 pub use service::TransactionService as Service;
 

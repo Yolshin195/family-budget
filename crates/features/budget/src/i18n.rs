@@ -37,6 +37,10 @@ pub fn dict(key: &str) -> Option<Tr> {
         "fact_hint" => ("Факт — проведённые операции", "Actual — recorded transactions", "จริง — รายการที่บันทึกแล้ว"),
         "apply" => ("Показать", "Apply", "แสดง"),
         "nav_rates" => ("Курсы валют", "Exchange rates", "อัตราแลกเปลี่ยน"),
+        "fx_result" => ("Курсовая разница", "Exchange result", "ผลต่างอัตราแลกเปลี่ยน"),
+        "fx_hint" => ("Обмены валют за период по курсу справочника: «−» — потеряно на обмене. В расходы не входит.",
+                      "Currency exchanges in the period at reference rates: “−” means lost on exchange. Not counted as an expense.",
+                      "การแลกเงินในช่วงนี้ตามอัตราอ้างอิง: “−” คือขาดทุนจากการแลก ไม่นับเป็นรายจ่าย"),
         _ => return None,
     })
 }
