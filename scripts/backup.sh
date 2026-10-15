@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Резервные копии обеих баз (family_budget и rauthy): pg_dump в контейнере db → шифрование age → BACKUP_DIR.
-# Ежедневный запуск — cron или systemd timer; ещё копию делает scripts/deploy-vds.sh update перед каждым обновлением:
+# Ежедневный запуск — cron или systemd timer. Ещё копию делает scripts/deploy-vds.sh update перед обновлением
+# (автообновление вызывает его, только когда в ghcr.io вышла новая сборка, а не при каждой проверке):
 #   15 3 * * *  cd /srv/family-budget && make backup >> backups/backup.log 2>&1
 #
 # Чтобы копии не заняли диск, каждой базы хранится не больше трёх, сколько бы раз в день ни запускалась копия:
