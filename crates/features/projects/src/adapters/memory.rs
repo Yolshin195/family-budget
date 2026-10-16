@@ -9,7 +9,7 @@ use kernel::error::{AppError, AppResult};
 use kernel::i18n::Lang;
 use uuid::Uuid;
 
-use crate::domain::{ApiToken, AuditEvent, Member, Project, SessionRecord, User};
+use crate::domain::{ApiToken, AuditEvent, Invite, InviteState, Member, Project, ProjectKind, SessionRecord, User};
 use crate::ports::{AccessRepository, ProjectRepository};
 
 #[derive(Default)]
@@ -17,6 +17,7 @@ pub struct InMemoryProjectRepository {
     users: Mutex<Vec<User>>,
     projects: Mutex<Vec<Project>>,
     members: Mutex<Vec<Member>>,
+    pub invites: Mutex<Vec<Invite>>,
     pub sessions: Mutex<Vec<SessionRecord>>,
     tokens: Mutex<Vec<ApiToken>>,
     pub audit: Mutex<Vec<AuditEvent>>,
@@ -72,6 +73,7 @@ impl ProjectRepository for InMemoryProjectRepository {
     async fn delete_user(&self, id: Uuid) -> AppResult<()> {
         self.users.lock().unwrap().retain(|u| u.id != id);
         self.members.lock().unwrap().retain(|m| m.user_id != id);
+        self.invites.lock().unwrap().retain(|i| i.created_by != id);
         self.sessions.lock().unwrap().retain(|s| s.user_id != id);
         self.tokens.lock().unwrap().retain(|t| t.user_id != id);
         Ok(())
@@ -93,8 +95,16 @@ impl ProjectRepository for InMemoryProjectRepository {
         }
         Ok(())
     }
+    async fn set_kind(&self, project_id: Uuid, kind: ProjectKind, name: &str) -> AppResult<()> {
+        for p in self.projects.lock().unwrap().iter_mut().filter(|p| p.id == project_id) {
+            p.kind = kind;
+            p.name = name.into();
+        }
+        Ok(())
+    }
     async fn delete_project(&self, project_id: Uuid) -> AppResult<()> {
         self.projects.lock().unwrap().retain(|p| p.id != project_id);
+        self.invites.lock().unwrap().retain(|i| i.project_id != project_id);
         self.members.lock().unwrap().retain(|m| m.project_id != project_id);
         self.tokens.lock().unwrap().retain(|t| t.project_id != project_id);
         Ok(())
@@ -107,7 +117,7 @@ impl ProjectRepository for InMemoryProjectRepository {
         let ps = self.projects.lock().unwrap();
         let mut out: Vec<(Project, Member)> =
             ms.iter().filter(|m| m.user_id == user_id).filter_map(|m| ps.iter().find(|p| p.id == m.project_id).map(|p| (p.clone(), m.clone()))).collect();
-        out.sort_by_key(|(p, _)| p.kind != crate::domain::ProjectKind::Personal);
+        out.sort_by_key(|(p, _)| p.kind != ProjectKind::Personal);
         Ok(out)
     }
     async fn members(&self, project_id: Uuid) -> AppResult<Vec<(Member, User)>> {
@@ -130,6 +140,43 @@ impl ProjectRepository for InMemoryProjectRepository {
     async fn remove_member(&self, project_id: Uuid, user_id: Uuid) -> AppResult<()> {
         self.members.lock().unwrap().retain(|m| !(m.project_id == project_id && m.user_id == user_id));
         Ok(())
+    }
+    async fn insert_invite(&self, invite: &Invite) -> AppResult<()> {
+        self.invites.lock().unwrap().push(invite.clone());
+        Ok(())
+    }
+    async fn invite(&self, id: Uuid) -> AppResult<Option<Invite>> {
+        Ok(self.invites.lock().unwrap().iter().find(|i| i.id == id).cloned())
+    }
+    async fn invites_of(&self, project_id: Uuid) -> AppResult<Vec<Invite>> {
+        let mut out: Vec<Invite> = self.invites.lock().unwrap().iter().filter(|i| i.project_id == project_id).cloned().collect();
+        out.sort_by_key(|i| std::cmp::Reverse(i.created_at));
+        Ok(out)
+    }
+    async fn revoke_invite(&self, project_id: Uuid, id: Uuid, at: DateTime<Utc>) -> AppResult<bool> {
+        let mut is = self.invites.lock().unwrap();
+        let Some(i) = is.iter_mut().find(|i| i.id == id && i.project_id == project_id && i.used_at.is_none() && i.revoked_at.is_none()) else { return Ok(false) };
+        i.revoked_at = Some(at);
+        Ok(true)
+    }
+    async fn accept_invite(&self, id: Uuid, member: &Member, at: DateTime<Utc>) -> AppResult<bool> {
+        {
+            let mut is = self.invites.lock().unwrap();
+            let Some(i) = is.iter_mut().find(|i| i.id == id && i.project_id == member.project_id && i.state(at) == InviteState::Active) else { return Ok(false) };
+            i.used_by = Some(member.user_id);
+            i.used_at = Some(at);
+        }
+        let mut ms = self.members.lock().unwrap();
+        if !ms.iter().any(|m| m.project_id == member.project_id && m.user_id == member.user_id) {
+            ms.push(member.clone());
+        }
+        Ok(true)
+    }
+    async fn purge_invites(&self, before: DateTime<Utc>) -> AppResult<u64> {
+        let mut is = self.invites.lock().unwrap();
+        let n = is.len();
+        is.retain(|i| i.expires_at >= before);
+        Ok((n - is.len()) as u64)
     }
     async fn count_signups(&self, _from: DateTime<Utc>, _to: DateTime<Utc>) -> AppResult<i64> {
         Ok(self.users.lock().unwrap().iter().filter(|u| !u.rauthy_sub.starts_with("demo:")).count() as i64)

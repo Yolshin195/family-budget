@@ -9,7 +9,7 @@ use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use uuid::Uuid;
 
-use crate::domain::{AccessToken, ApiToken, AuditEvent, Member, Project, SessionRecord, User, VerifiedLogin};
+use crate::domain::{AccessToken, ApiToken, AuditEvent, Invite, Member, Project, ProjectKind, SessionRecord, User, VerifiedLogin};
 
 /// Пользователи, проекты, участники.
 #[async_trait]
@@ -31,6 +31,8 @@ pub trait ProjectRepository: Send + Sync {
     async fn insert_project(&self, project: &Project, owner: &Member) -> AppResult<()>;
     async fn rename_project(&self, project_id: Uuid, name: &str) -> AppResult<()>;
     async fn set_require_2fa(&self, project_id: Uuid, value: bool) -> AppResult<()>;
+    /// Сменить вид проекта и название (личный → семейный).
+    async fn set_kind(&self, project_id: Uuid, kind: ProjectKind, name: &str) -> AppResult<()>;
     /// Удалить проект (участники и токены проекта уходят каскадом).
     async fn delete_project(&self, project_id: Uuid) -> AppResult<()>;
     async fn project(&self, id: Uuid) -> AppResult<Option<Project>>;
@@ -40,6 +42,17 @@ pub trait ProjectRepository: Send + Sync {
     async fn members(&self, project_id: Uuid) -> AppResult<Vec<(Member, User)>>;
     async fn upsert_member(&self, member: &Member) -> AppResult<()>;
     async fn remove_member(&self, project_id: Uuid, user_id: Uuid) -> AppResult<()>;
+    async fn insert_invite(&self, invite: &Invite) -> AppResult<()>;
+    async fn invite(&self, id: Uuid) -> AppResult<Option<Invite>>;
+    /// Приглашения проекта, новые сначала.
+    async fn invites_of(&self, project_id: Uuid) -> AppResult<Vec<Invite>>;
+    /// Отозвать неиспользованное приглашение проекта; `false` — нет такого или уже использовано.
+    async fn revoke_invite(&self, project_id: Uuid, id: Uuid, at: DateTime<Utc>) -> AppResult<bool>;
+    /// Принять приглашение атомарно: пометить использованным (только если оно ещё действует на `at`)
+    /// и добавить участника. `false` — приглашение уже использовано, отозвано или истекло.
+    async fn accept_invite(&self, id: Uuid, member: &Member, at: DateTime<Utc>) -> AppResult<bool>;
+    /// Удалить приглашения, истёкшие до `before`.
+    async fn purge_invites(&self, before: DateTime<Utc>) -> AppResult<u64>;
     /// Сколько пользователей зарегистрировалось за период (без демо) — для воронки лендинга.
     async fn count_signups(&self, from: DateTime<Utc>, to: DateTime<Utc>) -> AppResult<i64>;
 }
