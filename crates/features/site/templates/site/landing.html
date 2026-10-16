@@ -39,12 +39,11 @@
   <section class="hero">
     <div class="site-wrap hero-grid">
       <div class="hero-copy">
+        <a class="hero-badge" href="#claude"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ self.icon("sparkles") }}"></use></svg>{{ self.t("hero.badge") }}</a>
         <h1 class="hero-title">{{ self.t("hero.title") }}</h1>
         <p class="hero-subtitle">{{ self.t("hero.subtitle") }}</p>
         <div class="hero-actions">
           <a class="btn-primary btn-lg" href="/auth/register">{{ self.t("cta.create") }}</a>
-          <a class="btn-secondary btn-lg" href="/auth/login"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("brand-github") }}"></use></svg>{{ self.t("cta.github") }}</a>
-          <a class="btn-secondary btn-lg" href="/auth/login"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("brand-facebook") }}"></use></svg>{{ self.t("cta.facebook") }}</a>
         </div>
         <p class="have-account">{{ self.t("cta.have_account") }} <a class="link-button" href="/auth/login">{{ self.t("nav.login") }}</a></p>
         {% if guest_demo %}
@@ -65,7 +64,7 @@
     <div class="site-wrap">
       <h2 class="site-h2" id="benefits">{{ self.t("benefits.title") }}</h2>
       <ul class="benefits" role="list">
-        {% for (n, icon) in [("b1", "users"), ("b2", "zap"), ("b3", "receipt-text"), ("b4", "gauge"), ("b5", "calendar-days"), ("b6", "languages")] %}
+        {% for (n, icon) in [("b1", "users"), ("b2", "zap"), ("b3", "receipt-text"), ("b4", "arrow-right-left"), ("b5", "gauge"), ("b6", "chart-pie"), ("b7", "calendar-days"), ("b8", "languages"), ("b9", "undo-2")] %}
         <li class="benefit">
           <span class="benefit-icon"><svg class="icon" aria-hidden="true"><use href="{{ self.icon(icon) }}"></use></svg></span>
           <h3 class="benefit-title">{{ self.t(format!("{}.title", n).as_str()) }}</h3>
@@ -76,7 +75,63 @@
     </div>
   </section>
 
-  <section class="site-section site-section-alt" aria-labelledby="how">
+  {# Claude через MCP (фича mcp): сценарии, пример переписки на чеке из демо-данных и границы доступа. #}
+  <section class="site-section site-section-alt" aria-labelledby="claude">
+    <div class="site-wrap">
+      <h2 class="site-h2" id="claude">{{ self.t("ai.title") }}</h2>
+      <p class="site-lead">{{ self.t("ai.lead") }}</p>
+      <div class="ai-grid">
+        <div>
+          <ul class="ai-list" role="list">
+            {% for (n, icon) in [("ai1", "mic"), ("ai2", "camera"), ("ai3", "message-circle"), ("ai4", "calendar-check")] %}
+            <li>
+              <span class="benefit-icon"><svg class="icon" aria-hidden="true"><use href="{{ self.icon(icon) }}"></use></svg></span>
+              <h3 class="benefit-title">{{ self.t(format!("{}.title", n).as_str()) }}</h3>
+              <p class="benefit-text">{{ self.t(format!("{}.text", n).as_str()) }}</p>
+            </li>
+            {% endfor %}
+          </ul>
+          <p class="works-in">{{ self.t("ai.works_in") }}
+            <span class="badge">claude.ai</span><span class="badge">{{ self.t("ai.phone") }}</span><span class="badge">Claude Desktop</span><span class="badge">Claude Code</span>
+          </p>
+        </div>
+        <figure class="chat" aria-label="{{ self.t("chat.label") }}">
+          <div class="chat-head">
+            <svg class="icon text-accent-text" aria-hidden="true"><use href="{{ self.icon("sparkles") }}"></use></svg>Claude
+            <span class="badge badge-accent"><svg class="icon icon-xs" aria-hidden="true"><use href="{{ self.icon("wallet") }}"></use></svg>{{ self.t("app.title") }}</span>
+          </div>
+          <div class="chat-body">
+            <div class="msg msg-user">
+              <div class="msg-photo"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ self.icon("image") }}"></use></svg>{{ self.t("chat.photo") }}</div>
+              {{ self.t("chat.q1") }}
+            </div>
+            <span class="msg-tool"><svg class="icon icon-xs" aria-hidden="true"><use href="{{ self.icon("circle-check") }}"></use></svg>{{ self.t("app.title") }} · {{ self.t("chat.tool") }}</span>
+            <div class="msg msg-ai">
+              {{ self.t("chat.a1") }}
+              <ul class="msg-lines" role="list">
+                {% for n in ["1", "2", "3"] %}
+                <li><span>{{ self.t(format!("chat.l{}", n).as_str()) }}</span><span>{{ self.t(format!("chat.s{}", n).as_str()) }}</span></li>
+                {% endfor %}
+              </ul>
+            </div>
+            <div class="msg msg-user">{{ self.t("chat.q2") }}</div>
+            <div class="msg msg-ai">
+              {{ self.t("chat.a2_pre") }} <b>{{ self.t("chat.a2_amount") }}</b> {{ self.t("chat.a2_post") }}
+              <div class="msg-bar" aria-hidden="true"><span></span></div>
+            </div>
+          </div>
+        </figure>
+      </div>
+      <ul class="trust" role="list">
+        {% for (n, icon) in [("trust1", "shield-check"), ("trust2", "lock"), ("trust3", "list-checks")] %}
+        <li class="trust-item"><svg class="icon" aria-hidden="true"><use href="{{ self.icon(icon) }}"></use></svg>
+          <span><strong>{{ self.t(format!("{}.title", n).as_str()) }}</strong>{{ self.t(format!("{}.text", n).as_str()) }}</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </section>
+
+  <section class="site-section" aria-labelledby="how">
     <div class="site-wrap">
       <h2 class="site-h2" id="how">{{ self.t("how.title") }}</h2>
       <ol class="steps">
@@ -87,6 +142,21 @@
         </li>
         {% endfor %}
       </ol>
+    </div>
+  </section>
+
+  <section class="site-section site-section-alt" aria-labelledby="security">
+    <div class="site-wrap">
+      <h2 class="site-h2" id="security">{{ self.t("sec.title") }}</h2>
+      <ul class="secure" role="list">
+        {% for (n, icon) in [("sec1", "key-round"), ("sec2", "shield-check"), ("sec3", "monitor-smartphone"), ("sec4", "lock")] %}
+        <li>
+          <span class="benefit-icon"><svg class="icon" aria-hidden="true"><use href="{{ self.icon(icon) }}"></use></svg></span>
+          <h3 class="benefit-title">{{ self.t(format!("{}.title", n).as_str()) }}</h3>
+          <p class="benefit-text">{{ self.t(format!("{}.text", n).as_str()) }}</p>
+        </li>
+        {% endfor %}
+      </ul>
     </div>
   </section>
 
@@ -102,11 +172,12 @@
   </section>
   {% endif %}
 
-  <section class="site-section" aria-labelledby="faq">
+  {# После блока демо (тот же фон) — без верхнего отступа, иначе между ними двойной промежуток. #}
+  <section class="site-section{% if guest_demo %} !pt-0{% endif %}" aria-labelledby="faq">
     <div class="site-wrap site-narrow">
       <h2 class="site-h2" id="faq">{{ self.t("faq.title") }}</h2>
       <div class="faq">
-        {% for n in ["1", "2", "3", "4"] %}
+        {% for n in ["1", "2", "3", "4", "5", "6", "7"] %}
         <details class="faq-item">
           <summary>{{ self.t(format!("q{}", n).as_str()) }}<svg class="icon faq-chevron" aria-hidden="true"><use href="{{ self.icon("chevron-down") }}"></use></svg></summary>
           <p>{{ self.t(format!("a{}", n).as_str()) }}</p>
