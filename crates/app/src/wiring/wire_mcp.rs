@@ -382,11 +382,11 @@ impl ::mcp::Directories for DirectoriesAdapter {
 pub struct RatesAdapter(pub Arc<::rates::Service>);
 
 fn rate_from(r: ::rates::dto::RateDto) -> Rate {
-    Rate { id: r.id, date: r.rate_date, currency: r.currency_code, rate: r.rate }
+    Rate { id: r.id, date: r.rate_date, currency: r.currency_code, rate: r.rate, entered: r.entered, inverted: r.inverted }
 }
 
 fn rate_input(r: &Rate) -> ::rates::dto::RateInput {
-    ::rates::dto::RateInput { rate_date: r.date, currency_code: r.currency.clone(), rate: r.rate }
+    ::rates::dto::RateInput { rate_date: r.date, currency_code: r.currency.clone(), rate: r.entered, inverted: r.inverted }
 }
 
 #[async_trait]

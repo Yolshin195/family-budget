@@ -6,15 +6,29 @@
 <p class="text-muted mb-4 max-w-3xl">{{ page.t("hint") }} {{ page.t("base_is") }} <b>{{ page.session.base_currency }}</b>.</p>
 {% call m::form_alert(error, "rate_date,currency_code,rate") %}{% endcall %}
 {% if page.can_write() %}
-<form method="post" class="card card-pad mb-6 flex flex-wrap items-start gap-4" data-form>
+<form method="post" class="card card-pad mb-6 flex flex-wrap items-start gap-4" data-form data-rate-form data-base="{{ page.session.base_currency }}"
+  data-t-last="{{ page.t("last") }}" data-t-per="{{ page.t("per") }}" data-t-less="{{ page.t("warn_less") }}" data-t-more="{{ page.t("warn_more") }}" data-t-check="{{ page.t("warn_check") }}">
   <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
   <div class="field !mb-0"><label class="label" for="rate_date">{{ page.t("date") }}</label>
-    <input class="input" type="date" id="rate_date" name="rate_date" value="{{ today }}" required{% call m::aria(error, "rate_date") %}{% endcall %}>{% call m::err(error, "rate_date") %}{% endcall %}</div>
+    <input class="input" type="date" id="rate_date" name="rate_date" value="{% if form.rate_date.is_empty() %}{{ today }}{% else %}{{ form.rate_date }}{% endif %}" required{% call m::aria(error, "rate_date") %}{% endcall %}>{% call m::err(error, "rate_date") %}{% endcall %}</div>
   <div class="field !mb-0"><label class="label" for="currency_code">{{ page.t("currency") }}</label>
-    <select class="input" id="currency_code" name="currency_code"{% call m::aria(error, "currency_code") %}{% endcall %}>{% for c in currencies %}{% if c.code != page.session.base_currency %}<option value="{{ c.code }}">{{ c.code }} · {{ c.label }}</option>{% endif %}{% endfor %}</select>
+    <select class="input" id="currency_code" name="currency_code"{% call m::aria(error, "currency_code") %}{% endcall %}>{% for c in currencies %}<option value="{{ c.code }}"{% if c.code == currency %} selected{% endif %}{% if let Some(l) = c.last %} data-entered="{{ l.entered }}" data-inverted="{{ l.inverted }}" data-rate="{{ l.rate }}" data-inverse="{{ l.inverse }}" data-date="{{ l.date }}"{% endif %}>{{ c.label }}</option>{% endfor %}</select>
     {% call m::err(error, "currency_code") %}{% endcall %}</div>
-  <div class="field !mb-0"><label class="label" for="rate">{{ page.t("rate") }}, {{ page.session.base_currency }}</label>
-    <input class="input num w-36" id="rate" name="rate" inputmode="decimal" required placeholder="0.37" autofocus{% call m::aria(error, "rate") %}{% endcall %}>{% call m::err(error, "rate") %}{% endcall %}</div>
+  <div class="field !mb-0"><label class="label" for="rate">{{ page.t("rate") }}</label>
+    <div class="flex items-center gap-2">
+      <span class="whitespace-nowrap" aria-hidden="true">1 <span data-rate-from>{{ self.left_cur() }}</span> =</span>
+      <input class="input num w-36" id="rate" name="rate" value="{{ form.rate }}" inputmode="decimal" required placeholder="{{ self.last_value() }}" autofocus aria-describedby="rate-err rate-dir rate-last rate-preview"{% if kernel::web::field_error(error, "rate").is_some() %} aria-invalid="true"{% endif %}>
+      <span data-rate-to aria-hidden="true">{{ self.right_cur() }}</span>
+      <input type="hidden" name="inverted" value="{{ inverted }}" data-rate-inverted>
+      <button type="button" class="btn-ghost btn-sm" data-rate-swap="convert" title="{{ page.t("swap") }}" aria-label="{{ page.t("swap") }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("arrow-right-left") }}"></use></svg></button>
+    </div>
+    <p class="sr-only" id="rate-dir" data-rate-dir>1 {{ self.left_cur() }} = … {{ self.right_cur() }}</p>
+    {% call m::err(error, "rate") %}{% endcall %}
+    <p class="text-sm text-muted mt-1 tabular-nums" id="rate-last" data-rate-last{% if last.is_none() %} hidden{% endif %}>{% if let Some(l) = last %}{{ page.t("last") }}: {{ self.last_value() }} · {{ l.date }}{% endif %}</p>
+    <p class="text-sm text-muted tabular-nums" id="rate-preview" data-rate-preview aria-live="polite"></p>
+    <div class="alert alert-warn mt-2 max-w-xs" data-rate-warn role="status" hidden><svg class="icon" aria-hidden="true"><use href="{{ page.icon("triangle-alert") }}"></use></svg>
+      <div><p data-rate-warn-text></p><button type="button" class="btn-secondary btn-sm mt-2" data-rate-swap="flip">{{ page.t("swap") }}</button></div></div>
+  </div>
   <div class="field !mb-0"><span class="label" aria-hidden="true">&nbsp;</span><button class="btn-primary">{{ page.t("add") }}</button></div>
 </form>
 {% endif %}
@@ -24,11 +38,11 @@
 {% else %}
   <div class="table-wrap">
   <table class="table">
-    <thead><tr><th scope="col">{{ page.t("date") }}</th><th scope="col">{{ page.t("currency") }}</th><th scope="col" class="num">{{ page.t("rate") }}</th><th scope="col"><span class="sr-only">{{ page.t("delete") }}</span></th></tr></thead>
+    <thead><tr><th scope="col">{{ page.t("date") }}</th><th scope="col">{{ page.t("rate") }}</th><th scope="col"><span class="sr-only">{{ page.t("delete") }}</span></th></tr></thead>
     <tbody>
     {% for r in rows %}
-      <tr><td class="tabular-nums">{{ page.date(r.rate_date) }}</td><td class="font-mono">1 {{ r.currency_code }}</td>
-        <td class="num">{{ r.rate }} <span class="cur">{{ page.session.base_currency }}</span></td>
+      <tr><td class="tabular-nums">{{ page.date(r.rate_date) }}</td>
+        <td class="tabular-nums whitespace-nowrap"><div>{{ r.main }}</div><div class="text-sm text-muted">{{ r.other }}</div></td>
         <td class="text-right">{% if page.can_write() %}<form method="post" action="/rates/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
           <button class="btn-ghost btn-sm text-danger" aria-label="{{ page.t("delete") }}: {{ r.currency_code }} {{ page.date(r.rate_date) }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("trash-2") }}"></use></svg><span class="hide-sm">{{ page.t("delete") }}</span></button></form>{% endif %}</td></tr>
     {% endfor %}

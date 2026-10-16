@@ -318,10 +318,16 @@ pub struct UpdateCategoryArgs {
 pub struct SetRateArgs {
     /// Currency code or name, e.g. "USD" (not the base currency)
     pub currency: String,
-    /// How many units of the BASE currency 1 unit of `currency` costs, e.g. 36.5 for 1 USD = 36.5 THB
-    #[serde(deserialize_with = "amount")]
-    #[schemars(with = "String")]
-    pub rate: String,
+    /// How many units of the BASE currency 1 unit of `currency` costs, e.g. 36.5 for 1 USD = 36.5 THB.
+    /// Pass exactly one of `rate` and `inverse_rate`
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub rate: Option<String>,
+    /// How many units of `currency` 1 unit of the BASE currency costs, e.g. 2.5 for 1 THB = 2.5 RUB —
+    /// the way banks quote weak currencies. Pass exactly one of `rate` and `inverse_rate`
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub inverse_rate: Option<String>,
     /// Date YYYY-MM-DD (default: today)
     pub date: Option<String>,
 }

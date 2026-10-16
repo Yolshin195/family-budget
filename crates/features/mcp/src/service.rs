@@ -993,11 +993,24 @@ impl McpService {
 
     pub async fn set_rate(&self, caller: &Caller, a: SetRateArgs) -> ToolResult {
         self.check(caller, Right::write("rates"))?;
-        let rate = parse_amount("rate", &a.rate)?;
+        let base = &caller.base_currency;
+        let (entered, inverted) = match (clean(a.rate), clean(a.inverse_rate)) {
+            (Some(r), None) => (parse_rate("rate", &r)?, false),
+            (None, Some(r)) => (parse_rate("inverse_rate", &r)?, true),
+            (Some(_), Some(_)) => {
+                return Err(ToolError(format!(
+                    "Pass exactly one of rate (units of {base} for 1 unit of the currency) and inverse_rate (units of the currency for 1 {base}), not both."
+                )));
+            }
+            (None, None) => {
+                return Err(ToolError(format!(
+                    "Pass rate (units of {base} for 1 unit of the currency) or inverse_rate (units of the currency for 1 {base})."
+                )));
+            }
+        };
         let date = parse_date("date", a.date.as_deref(), today())?;
         let currencies = self.deps.directories.currencies(caller.project_id).await?;
         let currency = find_ref("currency", &a.currency, &currencies)?.code.clone();
-        let base = &caller.base_currency;
         if &currency == base {
             return Err(ToolError(format!(
                 "currency: {base} is the base currency of the project — its rate is always 1. Pass the other currency, with rate = units of {base} for 1 unit of it."
@@ -1007,22 +1020,22 @@ impl McpService {
         let history: Vec<Rate> = self.deps.rates.list(caller.project_id, None, Some(date)).await?.into_iter().filter(|r| r.currency == currency).collect();
         let old = history.iter().find(|r| r.date == date);
         let previous = history.iter().filter(|r| r.date < date).max_by_key(|r| r.date);
-        let draft = Rate { id: old.map(|r| r.id).unwrap_or_default(), date, currency, rate };
+        let draft = Rate::entered(old.map(|r| r.id).unwrap_or_default(), date, currency, entered, inverted);
         let saved = match old {
             Some(_) => self.deps.rates.update(caller.project_id, &draft).await?,
             None => self.deps.rates.create(caller.project_id, &draft).await?,
         };
         self.audit_write(caller, "set_rate", &[("rate", saved.id.to_string()), ("currency", saved.currency.clone()), ("date", saved.date.to_string())]).await;
-        let mut summary = format!("Rate on {}: 1 {} = {} {base} (the base currency).", saved.date, saved.currency, saved.rate.normalize());
+        let mut summary = format!("Rate on {}: {} (the base currency is {base}).", saved.date, rate_text(&saved, base));
         if let Some(o) = old {
-            summary.push_str(&format!(" Replaced the previous rate {} for that date.", o.rate.normalize()));
+            summary.push_str(&format!(" Replaced the previous rate {} for that date.", rate_main(o, base)));
         }
         if let Some(p) = previous.filter(|p| saved.rate > p.rate * Decimal::from(5) || saved.rate * Decimal::from(5) < p.rate) {
             summary.push_str(&format!(
-                " Check the direction: the rate on {} was {} — rate means units of {base} for 1 {}.",
+                " Check the direction: the rate on {} was {} — more than 5 times different. If the user meant the other direction, set it again with {}.",
                 p.date,
-                p.rate.normalize(),
-                saved.currency
+                rate_text(p, base),
+                if saved.inverted { "rate instead of inverse_rate" } else { "inverse_rate instead of rate" }
             ));
         }
         Ok(ToolOutput { summary, data: json!({"base_currency": base, "rate": rate_json(&saved, base), "replaced": old.is_some()}) })
@@ -1050,10 +1063,10 @@ impl McpService {
                 latest.push(r);
             }
         }
-        let latest_text = latest.iter().take(10).map(|r| format!("1 {} = {} {base} ({})", r.currency, r.rate.normalize(), r.date)).collect::<Vec<_>>().join(", ");
+        let latest_text = latest.iter().take(10).map(|r| format!("{} ({})", rate_text(r, base), r.date)).collect::<Vec<_>>().join(", ");
         Ok(ToolOutput {
             summary: format!(
-                "{} rates (newest first, up to {MAX_PAGE} shown); rate = units of {base} for 1 unit of the currency.{}",
+                "{} rates (newest first, up to {MAX_PAGE} shown); rate = units of {base} for 1 unit of the currency, inverse_rate = units of the currency for 1 {base}.{}",
                 rates.len(),
                 if latest_text.is_empty() { String::new() } else { format!(" Latest: {latest_text}.") }
             ),
@@ -1354,7 +1367,30 @@ fn category_json(c: &Category) -> Value {
 }
 
 fn rate_json(r: &Rate, base: &str) -> Value {
-    json!({"id": r.id, "date": r.date, "currency": r.currency, "rate": r.rate, "meaning": format!("1 {} = {} {base}", r.currency, r.rate.normalize())})
+    let inverse = r.inverse_rate();
+    json!({
+        "id": r.id, "date": r.date, "currency": r.currency,
+        "rate": r.rate.normalize(), "inverse_rate": inverse.normalize(),
+        "entered": r.entered.normalize(), "inverted": r.inverted,
+        "meaning": format!("1 {} = {} {base}", r.currency, show_rate(r.rate)),
+        "inverse_meaning": format!("1 {base} = {} {}", show_rate(inverse), r.currency),
+    })
+}
+
+/// Курс в направлении, в котором его ввели: «1 THB = 2.5 RUB».
+fn rate_main(r: &Rate, base: &str) -> String {
+    if r.inverted { format!("1 {base} = {} {}", r.entered.normalize(), r.currency) } else { format!("1 {} = {} {base}", r.currency, r.entered.normalize()) }
+}
+
+/// Оба направления: «1 THB = 2.5 RUB (1 RUB = 0.4 THB)».
+fn rate_text(r: &Rate, base: &str) -> String {
+    let other = if r.inverted { format!("1 {} = {} {base}", r.currency, show_rate(r.rate)) } else { format!("1 {base} = {} {}", show_rate(r.inverse_rate()), r.currency) };
+    format!("{} ({other})", rate_main(r, base))
+}
+
+/// Пересчитанный курс для текста: 6 знаков после запятой, без лишних нулей.
+fn show_rate(v: Decimal) -> Decimal {
+    v.round_dp(6).normalize()
 }
 
 fn limit_json(l: &Limit, title: &str, current: Option<bool>) -> Value {

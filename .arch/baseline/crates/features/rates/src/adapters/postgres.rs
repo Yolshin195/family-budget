@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::domain::{Rate};
 use crate::ports::{Period, RateRepository};
 
-const COLUMNS: &str = "id, user_id, rate_date, currency_code, rate";
+const COLUMNS: &str = "id, user_id, rate_date, currency_code, rate, entered, inverted";
 /// Общий фильтр: пользователь + период ($2, $3 — границы или NULL).
 const FILTER: &str = "user_id = $1 AND ($2::date IS NULL OR rate_date >= $2) \
                       AND ($3::date IS NULL OR rate_date <= $3)";
@@ -31,6 +31,8 @@ struct Row {
     rate_date: chrono::NaiveDate,
     currency_code: String,
     rate: rust_decimal::Decimal,
+    entered: rust_decimal::Decimal,
+    inverted: bool,
 }
 
 impl TryFrom<Row> for Rate {
@@ -43,6 +45,8 @@ impl TryFrom<Row> for Rate {
             rate_date: r.rate_date,
             currency_code: r.currency_code,
             rate: r.rate,
+            entered: r.entered,
+            inverted: r.inverted,
         })
     }
 }
@@ -56,14 +60,16 @@ fn bad_value(column: &str, value: &str) -> AppError {
 impl RateRepository for PostgresRateRepository {
     async fn insert(&self, item: &Rate) -> AppResult<()> {
         sqlx::query(
-            "INSERT INTO fb_rates (id, user_id, rate_date, currency_code, rate) \
-             VALUES ($1, $2, $3, $4, $5)",
+            "INSERT INTO fb_rates (id, user_id, rate_date, currency_code, rate, entered, inverted) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
         )
         .bind(item.id)
         .bind(item.user_id)
         .bind(item.rate_date)
         .bind(&item.currency_code)
         .bind(item.rate)
+        .bind(item.entered)
+        .bind(item.inverted)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -71,7 +77,7 @@ impl RateRepository for PostgresRateRepository {
 
     async fn update(&self, item: &Rate) -> AppResult<()> {
         let result = sqlx::query(
-            "UPDATE fb_rates SET rate_date = $3, currency_code = $4, rate = $5 \
+            "UPDATE fb_rates SET rate_date = $3, currency_code = $4, rate = $5, entered = $6, inverted = $7 \
              WHERE user_id = $1 AND id = $2",
         )
         .bind(item.user_id)
@@ -79,6 +85,8 @@ impl RateRepository for PostgresRateRepository {
         .bind(item.rate_date)
         .bind(&item.currency_code)
         .bind(item.rate)
+        .bind(item.entered)
+        .bind(item.inverted)
         .execute(&self.pool)
         .await?;
         if result.rows_affected() == 0 {

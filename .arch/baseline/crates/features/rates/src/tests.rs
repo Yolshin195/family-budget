@@ -41,6 +41,8 @@ fn input(n: u32) -> RateInput {
         rate_date: day(n),
         currency_code: "REF1".to_string(),
         rate: rust_decimal::Decimal::new(1050, 2),
+        entered: rust_decimal::Decimal::new(1050, 2),
+        inverted: true,
     }
 }
 
