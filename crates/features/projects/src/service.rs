@@ -708,6 +708,23 @@ impl ProjectService {
         Ok(self.repo.user_by_sub(sub).await?.map(|u| u.id))
     }
 
+    /// Издатель access-токенов провайдера входа (для метаданных MCP-ресурса). `None` — вход не настроен.
+    pub async fn token_issuer(&self) -> Option<String> {
+        self.deps.identity.issuer().await
+    }
+
+    /// Пользователь по access-токену провайдера входа, выпущенному для ресурса `audience`:
+    /// (id пользователя, OAuth-клиент). `None` — токен не прошёл проверку или пользователя у нас нет.
+    pub async fn verify_access_token(&self, token: &str, audience: &str) -> AppResult<Option<(Uuid, String)>> {
+        let Some(t) = self.deps.identity.verify_access_token(token, audience).await? else { return Ok(None) };
+        Ok(self.repo.user_by_sub(&t.sub).await?.filter(|u| u.rauthy_sub != GUEST_SUB).map(|u| (u.id, t.client_id)))
+    }
+
+    /// Записать событие другой фичи в журнал безопасности (например, действия ассистента через MCP).
+    pub async fn record_event(&self, user_id: Uuid, project_id: Option<Uuid>, action: &str, meta: &RequestMeta, details: &[(&str, String)]) {
+        self.audit(audit_event(Some(user_id), project_id, action, meta, details)).await;
+    }
+
     /// Проекты пользователя (id, вид, название).
     pub async fn projects_of(&self, user_id: Uuid) -> AppResult<Vec<(Uuid, ProjectKind, String)>> {
         Ok(self.repo.projects_of(user_id).await?.into_iter().map(|(p, _)| (p.id, p.kind, p.name)).collect())

@@ -9,7 +9,7 @@ use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use uuid::Uuid;
 
-use crate::domain::{ApiToken, AuditEvent, Invite, Member, Project, ProjectKind, SessionRecord, User, VerifiedLogin};
+use crate::domain::{AccessToken, ApiToken, AuditEvent, Invite, Member, Project, ProjectKind, SessionRecord, User, VerifiedLogin};
 
 /// Пользователи, проекты, участники.
 #[async_trait]
@@ -108,6 +108,11 @@ pub trait IdentityProvider: Send + Sync {
     async fn logout_url(&self, post_logout: &str) -> Option<String>;
     /// Удалить пользователя в Rauthy (удаление аккаунта). `Ok(false)` — нет API-ключа, удалить вручную.
     async fn delete_user(&self, sub: &str) -> AppResult<bool>;
+    /// Издатель токенов (`issuer` из discovery) — для метаданных защищённого ресурса (RFC 9728).
+    async fn issuer(&self) -> Option<String>;
+    /// Проверить access-токен провайдера, выпущенный для ресурса `audience` (RFC 8707): подпись по
+    /// JWKS, `iss`, срок, `aud`, тип токена. `Ok(None)` — токен не прошёл проверку.
+    async fn verify_access_token(&self, token: &str, audience: &str) -> AppResult<Option<AccessToken>>;
 }
 
 /// Начальное наполнение нового проекта (базовая валюта, категории) — реализуется в app/wiring

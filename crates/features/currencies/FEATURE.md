@@ -5,7 +5,7 @@
 - **Тип:** directory
 - **Крейт:** `crates/features/currencies` (Cargo-флаг приложения `currencies`)
 - **Таблица:** `fb_currencies`
-- **Сгенерирована** из `feature.json` по эталону v1
+- **Сгенерирована** из `feature.json` по эталону v2
 
 ## Поля
 

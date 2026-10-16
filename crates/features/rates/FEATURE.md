@@ -6,7 +6,7 @@
 - **Крейт:** `crates/features/rates` (Cargo-флаг приложения `rates`)
 - **Зависит от:** `currencies` — через порты `CurrenciesLookup`, связка в `crates/app/src/wiring/wire_rates.rs`
 - **Таблица:** `fb_rates`
-- **Сгенерирована** из `feature.json` по эталону v1
+- **Сгенерирована** из `feature.json` по эталону v2
 
 ## Поля
 

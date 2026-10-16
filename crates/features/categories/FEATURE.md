@@ -5,7 +5,7 @@
 - **Тип:** directory
 - **Крейт:** `crates/features/categories` (Cargo-флаг приложения `categories`)
 - **Таблица:** `fb_categories`
-- **Сгенерирована** из `feature.json` по эталону v1
+- **Сгенерирована** из `feature.json` по эталону v2
 
 ## Поля
 

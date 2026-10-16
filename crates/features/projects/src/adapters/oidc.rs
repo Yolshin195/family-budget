@@ -9,14 +9,17 @@ use async_trait::async_trait;
 use kernel::config::Oidc;
 use kernel::error::{AppError, AppResult};
 use kernel::i18n::Lang;
-use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreIdToken, CoreIdTokenVerifier, CoreProviderMetadata};
-use openidconnect::{
-    AsyncHttpClient, AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpRequest, IssuerUrl, Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope,
-    TokenResponse, reqwest,
+use openidconnect::core::{
+    CoreAuthenticationFlow, CoreClient, CoreIdToken, CoreIdTokenVerifier, CoreJsonWebKeySet, CoreJsonWebKeyUse, CoreJwsSigningAlgorithm, CoreProviderMetadata,
 };
+use openidconnect::{
+    AsyncHttpClient, AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpRequest, IssuerUrl, JsonWebKey, JsonWebKeyAlgorithm, Nonce, PkceCodeChallenge,
+    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, reqwest,
+};
+use serde::Deserialize;
 use tokio::sync::RwLock;
 
-use crate::domain::VerifiedLogin;
+use crate::domain::{AccessToken, VerifiedLogin};
 use crate::ports::{AuthRequest, IdentityProvider};
 
 const REFRESH: Duration = Duration::from_secs(3600);
@@ -136,6 +139,97 @@ impl RauthyProvider {
     }
 }
 
+/// Запас на расхождение часов при проверке сроков токена, секунд.
+const LEEWAY: i64 = 60;
+
+#[derive(Deserialize)]
+struct JwsHeader {
+    alg: CoreJwsSigningAlgorithm,
+    kid: Option<String>,
+    typ: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AccessClaims {
+    iss: String,
+    sub: Option<String>,
+    aud: serde_json::Value,
+    exp: i64,
+    nbf: Option<i64>,
+    /// Rauthy: `Bearer` у access-токена, `Id` — у ID-токена.
+    typ: Option<String>,
+    azp: Option<String>,
+    /// RFC 9068: клиент — в `client_id`.
+    client_id: Option<String>,
+    /// Токен привязан к ключу клиента (DPoP) — как обычный Bearer его принимать нельзя.
+    cnf: Option<serde_json::Value>,
+}
+
+/// Проверить JWT access-токен: подпись ключом из JWKS (по `kid`, только асимметричные алгоритмы),
+/// `iss`, `exp`/`nbf` (запас 60 с), `aud` содержит ресурс, это именно access-токен (не ID и не
+/// refresh), без привязки DPoP. Отдельно от провайдера — чтобы покрыть тестами.
+pub fn verify_access_jwt(token: &str, jwks: &CoreJsonWebKeySet, issuer: &str, audience: &str, now: i64) -> Result<AccessToken, String> {
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let b64 = |part: &str| URL_SAFE_NO_PAD.decode(part).map_err(|_| "токен: неверный base64".to_string());
+    let parts: Vec<&str> = token.split('.').collect();
+    let [header_b64, claims_b64, signature_b64] = parts[..] else { return Err("токен: не JWS".into()) };
+    let header: JwsHeader = serde_json::from_slice(&b64(header_b64)?).map_err(|e| format!("токен: заголовок: {e}"))?;
+    if matches!(
+        header.alg,
+        CoreJwsSigningAlgorithm::HmacSha256 | CoreJwsSigningAlgorithm::HmacSha384 | CoreJwsSigningAlgorithm::HmacSha512 | CoreJwsSigningAlgorithm::None
+    ) {
+        return Err("токен: алгоритм подписи не разрешён".into());
+    }
+    if header.typ.as_deref().is_some_and(|t| !t.eq_ignore_ascii_case("jwt") && !t.eq_ignore_ascii_case("at+jwt")) {
+        return Err("токен: не access-токен (typ)".into());
+    }
+    let signature = b64(signature_b64)?;
+    let message = format!("{header_b64}.{claims_b64}");
+    let signed = jwks
+        .keys()
+        .iter()
+        .filter(|k| match (&header.kid, k.key_id()) {
+            (Some(kid), Some(id)) => id.as_str() == kid,
+            (Some(_), None) => false,
+            (None, _) => true,
+        })
+        .filter(|k| k.key_use().is_none_or(|u| *u == CoreJsonWebKeyUse::Signature))
+        .filter(|k| match k.signing_alg() {
+            JsonWebKeyAlgorithm::Algorithm(a) => *a == header.alg,
+            JsonWebKeyAlgorithm::Unspecified => true,
+            _ => false,
+        })
+        .any(|k| k.verify_signature(&header.alg, message.as_bytes(), &signature).is_ok());
+    if !signed {
+        return Err("токен: подпись не подходит ни к одному ключу провайдера".into());
+    }
+    let c: AccessClaims = serde_json::from_slice(&b64(claims_b64)?).map_err(|e| format!("токен: claims: {e}"))?;
+    if c.iss != issuer {
+        return Err("токен: чужой издатель".into());
+    }
+    if c.exp + LEEWAY < now || c.nbf.is_some_and(|nbf| nbf - LEEWAY > now) {
+        return Err("токен: истёк или ещё не действует".into());
+    }
+    let audience_ok = match &c.aud {
+        serde_json::Value::String(a) => a == audience,
+        serde_json::Value::Array(list) => list.iter().any(|a| a.as_str() == Some(audience)),
+        _ => false,
+    };
+    if !audience_ok {
+        return Err("токен: выпущен не для этого ресурса (aud)".into());
+    }
+    if c.typ.as_deref().is_some_and(|t| t != "Bearer") {
+        return Err("токен: не access-токен".into());
+    }
+    if c.cnf.is_some() {
+        return Err("токен: привязан к ключу клиента (DPoP)".into());
+    }
+    let sub = c.sub.filter(|s| !s.is_empty()).ok_or_else(|| "токен: нет sub".to_string())?;
+    let client_id = c.azp.or(c.client_id).unwrap_or_default();
+    Ok(AccessToken { sub, client_id })
+}
+
 /// Проверить ID-токен и достать из него пользователя. Отдельно — чтобы покрыть тестами.
 pub fn verify_id_token(token: &CoreIdToken, verifier: &CoreIdTokenVerifier<'_>, nonce: &str) -> Result<VerifiedLogin, String> {
     let claims = token.claims(verifier, &Nonce::new(nonce.to_string())).map_err(|e| e.to_string())?;
@@ -224,6 +318,34 @@ impl IdentityProvider for RauthyProvider {
             Err(unavailable(format!("удаление пользователя: HTTP {}", resp.status())))
         }
     }
+
+    async fn issuer(&self) -> Option<String> {
+        self.discovered(false).await.ok().map(|(m, _)| m.issuer().as_str().to_string())
+    }
+
+    async fn verify_access_token(&self, token: &str, audience: &str) -> AppResult<Option<AccessToken>> {
+        let (metadata, _) = self.discovered(false).await?;
+        let now = chrono::Utc::now().timestamp();
+        match verify_access_jwt(token, metadata.jwks(), metadata.issuer().as_str(), audience, now) {
+            Ok(t) => Ok(Some(t)),
+            Err(_) if self.stale(STALE_FOR_RETRY).await => {
+                // Возможно, Rauthy сменил ключ подписи. Перечитываем не чаще раза в минуту —
+                // поток мусорных токенов не должен превращаться в поток запросов к Rauthy.
+                let (fresh, _) = self.discovered(true).await?;
+                Ok(verify_access_jwt(token, fresh.jwks(), fresh.issuer().as_str(), audience, now).ok())
+            }
+            Err(_) => Ok(None),
+        }
+    }
+}
+
+/// Перечитать JWKS ради неизвестного токена можно, если кэшу больше минуты.
+const STALE_FOR_RETRY: Duration = Duration::from_secs(60);
+
+impl RauthyProvider {
+    async fn stale(&self, age: Duration) -> bool {
+        self.cache.read().await.as_ref().is_none_or(|d| d.at.elapsed() >= age)
+    }
 }
 
 /// Rauthy не настроен (разработка без OIDC): вход только через `DEV_LOGIN`.
@@ -245,6 +367,12 @@ impl IdentityProvider for DisabledProvider {
     }
     async fn delete_user(&self, _sub: &str) -> AppResult<bool> {
         Ok(false)
+    }
+    async fn issuer(&self) -> Option<String> {
+        None
+    }
+    async fn verify_access_token(&self, _token: &str, _audience: &str) -> AppResult<Option<AccessToken>> {
+        Ok(None)
     }
 }
 
@@ -327,6 +455,85 @@ mod tests {
     fn token_signed_by_another_key_is_rejected() {
         let t = token(ISSUER, CLIENT, "n-1", ChronoDuration::minutes(5), OTHER_KEY);
         assert!(verify_id_token(&t, &verifier(), "n-1").is_err());
+    }
+
+    // ------------------------------------------------ access-токены (MCP, RFC 8707)
+
+    const RESOURCE: &str = "https://budget.example.test/mcp";
+
+    fn jwks() -> CoreJsonWebKeySet {
+        CoreJsonWebKeySet::new(vec![key(KEY).as_verification_key()])
+    }
+
+    fn jws(header: serde_json::Value, claims: serde_json::Value, signing: &str) -> String {
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let msg = format!("{}.{}", URL_SAFE_NO_PAD.encode(header.to_string()), URL_SAFE_NO_PAD.encode(claims.to_string()));
+        let sig = key(signing).sign(&CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256, msg.as_bytes()).unwrap();
+        format!("{msg}.{}", URL_SAFE_NO_PAD.encode(sig))
+    }
+
+    fn header() -> serde_json::Value {
+        serde_json::json!({"alg": "RS256", "kid": "k1", "typ": "JWT"})
+    }
+
+    fn claims(now: i64) -> serde_json::Value {
+        serde_json::json!({"iss": ISSUER, "sub": "rauthy-user-1", "aud": ["claude", RESOURCE], "exp": now + 300, "nbf": now - 10, "iat": now - 10, "typ": "Bearer", "azp": "claude"})
+    }
+
+    fn with(now: i64, key: &str, value: serde_json::Value) -> serde_json::Value {
+        let mut c = claims(now);
+        c[key] = value;
+        c
+    }
+
+    #[test]
+    fn access_token_for_this_resource_is_accepted() {
+        let now = Utc::now().timestamp();
+        let t = verify_access_jwt(&jws(header(), claims(now), KEY), &jwks(), ISSUER, RESOURCE, now).unwrap();
+        assert_eq!(t, AccessToken { sub: "rauthy-user-1".into(), client_id: "claude".into() });
+        let single = with(now, "aud", serde_json::json!(RESOURCE));
+        assert!(verify_access_jwt(&jws(header(), single, KEY), &jwks(), ISSUER, RESOURCE, now).is_ok(), "aud строкой");
+    }
+
+    #[test]
+    fn access_token_for_another_resource_is_rejected() {
+        let now = Utc::now().timestamp();
+        let c = with(now, "aud", serde_json::json!(["claude", "https://other.example.test/mcp"]));
+        assert!(verify_access_jwt(&jws(header(), c, KEY), &jwks(), ISSUER, RESOURCE, now).is_err());
+    }
+
+    #[test]
+    fn access_token_checks_issuer_expiry_and_signature() {
+        let now = Utc::now().timestamp();
+        let check = |c: serde_json::Value, signing: &str| verify_access_jwt(&jws(header(), c, signing), &jwks(), ISSUER, RESOURCE, now);
+        assert!(check(with(now, "iss", serde_json::json!("https://evil.example.test/auth/v1")), KEY).is_err(), "чужой издатель");
+        assert!(check(with(now, "exp", serde_json::json!(now - 120)), KEY).is_err(), "истёк");
+        assert!(check(with(now, "nbf", serde_json::json!(now + 600)), KEY).is_err(), "ещё не действует");
+        assert!(check(claims(now), OTHER_KEY).is_err(), "чужой ключ");
+    }
+
+    #[test]
+    fn id_refresh_and_dpop_tokens_are_not_access_tokens() {
+        let now = Utc::now().timestamp();
+        let check = |c: serde_json::Value| verify_access_jwt(&jws(header(), c, KEY), &jwks(), ISSUER, RESOURCE, now);
+        assert!(check(with(now, "typ", serde_json::json!("Id"))).is_err(), "ID-токен");
+        assert!(check(with(now, "typ", serde_json::json!("Refresh"))).is_err(), "refresh-токен");
+        assert!(check(with(now, "cnf", serde_json::json!({"jkt": "x"}))).is_err(), "DPoP");
+    }
+
+    #[test]
+    fn symmetric_and_none_algorithms_are_rejected() {
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let now = Utc::now().timestamp();
+        for alg in ["HS256", "none"] {
+            let h = serde_json::json!({"alg": alg, "kid": "k1"});
+            let unsigned = format!("{}.{}.", URL_SAFE_NO_PAD.encode(h.to_string()), URL_SAFE_NO_PAD.encode(claims(now).to_string()));
+            assert!(verify_access_jwt(&unsigned, &jwks(), ISSUER, RESOURCE, now).is_err(), "{alg}");
+        }
+        let unknown_kid = serde_json::json!({"alg": "RS256", "kid": "other"});
+        assert!(verify_access_jwt(&jws(unknown_kid, claims(now), KEY), &jwks(), ISSUER, RESOURCE, now).is_err());
     }
 }
 
