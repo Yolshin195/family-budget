@@ -248,8 +248,9 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
     for c in ["USD", "RUB"] {
         ensure_currency(&s.currencies, p, c, ru).await?;
     }
-    for (cur, rate, back) in [("USD", "33.80", 2), ("USD", "33.25", 0), ("RUB", "0.39", 2), ("RUB", "0.37", 0)] {
-        s.rates.create(p, rates::dto::RateInput { rate_date: day(back, 1), currency_code: cur.into(), rate: dec(rate) }).await?;
+    // Доллар — «1 USD = x THB», рубль — как котируют банки: «1 THB = x RUB».
+    for (cur, rate, inverted, back) in [("USD", "33.80", false, 2), ("USD", "33.25", false, 0), ("RUB", "2.56", true, 2), ("RUB", "2.70", true, 0)] {
+        s.rates.create(p, rates::dto::RateInput { rate_date: day(back, 1), currency_code: cur.into(), rate: dec(rate), inverted }).await?;
     }
     account(s, p, me, "CASH", "CASH", "THB", "4500", None, ru, ("Наличные", "Cash", "เงินสด")).await?;
     account(s, p, me, "CARD_KBANK", "CARD", "THB", "62000", Some(me), ru, ("Карта KBank", "KBank card", "บัตรกสิกร")).await?;

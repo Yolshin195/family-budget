@@ -14,8 +14,12 @@ pub struct RateInput {
     pub rate_date: chrono::NaiveDate,
     /// Валюта
     pub currency_code: String,
-    /// Сколько единиц базовой валюты за 1 единицу валюты
+    /// Сколько единиц базовой валюты за 1 единицу валюты (считается из entered и inverted)
     pub rate: rust_decimal::Decimal,
+    /// Курс ровно в том виде, в каком его ввели
+    pub entered: rust_decimal::Decimal,
+    /// Направление ввода: false — 1 валюта = entered базовой; true — 1 базовая = entered валюты
+    pub inverted: bool,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -25,8 +29,12 @@ pub struct RateDto {
     pub rate_date: chrono::NaiveDate,
     /// Валюта
     pub currency_code: String,
-    /// Сколько единиц базовой валюты за 1 единицу валюты
+    /// Сколько единиц базовой валюты за 1 единицу валюты (считается из entered и inverted)
     pub rate: rust_decimal::Decimal,
+    /// Курс ровно в том виде, в каком его ввели
+    pub entered: rust_decimal::Decimal,
+    /// Направление ввода: false — 1 валюта = entered базовой; true — 1 базовая = entered валюты
+    pub inverted: bool,
 }
 
 /// Фильтр по `rate_date`, границы включительно.
@@ -43,6 +51,8 @@ impl From<Rate> for RateDto {
             rate_date: x.rate_date,
             currency_code: x.currency_code,
             rate: x.rate,
+            entered: x.entered,
+            inverted: x.inverted,
         }
     }
 }
@@ -53,6 +63,8 @@ impl RateInput {
             rate_date: self.rate_date,
             currency_code: self.currency_code,
             rate: self.rate,
+            entered: self.entered,
+            inverted: self.inverted,
         })
     }
 }

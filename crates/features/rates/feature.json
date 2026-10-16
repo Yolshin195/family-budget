@@ -19,7 +19,17 @@
     {
       "name": "rate",
       "type": "decimal",
-      "description": "Сколько единиц базовой валюты за 1 единицу валюты"
+      "description": "Сколько единиц базовой валюты за 1 единицу валюты (считается из entered и inverted)"
+    },
+    {
+      "name": "entered",
+      "type": "decimal",
+      "description": "Курс ровно в том виде, в каком его ввели"
+    },
+    {
+      "name": "inverted",
+      "type": "bool",
+      "description": "Направление ввода: false — 1 валюта = entered базовой; true — 1 базовая = entered валюты"
     }
   ]
 }

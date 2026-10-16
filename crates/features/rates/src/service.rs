@@ -80,6 +80,24 @@ impl RateService {
         Ok(items.into_iter().map(Into::into).collect())
     }
 
+    /// Последний (по дате) курс каждой валюты — для подсказки и направления в форме.
+    pub async fn latest_by_currency(&self, project_id: Uuid) -> AppResult<Vec<RateDto>> {
+        let mut latest: Vec<RateDto> = Vec::new();
+        for r in self.all(project_id).await? {
+            if !latest.iter().any(|l| l.currency_code == r.currency_code) {
+                latest.push(r);
+            }
+        }
+        Ok(latest)
+    }
+
+    /// Направление ввода по умолчанию: как у последнего курса валюты; курсов нет — прямое
+    /// («1 валюта = x базовой»). Других правил нет: направление выбирает пользователь.
+    pub async fn default_inverted(&self, project_id: Uuid, currency_code: &str) -> AppResult<bool> {
+        let code = currency_code.trim().to_uppercase();
+        Ok(self.latest_by_currency(project_id).await?.into_iter().find(|r| r.currency_code == code).is_some_and(|r| r.inverted))
+    }
+
     /// Варианты для поля-ссылки в форме.
     pub async fn ref_choices(&self, project_id: Uuid, lang: kernel::i18n::Lang) -> AppResult<Vec<kernel::web::Choice>> {
         self.deps.currencies.choices(project_id, lang).await

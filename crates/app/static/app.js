@@ -380,7 +380,76 @@
       });
     }
   }
-  function bindPage(scope) { bindFilters(scope || doc); bindKindToggles(scope || doc); bindTxForms(scope || doc); bindReconcile(scope || doc); bindCheckAll(scope || doc); }
+  // Курс валюты (справочник «Курсы»): направление ввода выбирает пользователь кнопкой ⇄ — «1 RUB = x THB» или
+  // «1 THB = x RUB» (скрытое поле inverted). Новая валюта открывается в направлении её прошлого курса.
+  // Подсказка «последний: …», предпросмотр пересчёта и предупреждение, если курс отличается от прошлого больше
+  // чем в 5 раз. Курс к базовой в data-rate у <option> — базовой за 1 единицу валюты.
+  function fmtRateSig(v) { return new Intl.NumberFormat(locale, v >= 1 ? { maximumFractionDigits: 4 } : { maximumSignificantDigits: 4 }).format(v); }
+  function bindRateForms(scope) {
+    $$('form[data-rate-form]', scope).forEach(function (form) {
+      if (form.dataset.bound) return;
+      form.dataset.bound = '1';
+      var t = form.dataset, base = t.base, sel = $('select[name=currency_code]', form), input = $('input[name=rate]', form);
+      var inv = $('[data-rate-inverted]', form), last = $('[data-rate-last]', form), preview = $('[data-rate-preview]', form);
+      var warn = $('[data-rate-warn]', form), warnText = $('[data-rate-warn-text]', form);
+      var plain = function (v) { return String(Math.round(v * 1e6) / 1e6); };
+      var isInv = function () { return inv.value === 'true'; };
+      var cur = function () { return sel.value; };
+      function prev() {
+        var o = sel.selectedOptions[0], r = o ? parseFloat(o.dataset.rate) : NaN;
+        return r > 0 ? { rate: r, entered: parseFloat(o.dataset.entered), inverted: o.dataset.inverted === 'true', date: o.dataset.date } : null;
+      }
+      // Прошлый курс в выбранном направлении: введённое число как есть, иначе пересчитанное.
+      function prevValue(p) { return p.inverted === isInv() ? p.entered : isInv() ? 1 / p.rate : p.rate; }
+      function sync() {
+        var c = cur(), i = isInv(), p = prev(), from = i ? base : c, to = i ? c : base;
+        $$('[data-rate-from]', form).forEach(function (el) { el.textContent = from; });
+        $$('[data-rate-to]', form).forEach(function (el) { el.textContent = to; });
+        var dir = $('[data-rate-dir]', form); if (dir) dir.textContent = '1 ' + from + ' = … ' + to;
+        var pv = p ? prevValue(p) : NaN, pText = p ? fmtRateSig(pv) + ' · ' + p.date : '';
+        input.placeholder = p ? plain(pv) : '';
+        last.textContent = p ? t.tLast + ': ' + pText : '';
+        last.hidden = !p;
+        var v = evalAmount(input.value);
+        if (!(v > 0) || !c) { preview.textContent = ''; warn.hidden = true; return; }
+        var rate = i ? 1 / v : v;  // базовой за 1 единицу валюты
+        var n = Math.max(100, Math.pow(10, Math.ceil(Math.log10(100 / rate))));
+        var whole = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 });
+        preview.textContent = '= ' + (i ? fmtRateSig(rate) + ' ' + base + ' ' + t.tPer + ' 1 ' + c : fmtRateSig(1 / rate) + ' ' + c + ' ' + t.tPer + ' 1 ' + base) +
+          ' · ' + whole.format(n) + ' ' + c + ' ≈ ' + whole.format(n * rate) + ' ' + base;
+        var k = p ? v / pv : 1;
+        if (k > 5 || k < 0.2) {
+          warnText.textContent = (k < 1 ? t.tLess : t.tMore).replace('{k}', Math.round(k < 1 ? 1 / k : k)) + ' (' + pText + '). ' + t.tCheck;
+          warn.hidden = false;
+        } else warn.hidden = true;
+      }
+      function setInv(v) { inv.value = v ? 'true' : 'false'; }
+      form.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-rate-swap]');
+        if (!b) return;
+        var v = evalAmount(input.value);
+        setInv(!isInv());
+        // ⇄ — тот же курс в другую сторону (число пересчитывается; обратно — снова введённое),
+        // «Поменять направление» из предупреждения — то же число, но в другую сторону.
+        if (b.dataset.rateSwap === 'convert' && v > 0) {
+          var back = input.dataset.swapBack, typed = input.value;
+          input.value = back && input.dataset.swapped === typed ? back : plain(1 / v);
+          input.dataset.swapBack = typed; input.dataset.swapped = input.value;
+        }
+        sync();
+        input.focus();
+      });
+      sel.addEventListener('change', function () {
+        var p = prev();
+        setInv(p ? p.inverted : false);
+        delete input.dataset.swapBack;
+        sync();
+      });
+      input.addEventListener('input', sync);
+      sync();
+    });
+  }
+  function bindPage(scope) { bindFilters(scope || doc); bindKindToggles(scope || doc); bindTxForms(scope || doc); bindReconcile(scope || doc); bindCheckAll(scope || doc); bindRateForms(scope || doc); }
   bindPage(doc);
 
   /* ---------------------------------------------------------------- быстрый расход (раздел 10) */

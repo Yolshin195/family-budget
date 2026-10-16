@@ -706,7 +706,7 @@ async fn directory_tools_need_their_right_and_are_hidden_without_it() {
     }
     let err = e.svc.add_account(&c, add_account("KBANK", "THB")).await.unwrap_err();
     assert!(err.0.contains("accounts:write"), "{}", err.0);
-    let err = e.svc.set_rate(&c, SetRateArgs { currency: "USD".into(), rate: "36.5".into(), date: None }).await.unwrap_err();
+    let err = e.svc.set_rate(&c, SetRateArgs { currency: "USD".into(), rate: Some("36.5".into()), ..Default::default() }).await.unwrap_err();
     assert!(err.0.contains("rates:write"), "{}", err.0);
     assert!(e.svc.add_plan(&c, AddPlanArgs { name: "Аренда".into(), kind: "expense".into(), account: "CARD".into(), category: Some("FOOD".into()), amount: "100".into(), recurrence: "monthly".into(), ..Default::default() }).await.is_err());
     assert_eq!(e.dirs.accounts.lock().unwrap().len(), 2, "ничего не создано");
@@ -761,7 +761,7 @@ async fn personal_write_token_can_do_everything() {
     e.svc.add_currency(&c, AddCurrencyArgs { code: "gbp".into(), name: "Фунт".into(), symbol: "£".into(), ..Default::default() }).await.unwrap();
     e.svc.add_account(&c, AddAccountArgs { opening_balance: Some("500".into()), ..add_account("KBANK", "THB") }).await.unwrap();
     e.svc.add_category(&c, AddCategoryArgs { code: "PETS".into(), name: "Питомцы".into(), kind: Some("expense".into()), ..Default::default() }).await.unwrap();
-    e.svc.set_rate(&c, SetRateArgs { currency: "GBP".into(), rate: "45".into(), date: None }).await.unwrap();
+    e.svc.set_rate(&c, SetRateArgs { currency: "GBP".into(), rate: Some("45".into()), ..Default::default() }).await.unwrap();
     e.svc.set_limit(&c, SetLimitArgs { category: "PETS".into(), amount: "3000".into(), ..Default::default() }).await.unwrap();
     let plan = AddPlanArgs { name: "Корм".into(), kind: "expense".into(), account: "KBANK".into(), category: Some("PETS".into()), amount: "900".into(), recurrence: "monthly".into(), ..Default::default() };
     e.svc.add_plan(&c, plan).await.unwrap();
@@ -838,7 +838,7 @@ async fn references_by_name_in_ru_en_th() {
     assert_eq!((out.data["plan"]["account"].as_str(), out.data["plan"]["category"].as_str()), (Some("CARD"), Some("CARWASH")));
     assert!(out.summary.contains("every 2 weeks"), "{}", out.summary);
     // Валюта — по-английски, лимит — по-русски.
-    e.svc.set_rate(&c, SetRateArgs { currency: "us dollar".into(), rate: "36.5".into(), date: None }).await.unwrap();
+    e.svc.set_rate(&c, SetRateArgs { currency: "us dollar".into(), rate: Some("36.5".into()), ..Default::default() }).await.unwrap();
     assert_eq!(e.rates.rates.lock().unwrap()[0].currency, "USD");
     e.svc.set_limit(&c, SetLimitArgs { category: "кафе".into(), amount: "3000".into(), ..Default::default() }).await.unwrap();
     assert_eq!(e.limits.limits.lock().unwrap()[0].category_code, "CAFE");
@@ -852,24 +852,65 @@ async fn rate_is_upserted_by_currency_and_date_and_names_the_base_currency() {
     let e = env();
     e.grant(&["read", "rates:write"]).await;
     let c = e.caller(&e.oauth()).await;
-    let set = |rate: &str, date: &str| SetRateArgs { currency: "Доллар".into(), rate: rate.into(), date: Some(date.into()) };
+    let set = |rate: &str, date: &str| SetRateArgs { currency: "Доллар".into(), rate: Some(rate.into()), date: Some(date.into()), ..Default::default() };
     let out = e.svc.set_rate(&c, set("36.5", "2026-10-01")).await.unwrap();
     assert!(out.summary.contains("1 USD = 36.5 THB") && out.summary.contains("base currency"), "{}", out.summary);
     assert_eq!(out.data["base_currency"], "THB");
     let out = e.svc.set_rate(&c, set("36.7", "2026-10-01")).await.unwrap();
-    assert!(out.summary.contains("Replaced the previous rate 36.5"), "{}", out.summary);
+    assert!(out.summary.contains("Replaced the previous rate 1 USD = 36.5 THB"), "{}", out.summary);
     assert_eq!(e.rates.rates.lock().unwrap().len(), 1, "та же дата — тот же курс");
     assert_eq!(e.rates.rates.lock().unwrap()[0].rate, d("36.7"));
     // Перевёрнутый курс (THB за USD вместо USD → THB) — предупреждение о направлении.
     let out = e.svc.set_rate(&c, set("0.0272", "2026-10-02")).await.unwrap();
     assert!(out.summary.contains("Check the direction"), "{}", out.summary);
     assert_eq!(e.rates.rates.lock().unwrap().len(), 2);
-    let err = e.svc.set_rate(&c, SetRateArgs { currency: "THB".into(), rate: "1".into(), date: None }).await.unwrap_err();
+    let err = e.svc.set_rate(&c, SetRateArgs { currency: "THB".into(), rate: Some("1".into()), ..Default::default() }).await.unwrap_err();
     assert!(err.0.contains("base currency"), "{}", err.0);
     assert!(e.svc.set_rate(&c, set("-1", "2026-10-03")).await.is_err(), "курс > 0");
     let list = e.svc.list_rates(&c, ListRatesArgs { currency: Some("USD".into()), ..Default::default() }).await.unwrap();
     assert_eq!(list.data["total"], 2);
     assert_eq!(list.data["latest"][0]["date"], "2026-10-02");
+}
+
+/// Issue #22: курс можно передать в обратную сторону — «1 THB = 2.5 RUB».
+#[tokio::test]
+async fn rate_can_be_set_as_inverse_rate() {
+    let e = env();
+    e.grant(&["read", "currencies:write", "rates:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    e.svc.add_currency(&c, AddCurrencyArgs { code: "RUB".into(), name: "Рубль".into(), symbol: "₽".into(), ..Default::default() }).await.unwrap();
+    let inv = |v: &str, date: &str| SetRateArgs { currency: "RUB".into(), inverse_rate: Some(v.into()), date: Some(date.into()), ..Default::default() };
+    let out = e.svc.set_rate(&c, inv("2.50", "2026-10-16")).await.unwrap();
+    assert!(out.summary.contains("1 THB = 2.5 RUB (1 RUB = 0.4 THB)"), "{}", out.summary);
+    let saved = e.rates.rates.lock().unwrap()[0].clone();
+    assert_eq!((saved.rate, saved.entered, saved.inverted), (d("0.4"), d("2.5"), true));
+    assert_eq!(d("1000") * saved.rate, d("400"), "1000 ₽ = 400 ฿");
+    assert_eq!(out.data["rate"]["inverse_rate"], "2.5");
+    assert_eq!(out.data["rate"]["meaning"], "1 RUB = 0.4 THB");
+
+    // Число в той же стороне, но перепутано направление — подсказка про rate.
+    let out = e.svc.set_rate(&c, inv("0.4", "2026-10-17")).await.unwrap();
+    assert!(out.summary.contains("Check the direction") && out.summary.contains("rate instead of inverse_rate"), "{}", out.summary);
+
+    // Ровно одно из двух.
+    let both = SetRateArgs { currency: "RUB".into(), rate: Some("0.4".into()), inverse_rate: Some("2.5".into()), ..Default::default() };
+    let err = e.svc.set_rate(&c, both).await.unwrap_err();
+    assert!(err.0.contains("exactly one"), "{}", err.0);
+    let err = e.svc.set_rate(&c, SetRateArgs { currency: "RUB".into(), ..Default::default() }).await.unwrap_err();
+    assert!(err.0.contains("inverse_rate"), "{}", err.0);
+    assert!(e.svc.set_rate(&c, inv("0", "2026-10-18")).await.is_err(), "курс > 0");
+    assert!(e.svc.set_rate(&c, inv("0.0000001", "2026-10-18")).await.is_err(), "не больше 6 знаков");
+    assert_eq!(e.rates.rates.lock().unwrap().len(), 2);
+
+    // list_rates отдаёт оба направления.
+    let list = e.svc.list_rates(&c, ListRatesArgs { currency: Some("RUB".into()), ..Default::default() }).await.unwrap();
+    let first = &list.data["rates"][1];
+    assert_eq!((first["rate"].as_str(), first["inverse_rate"].as_str(), first["inverted"].as_bool()), (Some("0.4"), Some("2.5"), Some(true)));
+    assert!(list.summary.contains("1 THB = 0.4 RUB"), "{}", list.summary);
+
+    // JSON-аргумент числом, как его пришлёт ассистент.
+    let args: SetRateArgs = serde_json::from_value(serde_json::json!({"currency": "RUB", "inverse_rate": 2.53, "date": "2026-10-19"})).unwrap();
+    assert_eq!(args.inverse_rate.as_deref(), Some("2.53"));
 }
 
 #[tokio::test]

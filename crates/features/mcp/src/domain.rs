@@ -420,7 +420,43 @@ pub struct Rate {
     pub id: Uuid,
     pub date: NaiveDate,
     pub currency: String,
+    /// Базовой за 1 единицу валюты; считается из `entered` и `inverted`.
     pub rate: Decimal,
+    /// Число, как его передали.
+    pub entered: Decimal,
+    /// `false` — 1 валюта = `entered` базовой; `true` — 1 базовая = `entered` валюты.
+    pub inverted: bool,
+}
+
+impl Rate {
+    /// Курс из введённого числа и направления (как в фиче `rates`: 12 знаков у пересчитанного).
+    pub fn entered(id: Uuid, date: NaiveDate, currency: String, entered: Decimal, inverted: bool) -> Self {
+        let rate = if inverted { invert(entered) } else { entered };
+        Self { id, date, currency, rate, entered, inverted }
+    }
+
+    /// Сколько единиц валюты за 1 единицу базовой.
+    pub fn inverse_rate(&self) -> Decimal {
+        if self.inverted { self.entered } else { invert(self.rate) }
+    }
+}
+
+fn invert(x: Decimal) -> Decimal {
+    if x.is_zero() { Decimal::ZERO } else { (Decimal::ONE / x).round_dp(12).normalize() }
+}
+
+/// Курс: число больше нуля, не больше 6 знаков после запятой (как хранит фича `rates`).
+pub fn parse_rate(field: &str, value: &str) -> Result<Decimal, String> {
+    let cleaned: String = value.chars().filter(|c| !c.is_whitespace()).collect::<String>().replace(',', ".");
+    let d: Decimal = cleaned.parse().map_err(|_| format!("{field}: '{value}' is not a number"))?;
+    let d = d.normalize();
+    if d <= Decimal::ZERO {
+        return Err(format!("{field}: the rate must be greater than zero"));
+    }
+    if d.scale() > 6 {
+        return Err(format!("{field}: at most 6 digits after the decimal point"));
+    }
+    Ok(d)
 }
 
 /// Правило лимита категории (фича `limits`): сумма в базовой валюте за период, действует с `valid_from`.

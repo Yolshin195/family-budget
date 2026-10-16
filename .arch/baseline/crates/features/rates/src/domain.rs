@@ -12,6 +12,8 @@ pub struct Rate {
     pub rate_date: chrono::NaiveDate,
     pub currency_code: String,
     pub rate: rust_decimal::Decimal,
+    pub entered: rust_decimal::Decimal,
+    pub inverted: bool,
 }
 
 /// Данные записи, которые задаёт пользователь (для создания и изменения).
@@ -20,6 +22,8 @@ pub struct RateData {
     pub rate_date: chrono::NaiveDate,
     pub currency_code: String,
     pub rate: rust_decimal::Decimal,
+    pub entered: rust_decimal::Decimal,
+    pub inverted: bool,
 }
 
 impl Rate {
@@ -30,6 +34,8 @@ impl Rate {
             rate_date: data.rate_date.clone(),
             currency_code: data.currency_code.clone(),
             rate: data.rate.clone(),
+            entered: data.entered.clone(),
+            inverted: data.inverted.clone(),
         };
         item.change(data)?;
         Ok(item)
@@ -39,6 +45,8 @@ impl Rate {
         self.rate_date = data.rate_date;
         self.currency_code = normalize("currency_code", &data.currency_code)?;
         self.rate = data.rate;
+        self.entered = data.entered;
+        self.inverted = data.inverted;
         Ok(())
     }
 }
