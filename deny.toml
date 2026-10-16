@@ -8,6 +8,10 @@ yanked = "deny"
 ignore = [
   # rsa (Marvin attack) — только проверка подписи публичным ключом, см. .cargo/audit.toml.
   { id = "RUSTSEC-2023-0071", reason = "rsa используется openidconnect только для проверки подписи публичным ключом" },
+  # zip 3.0.0 отозван (2026-10-13 отозваны все версии zip, кроме 9.0.3); обновиться некуда: utoipa-swagger-ui 9.x
+  # требует zip ^3.0, 10.x — ^8.6. zip — только build-зависимость: build.rs распаковывает вшитый архив Swagger UI
+  # из utoipa-swagger-ui-vendored (checksum в Cargo.lock), в бинарь не попадает. Снять, когда utoipa-swagger-ui перейдёт на zip ^9.
+  { crate = "zip@3.0.0", reason = "build-зависимость utoipa-swagger-ui, распаковывает только вшитый архив Swagger UI" },
 ]
 
 [licenses]
