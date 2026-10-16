@@ -11,7 +11,7 @@ use kernel::i18n::Lang;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::{BudgetReport, Grant, Occurrence, QuickInfo, Tx, TxDraft, TxFilter};
+use crate::domain::{Account, BudgetReport, Category, Currency, Grant, Limit, Occurrence, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter};
 
 #[async_trait]
 pub trait GrantRepository: Send + Sync {
@@ -45,11 +45,53 @@ pub trait Budget: Send + Sync {
     async fn report(&self, project_id: Uuid, base_currency: &str, view: &str, date: NaiveDate, lang: Lang) -> AppResult<BudgetReport>;
 }
 
-/// Плановые платежи (фича `planning`).
+/// Плановые операции и их платежи (фича `planning`). Удаления нет.
 #[async_trait]
 pub trait Plans: Send + Sync {
     async fn occurrences(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate, today: NaiveDate, lang: Lang) -> AppResult<Vec<Occurrence>>;
     async fn skip(&self, project_id: Uuid, user_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<()>;
+    /// Все планы проекта (и приостановленные).
+    async fn list(&self, project_id: Uuid) -> AppResult<Vec<Plan>>;
+    async fn create(&self, project_id: Uuid, user_id: Uuid, draft: &PlanDraft) -> AppResult<Plan>;
+    /// Изменить план целиком (в том числе приостановить: `active = false`).
+    async fn update(&self, project_id: Uuid, id: Uuid, draft: &PlanDraft) -> AppResult<Plan>;
+}
+
+/// Справочники: валюты, счета, категории (фичи `currencies`, `accounts`, `categories`). Ни удаления, ни
+/// архива: при изменении записи адаптер оставляет её текущий признак архива, что бы ни пришло.
+#[async_trait]
+pub trait Directories: Send + Sync {
+    /// Все валюты проекта, с архивными.
+    async fn currencies(&self, project_id: Uuid) -> AppResult<Vec<Currency>>;
+    async fn create_currency(&self, project_id: Uuid, currency: &Currency) -> AppResult<Currency>;
+    async fn update_currency(&self, project_id: Uuid, currency: &Currency) -> AppResult<Currency>;
+    /// Все счета проекта, с архивными.
+    async fn accounts(&self, project_id: Uuid) -> AppResult<Vec<Account>>;
+    async fn create_account(&self, project_id: Uuid, account: &Account) -> AppResult<Account>;
+    async fn update_account(&self, project_id: Uuid, account: &Account) -> AppResult<Account>;
+    /// Начальный остаток счёта на дату (операция OPENING в журнале); ноль — убрать.
+    async fn set_opening(&self, project_id: Uuid, user_id: Uuid, account_code: &str, amount: Decimal, date: NaiveDate) -> AppResult<()>;
+    /// Все категории проекта, с архивными.
+    async fn categories(&self, project_id: Uuid) -> AppResult<Vec<Category>>;
+    async fn create_category(&self, project_id: Uuid, category: &Category) -> AppResult<Category>;
+    async fn update_category(&self, project_id: Uuid, category: &Category) -> AppResult<Category>;
+}
+
+/// Курсы валют (фича `rates`). Удаления нет.
+#[async_trait]
+pub trait Rates: Send + Sync {
+    /// Курсы за период (границы включительно, `None` — без границы), новые сначала.
+    async fn list(&self, project_id: Uuid, from: Option<NaiveDate>, to: Option<NaiveDate>) -> AppResult<Vec<Rate>>;
+    async fn create(&self, project_id: Uuid, rate: &Rate) -> AppResult<Rate>;
+    async fn update(&self, project_id: Uuid, rate: &Rate) -> AppResult<Rate>;
+}
+
+/// Правила лимитов (фича `limits`). Удаления нет.
+#[async_trait]
+pub trait Limits: Send + Sync {
+    async fn list(&self, project_id: Uuid) -> AppResult<Vec<Limit>>;
+    async fn create(&self, project_id: Uuid, limit: &Limit) -> AppResult<Limit>;
+    async fn update(&self, project_id: Uuid, limit: &Limit) -> AppResult<Limit>;
 }
 
 /// Пользователи и журнал (фича `projects`): только проверка токенов и запись событий.
@@ -68,6 +110,9 @@ pub struct Deps {
     pub ledger: Arc<dyn Ledger>,
     pub budget: Arc<dyn Budget>,
     pub plans: Arc<dyn Plans>,
+    pub directories: Arc<dyn Directories>,
+    pub rates: Arc<dyn Rates>,
+    pub limits: Arc<dyn Limits>,
     pub accounts: Arc<dyn Accounts>,
     /// Проверка личных API-токенов (`fbt_…`) — порт ядра.
     pub authenticator: Arc<dyn Authenticator>,

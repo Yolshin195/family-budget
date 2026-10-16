@@ -47,7 +47,7 @@ limits = ["dep:limits", "categories"]
 planning = ["dep:planning", "transactions"]
 budget = ["dep:budget", "transactions", "planning", "limits", "rates"]
 site = ["dep:site"]
-mcp = ["dep:mcp", "projects", "transactions", "budget", "planning"]
+mcp = ["dep:mcp", "projects", "currencies", "accounts", "categories", "rates", "limits", "transactions", "budget", "planning"]
 # @arch:features:end
 # Демо-данные при пустой БД (не фича предметной области — флаг приложения).
 seed = ["budget"]

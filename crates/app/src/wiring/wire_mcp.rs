@@ -1,6 +1,9 @@
-//! Связка фичи `mcp`: операции (transactions), бюджет (budget), плановые платежи (planning),
-//! проверка токенов и журнал (projects). Типы фич переводятся в типы MCP здесь — фичи друг о друге
-//! не знают.
+//! Связка фичи `mcp`: операции (transactions), бюджет (budget), плановые операции (planning),
+//! справочники (currencies, accounts, categories), курсы (rates), лимиты (limits), проверка токенов и
+//! журнал (projects). Типы фич переводятся в типы MCP здесь — фичи друг о друге не знают.
+//!
+//! Архивировать через MCP нельзя: при изменении справочника признак `archived` берётся из текущей
+//! записи, а не из того, что пришло от ассистента.
 
 use std::sync::Arc;
 
@@ -13,7 +16,9 @@ use kernel::pagination::Pagination;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use ::mcp::{BudgetLine, BudgetReport, CategoryInfo, Occurrence, QuickInfo, Tx, TxDraft, TxFilter, TxLine};
+use ::mcp::{
+    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxLine,
+};
 
 pub struct LedgerAdapter(pub Arc<::transactions::Service>);
 
@@ -173,6 +178,261 @@ impl ::mcp::Plans for PlansAdapter {
 
     async fn skip(&self, project_id: Uuid, user_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<()> {
         self.0.skip(project_id, user_id, plan_id, date).await
+    }
+
+    async fn list(&self, project_id: Uuid) -> AppResult<Vec<Plan>> {
+        Ok(self.0.list(project_id).await?.into_iter().map(plan_from).collect())
+    }
+
+    async fn create(&self, project_id: Uuid, user_id: Uuid, draft: &PlanDraft) -> AppResult<Plan> {
+        Ok(plan_from(self.0.create(project_id, user_id, plan_input(draft)).await?))
+    }
+
+    async fn update(&self, project_id: Uuid, id: Uuid, draft: &PlanDraft) -> AppResult<Plan> {
+        Ok(plan_from(self.0.update(project_id, id, plan_input(draft)).await?))
+    }
+}
+
+fn name_from(text: String, lang: &str, ru: Option<String>, en: Option<String>, th: Option<String>) -> Name {
+    Name { text, lang: Lang::parse(lang).unwrap_or_default(), ru, en, th }
+}
+
+fn plan_from(p: ::planning::PlanDto) -> Plan {
+    Plan {
+        id: p.id,
+        draft: PlanDraft {
+            name: name_from(p.name, &p.name_lang, p.name_ru, p.name_en, p.name_th),
+            kind: p.tx_kind,
+            account_code: p.account_code,
+            category_code: p.category_code,
+            to_account_code: p.to_account_code,
+            amount: p.amount,
+            recurrence: p.recurrence,
+            interval: p.interval,
+            start_on: p.start_on,
+            end_on: p.end_on,
+            active: p.active,
+        },
+    }
+}
+
+fn plan_input(d: &PlanDraft) -> ::planning::dto::PlanInput {
+    ::planning::dto::PlanInput {
+        name: d.name.text.clone(),
+        name_lang: d.name.lang.upper().into(),
+        name_ru: d.name.ru.clone(),
+        name_en: d.name.en.clone(),
+        name_th: d.name.th.clone(),
+        tx_kind: d.kind.clone(),
+        account_code: d.account_code.clone(),
+        category_code: d.category_code.clone(),
+        to_account_code: d.to_account_code.clone(),
+        amount: d.amount,
+        recurrence: d.recurrence.clone(),
+        interval: d.interval,
+        start_on: d.start_on,
+        end_on: d.end_on,
+        active: d.active,
+    }
+}
+
+/// Справочники для MCP: валюты, счета (и начальный остаток), категории.
+pub struct DirectoriesAdapter {
+    pub currencies: Arc<::currencies::Service>,
+    pub accounts: Arc<::accounts::Service>,
+    pub categories: Arc<::categories::Service>,
+}
+
+fn currency_from(d: ::currencies::dto::CurrencyDto) -> Currency {
+    Currency { code: d.code, name: name_from(d.name, &d.name_lang, d.name_ru, d.name_en, d.name_th), symbol: d.symbol, minor_units: d.minor_units, archived: d.archived }
+}
+
+fn account_from(d: ::accounts::dto::AccountDto) -> Account {
+    Account {
+        code: d.code,
+        name: name_from(d.name, &d.name_lang, d.name_ru, d.name_en, d.name_th),
+        kind: d.account_kind,
+        currency: d.currency_code,
+        holder_user_id: d.holder_user_id,
+        archived: d.archived,
+    }
+}
+
+fn category_from(d: ::categories::dto::CategoryDto) -> Category {
+    Category {
+        code: d.code,
+        name: name_from(d.name, &d.name_lang, d.name_ru, d.name_en, d.name_th),
+        kind: d.category_kind,
+        parent_code: d.parent_code,
+        sort_order: d.sort_order,
+        archived: d.archived,
+    }
+}
+
+#[async_trait]
+impl ::mcp::Directories for DirectoriesAdapter {
+    async fn currencies(&self, project_id: Uuid) -> AppResult<Vec<Currency>> {
+        Ok(self.currencies.all(project_id, true).await?.into_iter().map(currency_from).collect())
+    }
+
+    async fn create_currency(&self, project_id: Uuid, c: &Currency) -> AppResult<Currency> {
+        let dto = ::currencies::dto::CreateCurrencyDto {
+            code: c.code.clone(),
+            name: c.name.text.clone(),
+            name_lang: c.name.lang.upper().into(),
+            name_ru: c.name.ru.clone(),
+            name_en: c.name.en.clone(),
+            name_th: c.name.th.clone(),
+            symbol: c.symbol.clone(),
+            minor_units: c.minor_units,
+        };
+        Ok(currency_from(self.currencies.create(project_id, dto).await?))
+    }
+
+    async fn update_currency(&self, project_id: Uuid, c: &Currency) -> AppResult<Currency> {
+        let current = self.currencies.get(project_id, &c.code).await?;
+        let dto = ::currencies::dto::UpdateCurrencyDto {
+            name: c.name.text.clone(),
+            archived: current.archived,
+            name_lang: c.name.lang.upper().into(),
+            name_ru: c.name.ru.clone(),
+            name_en: c.name.en.clone(),
+            name_th: c.name.th.clone(),
+            symbol: c.symbol.clone(),
+            minor_units: c.minor_units,
+        };
+        Ok(currency_from(self.currencies.update(project_id, &c.code, dto).await?))
+    }
+
+    async fn accounts(&self, project_id: Uuid) -> AppResult<Vec<Account>> {
+        Ok(self.accounts.all(project_id, true).await?.into_iter().map(account_from).collect())
+    }
+
+    async fn create_account(&self, project_id: Uuid, a: &Account) -> AppResult<Account> {
+        let dto = ::accounts::dto::CreateAccountDto {
+            code: a.code.clone(),
+            name: a.name.text.clone(),
+            name_lang: a.name.lang.upper().into(),
+            name_ru: a.name.ru.clone(),
+            name_en: a.name.en.clone(),
+            name_th: a.name.th.clone(),
+            account_kind: a.kind.clone(),
+            currency_code: a.currency.clone(),
+            holder_user_id: a.holder_user_id,
+        };
+        Ok(account_from(self.accounts.create(project_id, dto).await?))
+    }
+
+    async fn update_account(&self, project_id: Uuid, a: &Account) -> AppResult<Account> {
+        let current = self.accounts.get(project_id, &a.code).await?;
+        let dto = ::accounts::dto::UpdateAccountDto {
+            name: a.name.text.clone(),
+            archived: current.archived,
+            name_lang: a.name.lang.upper().into(),
+            name_ru: a.name.ru.clone(),
+            name_en: a.name.en.clone(),
+            name_th: a.name.th.clone(),
+            account_kind: a.kind.clone(),
+            currency_code: a.currency.clone(),
+            holder_user_id: current.holder_user_id,
+        };
+        Ok(account_from(self.accounts.update(project_id, &a.code, dto).await?))
+    }
+
+    async fn set_opening(&self, project_id: Uuid, user_id: Uuid, account_code: &str, amount: Decimal, date: NaiveDate) -> AppResult<()> {
+        self.accounts.set_opening(project_id, user_id, account_code, amount, date).await
+    }
+
+    async fn categories(&self, project_id: Uuid) -> AppResult<Vec<Category>> {
+        Ok(self.categories.tree(project_id, true).await?.into_iter().map(|(_, c)| category_from(c)).collect())
+    }
+
+    async fn create_category(&self, project_id: Uuid, c: &Category) -> AppResult<Category> {
+        let dto = ::categories::dto::CreateCategoryDto {
+            code: c.code.clone(),
+            name: c.name.text.clone(),
+            name_lang: c.name.lang.upper().into(),
+            name_ru: c.name.ru.clone(),
+            name_en: c.name.en.clone(),
+            name_th: c.name.th.clone(),
+            category_kind: c.kind.clone(),
+            parent_code: c.parent_code.clone(),
+            sort_order: c.sort_order,
+        };
+        Ok(category_from(self.categories.create(project_id, dto).await?))
+    }
+
+    async fn update_category(&self, project_id: Uuid, c: &Category) -> AppResult<Category> {
+        let current = self.categories.get(project_id, &c.code).await?;
+        let dto = ::categories::dto::UpdateCategoryDto {
+            name: c.name.text.clone(),
+            archived: current.archived,
+            name_lang: c.name.lang.upper().into(),
+            name_ru: c.name.ru.clone(),
+            name_en: c.name.en.clone(),
+            name_th: c.name.th.clone(),
+            category_kind: current.category_kind,
+            parent_code: c.parent_code.clone(),
+            sort_order: c.sort_order,
+        };
+        Ok(category_from(self.categories.update(project_id, &c.code, dto).await?))
+    }
+}
+
+pub struct RatesAdapter(pub Arc<::rates::Service>);
+
+fn rate_from(r: ::rates::dto::RateDto) -> Rate {
+    Rate { id: r.id, date: r.rate_date, currency: r.currency_code, rate: r.rate }
+}
+
+fn rate_input(r: &Rate) -> ::rates::dto::RateInput {
+    ::rates::dto::RateInput { rate_date: r.date, currency_code: r.currency.clone(), rate: r.rate }
+}
+
+#[async_trait]
+impl ::mcp::Rates for RatesAdapter {
+    async fn list(&self, project_id: Uuid, from: Option<NaiveDate>, to: Option<NaiveDate>) -> AppResult<Vec<Rate>> {
+        Ok(self
+            .0
+            .all(project_id)
+            .await?
+            .into_iter()
+            .filter(|r| from.is_none_or(|f| r.rate_date >= f) && to.is_none_or(|t| r.rate_date <= t))
+            .map(rate_from)
+            .collect())
+    }
+
+    async fn create(&self, project_id: Uuid, rate: &Rate) -> AppResult<Rate> {
+        Ok(rate_from(self.0.create(project_id, rate_input(rate)).await?))
+    }
+
+    async fn update(&self, project_id: Uuid, rate: &Rate) -> AppResult<Rate> {
+        Ok(rate_from(self.0.update(project_id, rate.id, rate_input(rate)).await?))
+    }
+}
+
+pub struct LimitsAdapter(pub Arc<::limits::Service>);
+
+fn limit_from(l: ::limits::dto::LimitDto) -> Limit {
+    Limit { id: l.id, category_code: l.category_code, period: l.limit_period, valid_from: l.valid_from, amount: l.amount }
+}
+
+fn limit_input(l: &Limit) -> ::limits::dto::LimitInput {
+    ::limits::dto::LimitInput { valid_from: l.valid_from, category_code: l.category_code.clone(), limit_period: l.period.clone(), amount: l.amount }
+}
+
+#[async_trait]
+impl ::mcp::Limits for LimitsAdapter {
+    async fn list(&self, project_id: Uuid) -> AppResult<Vec<Limit>> {
+        Ok(self.0.all(project_id).await?.into_iter().map(limit_from).collect())
+    }
+
+    async fn create(&self, project_id: Uuid, limit: &Limit) -> AppResult<Limit> {
+        Ok(limit_from(self.0.create(project_id, limit_input(limit)).await?))
+    }
+
+    async fn update(&self, project_id: Uuid, limit: &Limit) -> AppResult<Limit> {
+        Ok(limit_from(self.0.update(project_id, limit.id, limit_input(limit)).await?))
     }
 }
 

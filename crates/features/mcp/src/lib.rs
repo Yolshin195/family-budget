@@ -22,8 +22,10 @@ use kernel::context::AppContext;
 use kernel::feature::Feature;
 use kernel::web::Web;
 
-pub use domain::{BudgetLine, BudgetReport, CategoryInfo, AccountInfo, Occurrence, QuickInfo, Tx, TxDraft, TxFilter, TxLine};
-pub use ports::{Accounts, Budget, Deps, Ledger, Plans};
+pub use domain::{
+    Account, AccountInfo, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxLine,
+};
+pub use ports::{Accounts, Budget, Deps, Directories, Ledger, Limits, Plans, Rates};
 pub use service::{McpService as Service, Settings};
 
 pub const NAME: &str = "mcp";

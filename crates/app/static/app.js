@@ -192,6 +192,23 @@
       input.addEventListener('input', sync); sync();
     });
   }
+  // Флажок-группа ([data-check-all] — селектор флажков группы, «Все справочники»): отмечает всю группу и сам
+  // отмечен, только когда отмечены все. Без JS сервер понимает его как «все права группы».
+  function bindCheckAll(scope) {
+    $$('input[data-check-all]', scope).forEach(function (all) {
+      if (all.dataset.bound) return;
+      all.dataset.bound = '1';
+      var items = $$(all.dataset.checkAll, all.form);
+      var sync = function () {
+        var n = items.filter(function (i) { return i.checked; }).length;
+        all.checked = n === items.length;
+        all.indeterminate = n > 0 && n < items.length;
+      };
+      all.addEventListener('change', function () { items.forEach(function (i) { i.checked = all.checked; }); all.indeterminate = false; });
+      items.forEach(function (i) { i.addEventListener('change', sync); });
+      sync();
+    });
+  }
   // Копирование (API-токен).
   doc.addEventListener('click', function (e) {
     var b = e.target.closest && e.target.closest('[data-copy]');
@@ -363,7 +380,7 @@
       });
     }
   }
-  function bindPage(scope) { bindFilters(scope || doc); bindKindToggles(scope || doc); bindTxForms(scope || doc); bindReconcile(scope || doc); }
+  function bindPage(scope) { bindFilters(scope || doc); bindKindToggles(scope || doc); bindTxForms(scope || doc); bindReconcile(scope || doc); bindCheckAll(scope || doc); }
   bindPage(doc);
 
   /* ---------------------------------------------------------------- быстрый расход (раздел 10) */
