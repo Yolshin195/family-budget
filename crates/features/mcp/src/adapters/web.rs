@@ -13,7 +13,7 @@ use kernel::web::{Flash, PageCtx, PageError, PageResult, render, see_other_flash
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::domain::{DEFAULT_GRANT_SCOPES, GRANT_SCOPES, Grant};
+use crate::domain::{ALL_DIRECTORIES, DEFAULT_GRANT_SCOPES, DIRECTORY_SCOPES, GRANT_SCOPES, Grant, scope_group};
 use crate::service::McpService;
 
 type Svc = State<Arc<McpService>>;
@@ -27,6 +27,25 @@ struct ProjectOption {
     name: String,
     role: &'static str,
     can_write: bool,
+}
+
+/// Блок прав на странице: «base» (просмотр и операции), «directories», «limits», «planning».
+struct ScopeGroup {
+    key: &'static str,
+    scopes: Vec<&'static str>,
+}
+
+/// Права из `GRANT_SCOPES` по блокам, в порядке первого появления блока.
+fn scope_groups() -> Vec<ScopeGroup> {
+    let mut groups: Vec<ScopeGroup> = Vec::new();
+    for s in GRANT_SCOPES {
+        let key = scope_group(s);
+        match groups.iter_mut().find(|g| g.key == key) {
+            Some(g) => g.scopes.push(s),
+            None => groups.push(ScopeGroup { key, scopes: vec![s] }),
+        }
+    }
+    groups
 }
 
 struct GrantView {
@@ -49,7 +68,9 @@ struct AssistantsPage {
     /// Есть проекты с ролью VIEWER — подсказка «только просмотр».
     has_viewer: bool,
     selected: Vec<String>,
-    scopes: [&'static str; 3],
+    groups: Vec<ScopeGroup>,
+    /// Значение флажка «Справочники».
+    all_directories: &'static str,
     guest: bool,
     error: Option<String>,
 }
@@ -57,6 +78,11 @@ struct AssistantsPage {
 impl AssistantsPage {
     fn checked(&self, scope: &&str) -> bool {
         self.selected.iter().any(|s| s == *scope)
+    }
+
+    /// Флажок «Справочники» отмечен, когда выданы все права справочников.
+    fn all_directories_checked(&self) -> bool {
+        DIRECTORY_SCOPES.iter().all(|d| self.checked(d))
     }
 }
 
@@ -96,7 +122,8 @@ async fn render_page(svc: &McpService, page: PageCtx, error: Option<String>) -> 
         selected_project,
         has_viewer,
         selected,
-        scopes: GRANT_SCOPES,
+        groups: scope_groups(),
+        all_directories: ALL_DIRECTORIES,
         guest,
         error,
         page,

@@ -64,7 +64,7 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "budget")] list.push(budget::feature(budget_api.clone())); // @f:budget
     #[cfg(feature = "site")] let site_api = site::api(ctx, site::Deps { funnel: Arc::new(wire_site::FunnelAdapter { projects: projects_api.clone(), #[cfg(feature = "transactions")] transactions: transactions_api.clone() }) }); // @f:site
     #[cfg(feature = "site")] list.push(site::feature(ctx, site_api.clone())); // @f:site
-    #[cfg(feature = "mcp")] let mcp_api = mcp::api(ctx, mcp::Deps { ledger: Arc::new(wire_mcp::LedgerAdapter(transactions_api.clone())), budget: Arc::new(wire_mcp::BudgetAdapter(budget_api.clone())), plans: Arc::new(wire_mcp::PlansAdapter(planning_api.clone())), accounts: Arc::new(wire_mcp::AccountsAdapter(projects_api.clone())), authenticator: projects_api.clone(), memberships: projects_api.clone() }); // @f:mcp
+    #[cfg(feature = "mcp")] let mcp_api = mcp::api(ctx, mcp::Deps { ledger: Arc::new(wire_mcp::LedgerAdapter(transactions_api.clone())), budget: Arc::new(wire_mcp::BudgetAdapter(budget_api.clone())), plans: Arc::new(wire_mcp::PlansAdapter(planning_api.clone())), directories: Arc::new(wire_mcp::DirectoriesAdapter { currencies: currencies_api.clone(), accounts: accounts_api.clone(), categories: categories_api.clone() }), rates: Arc::new(wire_mcp::RatesAdapter(rates_api.clone())), limits: Arc::new(wire_mcp::LimitsAdapter(limits_api.clone())), accounts: Arc::new(wire_mcp::AccountsAdapter(projects_api.clone())), authenticator: projects_api.clone(), memberships: projects_api.clone() }); // @f:mcp
     #[cfg(feature = "mcp")] list.push(mcp::feature(ctx, mcp_api.clone())); // @f:mcp
     // @arch:build:end
     // Очистка данных проекта: сначала операции и планы, потом справочники.
