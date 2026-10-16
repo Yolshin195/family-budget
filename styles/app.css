@@ -205,7 +205,7 @@
   .menu-item { @apply flex min-h-10 items-center gap-2 rounded-lg px-3 text-sm hover:bg-sunken; }
   .menu-item-accent { @apply text-accent-text; }
   .btn-add { @apply w-full justify-start; }
-  .btn-add .kbd-inline { @apply ml-auto rounded border border-white/40 px-1.5 text-xs font-normal text-white/80; }
+  .btn-add .kbd-inline { @apply ml-auto rounded border border-white/40 bg-white/15 px-1.5 text-xs font-normal text-white/90; }
   .nav { @apply flex flex-1 flex-col gap-1; }
   .nav-list { @apply flex flex-col gap-0.5; }
   .nav-link { @apply relative flex min-h-10 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-muted transition-colors hover:bg-sunken hover:text-default; }
