@@ -33,14 +33,27 @@
           <select class="input" id="as-project" name="project">{% for p in projects %}<option value="{{ p.id }}"{% if p.id == selected_project %} selected{% endif %}>{{ p.name }} · {{ p.role }}</option>{% endfor %}</select>
           {% if has_viewer %}<p class="hint mt-1">{{ page.t("viewer_hint") }}</p>{% endif %}</div>
         <fieldset class="field !mb-0"><legend class="label">{{ page.t("permissions") }}</legend>
-          {% for s in scopes %}
+          {% for g in groups %}
+          {% if g.key != "base" %}<p class="text-sm font-medium mt-3 mb-1">{{ page.t(&format!("group.{}", g.key)) }}</p>{% endif %}
+          {% if g.key == "directories" %}
           <label class="flex items-center gap-2 py-1">
+            <input type="checkbox" name="scope" value="{{ all_directories }}" data-check-all="[data-scope-group=directories]"{% if self.all_directories_checked() %} checked{% endif %}>
+            <span>{{ page.t("scope.directories") }}</span>
+          </label>
+          {% endif %}
+          {% for s in g.scopes %}
+          <label class="flex items-center gap-2 py-1{% if g.key == "directories" %} pl-5{% endif %}">
             {% if *s == "read" %}<input type="checkbox" checked disabled><input type="hidden" name="scope" value="read">
-            {% else %}<input type="checkbox" name="scope" value="{{ s }}"{% if self.checked(s) %} checked{% endif %}>{% endif %}
+            {% else %}<input type="checkbox" name="scope" value="{{ s }}"{% if g.key == "directories" %} data-scope-group="directories"{% endif %}{% if self.checked(s) %} checked{% endif %}>{% endif %}
             <span>{{ page.t(&format!("scope.{}", s)) }}{% if *s == "read" %} <span class="text-subtle text-xs">({{ page.t("scope_read_always") }})</span>{% endif %}</span>
           </label>
           {% endfor %}
-          <p class="hint mt-1">{{ page.t("no_delete") }}</p>
+          {% if g.key == "directories" %}
+          <p class="hint mt-1">{{ page.t("opening_hint") }}</p>
+          <noscript><p class="hint mt-1">{{ page.t("directories_nojs") }}</p></noscript>
+          {% endif %}
+          {% endfor %}
+          <p class="hint mt-3">{{ page.t("no_delete") }}</p>
         </fieldset>
         <div class="sm:col-span-2 flex flex-wrap gap-3"><button class="btn-primary">{{ page.t("save") }}</button></div>
       </form>

@@ -191,3 +191,223 @@ pub struct SkipPlannedArgs {
     /// Scheduled date of the occurrence to skip, YYYY-MM-DD
     pub date: String,
 }
+
+// ---------------------------------------------------------------- справочники, курсы, лимиты, планы
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct NameTranslations {
+    /// Russian name
+    pub ru: Option<String>,
+    /// English name
+    pub en: Option<String>,
+    /// Thai name
+    pub th: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AddCurrencyArgs {
+    /// New currency code, UPPER_SNAKE — the ISO 4217 code when there is one, e.g. "USD"
+    pub code: String,
+    /// Name in `name_lang`, e.g. "US dollar"
+    pub name: String,
+    /// Language of `name`: ru | en | th (default: the user's language)
+    pub name_lang: Option<String>,
+    /// The name in all app languages (ru, en, th)
+    pub translations: Option<NameTranslations>,
+    /// Symbol, e.g. "$"
+    pub symbol: String,
+    /// Digits after the decimal point, 0–8 (default 2)
+    pub minor_units: Option<u32>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct UpdateCurrencyArgs {
+    /// Currency code (or name) to change
+    pub code: String,
+    /// New name (pass translations too: old ones are dropped when the name changes)
+    pub name: Option<String>,
+    /// Language of the name: ru | en | th (default: the user's language for a new name)
+    pub name_lang: Option<String>,
+    /// Translations to set (with a new name) or to replace one by one (without it); "" removes one
+    pub translations: Option<NameTranslations>,
+    /// New symbol
+    pub symbol: Option<String>,
+    /// New number of digits after the decimal point, 0–8
+    pub minor_units: Option<u32>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AddAccountArgs {
+    /// New account code, UPPER_SNAKE, e.g. "KBANK" or "CARD_KBANK"
+    pub code: String,
+    /// Name in `name_lang`, e.g. "K-Bank"
+    pub name: String,
+    /// Language of `name`: ru | en | th (default: the user's language)
+    pub name_lang: Option<String>,
+    /// The name in all app languages (ru, en, th)
+    pub translations: Option<NameTranslations>,
+    /// cash | card | bank | savings
+    pub kind: String,
+    /// Currency code or name, e.g. "THB"
+    pub currency: String,
+    /// Opening balance in the account currency (negative for a debt). Needs the transactions:write right too
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub opening_balance: Option<String>,
+    /// Date of the opening balance, YYYY-MM-DD (default: today)
+    pub opening_date: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct UpdateAccountArgs {
+    /// Account code (or name) to change
+    pub code: String,
+    /// New name (pass translations too: old ones are dropped when the name changes)
+    pub name: Option<String>,
+    /// Language of the name: ru | en | th (default: the user's language for a new name)
+    pub name_lang: Option<String>,
+    /// Translations to set (with a new name) or to replace one by one (without it); "" removes one
+    pub translations: Option<NameTranslations>,
+    /// New kind: cash | card | bank | savings
+    pub kind: Option<String>,
+    /// New currency code or name (only while the account has no transactions)
+    pub currency: Option<String>,
+    /// New opening balance in the account currency; 0 removes it. Needs the transactions:write right too
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub opening_balance: Option<String>,
+    /// Date of the opening balance, YYYY-MM-DD (default: today); pass it with opening_balance
+    pub opening_date: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AddCategoryArgs {
+    /// New category code, UPPER_SNAKE, e.g. "PETS"
+    pub code: String,
+    /// Name in `name_lang`, e.g. "Pets"
+    pub name: String,
+    /// Language of `name`: ru | en | th (default: the user's language)
+    pub name_lang: Option<String>,
+    /// The name in all app languages (ru, en, th)
+    pub translations: Option<NameTranslations>,
+    /// expense | income (default: the parent's kind; required for a top-level category)
+    pub kind: Option<String>,
+    /// Parent category code or name (omit for a top-level category)
+    pub parent: Option<String>,
+    /// Position among siblings, smaller first (default: last)
+    pub sort_order: Option<i32>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct UpdateCategoryArgs {
+    /// Category code (or name) to change
+    pub code: String,
+    /// New name (pass translations too: old ones are dropped when the name changes)
+    pub name: Option<String>,
+    /// Language of the name: ru | en | th (default: the user's language for a new name)
+    pub name_lang: Option<String>,
+    /// Translations to set (with a new name) or to replace one by one (without it); "" removes one
+    pub translations: Option<NameTranslations>,
+    /// Move under this parent (code or name); "" moves it to the top level
+    pub parent: Option<String>,
+    /// New position among siblings, smaller first
+    pub sort_order: Option<i32>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct SetRateArgs {
+    /// Currency code or name, e.g. "USD" (not the base currency)
+    pub currency: String,
+    /// How many units of the BASE currency 1 unit of `currency` costs, e.g. 36.5 for 1 USD = 36.5 THB
+    #[serde(deserialize_with = "amount")]
+    #[schemars(with = "String")]
+    pub rate: String,
+    /// Date YYYY-MM-DD (default: today)
+    pub date: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListRatesArgs {
+    /// From date YYYY-MM-DD, inclusive (default: no limit)
+    pub from: Option<String>,
+    /// To date YYYY-MM-DD, inclusive (default: no limit)
+    pub to: Option<String>,
+    /// Currency code or name: only its rates
+    pub currency: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct SetLimitArgs {
+    /// Category code or name; the limit covers its subcategories too
+    pub category: String,
+    /// Limit amount in the base currency of the project
+    #[serde(deserialize_with = "amount")]
+    #[schemars(with = "String")]
+    pub amount: String,
+    /// week | month | year (default: month)
+    pub period: Option<String>,
+    /// Valid from date YYYY-MM-DD (default: the start of the current period — Monday, the 1st or January 1)
+    pub valid_from: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AddPlanArgs {
+    /// Name in `name_lang`, e.g. "Rent"
+    pub name: String,
+    /// Language of `name`: ru | en | th (default: the user's language)
+    pub name_lang: Option<String>,
+    /// The name in all app languages (ru, en, th)
+    pub translations: Option<NameTranslations>,
+    /// expense | income | transfer
+    pub kind: String,
+    /// Account code or name (the source account for a transfer)
+    pub account: String,
+    /// Category code or name — for expense and income
+    pub category: Option<String>,
+    /// Destination account code or name — for a transfer
+    pub to_account: Option<String>,
+    /// Expected amount in the account currency
+    #[serde(deserialize_with = "amount")]
+    #[schemars(with = "String")]
+    pub amount: String,
+    /// once | daily | weekly | monthly | yearly
+    pub recurrence: String,
+    /// Every N days/weeks/months/years, 1–366 (default 1)
+    pub interval: Option<u32>,
+    /// First date YYYY-MM-DD (default: today)
+    pub start_on: Option<String>,
+    /// Last date YYYY-MM-DD (default: no end)
+    pub end_on: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct UpdatePlanArgs {
+    /// Plan id from list_plans or list_upcoming_payments
+    pub id: String,
+    /// New name (pass translations too: old ones are dropped when the name changes)
+    pub name: Option<String>,
+    /// Language of the name: ru | en | th (default: the user's language for a new name)
+    pub name_lang: Option<String>,
+    /// Translations to set (with a new name) or to replace one by one (without it); "" removes one
+    pub translations: Option<NameTranslations>,
+    /// New account code or name
+    pub account: Option<String>,
+    /// New category code or name (expense and income plans)
+    pub category: Option<String>,
+    /// New destination account code or name (transfer plans)
+    pub to_account: Option<String>,
+    /// New expected amount in the account currency
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub amount: Option<String>,
+    /// once | daily | weekly | monthly | yearly
+    pub recurrence: Option<String>,
+    /// Every N units of the recurrence, 1–366
+    pub interval: Option<u32>,
+    /// New first date YYYY-MM-DD
+    pub start_on: Option<String>,
+    /// New last date YYYY-MM-DD; "" removes the end date
+    pub end_on: Option<String>,
+    /// false pauses the plan (no more expected payments), true resumes it
+    pub active: Option<bool>,
+}
