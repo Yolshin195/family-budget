@@ -8,4 +8,4 @@ topics = ["site"]
 [extra]
 change = "new"
 +++
-We tell you what's new in every version, how to use the app and what we plan — in three languages.
+We tell you what's new in every version, how to use the app and what we plan — in three languages. The first article is a [six-month roadmap](@/articles/roadmap.en.md).

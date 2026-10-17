@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{#- Статья: рассказ о проекте (планы, подходы, истории). Оглавление — из заголовков ## (если их три и больше). -#}
+{% block og_type %}article{% endblock %}
+{% block head %}{% include "partials/ld_article.html" %}{% endblock %}
+{% block content %}
+<article class="site-wrap site-narrow article">
+  {% include "partials/article_head.html" %}
+  {%- if page.toc | length >= 3 %}
+  <nav class="toc" aria-labelledby="toc">
+    <h2 class="toc-title" id="toc">{{ trans(key="toc_title", lang=lang) }}</h2>
+    <ol>{% for h in page.toc %}<li><a href="{{ h.permalink }}">{{ h.title }}</a></li>{% endfor %}</ol>
+  </nav>
+  {%- endif %}
+  <div class="prose">{{ page.content | safe }}</div>
+  {% include "partials/article_foot.html" %}
+</article>
+{% endblock %}

@@ -15,7 +15,8 @@ site/
   config.toml           языки, адрес приложения, флаг preview, строки интерфейса [translations] на трёх языках
   content/
     _index.md           лендинг: тексты — в [extra] (у .en.md и .th.md — та же структура)
-    blog/               общая лента: релизы, гайды и идеи вместе (своих страниц нет)
+    blog/               общая лента: статьи, релизы, гайды и идеи вместе (своих страниц нет)
+    articles/           статьи: планы, подходы, истории — <slug>.md, .en.md, .th.md
     releases/           «Что нового»: страница на версию — 0-1-0.md, .en.md, .th.md
       next/             записи «к следующему релизу», по одной на PR
     guides/<slug>/      гайд: index.md, index.en.md, index.th.md + скриншоты <имя>.ru|en|th.webp
@@ -111,6 +112,18 @@ APP_URL=http://localhost:8080 node scripts/guide-screenshots.mjs site/content/gu
 
 Интерфейс изменился — переснимите той же командой. Выноска в тексте: `{% <note kind="tip"> %}Текст{% </note> %}`
 (`info`, `tip`, `warn`). Фигурные скобки Tera в тексте статьи — внутри `{% raw %}…{% endraw %}`.
+
+### Статья — рассказ о проекте
+
+`content/articles/<slug>.md` (+ `.en.md`, `.th.md`): `title`, `description`, `date`, темы. Это не гайд по кнопкам и не
+запись о релизе, а рассказ: куда движемся, почему делаем так. Без технических подробностей — читатель пользуется
+приложением, а не разрабатывает его. При трёх и больше заголовках `##` сверху появляется оглавление.
+
+Дорожная карта — этапы `###` внутри `<div class="roadmap">` (пустая строка после открывающего тега и перед закрывающим),
+под каждым заголовком — строка `{{ <stage status="planned" when="Декабрь 2026" lang="ru" /> }}`: статус как у идей и
+срок. Переписка — компонент чата с лендинга: `<figure class="chat">` с `chat-head`, `chat-body` и репликами
+`<div class="msg msg-user|msg-partner|msg-ai">` (имя — `<span class="msg-who">`, кнопки — `<span class="msg-actions">`
+с `<span class="msg-btn">`), подпись — `<figcaption class="chat-caption">`. Пример — `content/articles/roadmap.md`.
 
 ### Идея — что планируем
 

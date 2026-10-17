@@ -145,11 +145,12 @@
   </div>
 </section>
 
-{#- Последние материалы блога: релизы, гайды и идеи вместе. #}
+{#- Последние материалы блога: статьи, релизы, гайды и идеи вместе. #}
+{%- set art = get_section(path="articles/_index.md", lang=lang) %}
 {%- set rel = get_section(path="releases/_index.md", lang=lang) %}
 {%- set gui = get_section(path="guides/_index.md", lang=lang) %}
 {%- set ide = get_section(path="ideas/_index.md", lang=lang) %}
-{%- set latest = [...rel.pages, ...gui.pages, ...ide.pages] | sort(attribute="date") | reverse %}
+{%- set latest = [...art.pages, ...rel.pages, ...gui.pages, ...ide.pages] | sort(attribute="date") | reverse %}
 {%- if latest %}
 <section class="site-section !pt-0" aria-labelledby="latest">
   <div class="site-wrap">

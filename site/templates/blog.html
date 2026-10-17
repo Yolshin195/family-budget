@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{#- Блог: все материалы (релизы, гайды, идеи) одной лентой, новые сверху. -#}
+{#- Блог: все материалы (статьи, релизы, гайды, идеи) одной лентой, новые сверху. -#}
 {% block content %}
+{%- set art = get_section(path="articles/_index.md", lang=lang) %}
 {%- set rel = get_section(path="releases/_index.md", lang=lang) %}
 {%- set gui = get_section(path="guides/_index.md", lang=lang) %}
 {%- set ide = get_section(path="ideas/_index.md", lang=lang) %}
-{%- set all = [...rel.pages, ...gui.pages, ...ide.pages] | sort(attribute="date") | reverse %}
+{%- set all = [...art.pages, ...rel.pages, ...gui.pages, ...ide.pages] | sort(attribute="date") | reverse %}
 <div class="site-wrap list-page">
   <h1 class="site-h1">{{ section.title }}</h1>
   <p class="article-lead">{{ section.description }}</p>

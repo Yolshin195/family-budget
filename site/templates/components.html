@@ -6,7 +6,7 @@
 {% component when(value, lang: string) %}<time datetime="{{ value | date(format='%Y-%m-%d') }}">{{ value | date(format=trans(key="date_format", lang=lang), locale=lang) }}</time>{% endcomponent when %}
 
 {# Раздел страницы по пути из content: releases/0-1-0.en.md → releases. #}
-{% component kind_badge(kind: string, lang: string) %}{% if kind in ["releases", "guides", "ideas"] %}<span class="kind kind-{{ kind }}">{{ trans(key="kind_" ~ kind, lang=lang) }}</span>{% endif %}{% endcomponent kind_badge %}
+{% component kind_badge(kind: string, lang: string) %}{% if kind in ["articles", "releases", "guides", "ideas"] %}<span class="kind kind-{{ kind }}">{{ trans(key="kind_" ~ kind, lang=lang) }}</span>{% endif %}{% endcomponent kind_badge %}
 
 {% component topic_links(topics, lang: string) %}{% if topics %}<ul class="topic-list" role="list">{% for t in topics %}<li><a class="topic" href="{{ get_taxonomy_url(kind='topics', term=t, lang=lang) }}">{{ trans(key="topic_" ~ t, lang=lang) }}</a></li>{% endfor %}</ul>{% endif %}{% endcomponent topic_links %}
 
@@ -25,6 +25,10 @@
   {{ <topic_links topics={p.taxonomies?.topics or []} lang={lang} /> }}
 </article>
 {% endcomponent card %}
+
+{# Этап дорожной карты в статье: статус (как у идей) и срок — отдельным абзацем под заголовком ###.
+   {{ <stage status="planned" when="Декабрь 2026" lang="ru" /> }} — status: discussing | planned | in_progress | done. #}
+{% component stage(status: string, when: string, lang: string) %}<span class="stage-meta"><span class="status status-{{ status }}">{{ trans(key="idea_" ~ status, lang=lang) }}</span><span class="stage-when">{{ when }}</span></span>{% endcomponent stage %}
 
 {# Блок-выноска в статьях (одним абзацем, Markdown внутри строки работает): {% <note kind="tip"> %}Текст{% </note> %} — kind: info | tip | warn. #}
 {% component note(kind: string = "info") %}<div class="note note-{{ kind }}" role="note">{{ body | markdown(inline=true) | safe }}</div>{% endcomponent note %}

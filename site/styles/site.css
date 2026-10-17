@@ -47,6 +47,7 @@
   .kind-releases { @apply bg-accent-soft text-accent-text; }
   .kind-guides { @apply bg-income-soft text-income; }
   .kind-ideas { @apply bg-warn-soft text-warn; }
+  .kind-articles { @apply bg-sunken text-default; }
   .status { @apply inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium; }
   .status-discussing { @apply border-line bg-sunken text-muted; }
   .status-planned { @apply border-transparent bg-info-soft text-info; }
@@ -101,6 +102,25 @@
   .prose hr { @apply my-10 border-line; }
   .prose .zola-anchor { @apply ml-2 text-subtle no-underline opacity-0; }
   .prose h2:hover .zola-anchor, .prose h3:hover .zola-anchor { @apply opacity-100; }
+
+  /* дорожная карта в статье: <div class="roadmap"> вокруг этапов ### — линия, номера, статус и срок */
+  .roadmap { @apply relative mt-8 pl-12; counter-reset: stage; }
+  .roadmap::before { @apply absolute bottom-3 left-[0.9375rem] top-3 w-0.5 rounded-full bg-line; content: ''; }
+  .prose .roadmap > h3 { @apply relative mt-10 first:mt-0; counter-increment: stage; }
+  .roadmap > h3::before { @apply absolute -left-12 top-0 flex h-8 w-8 items-center justify-center rounded-full border-2 border-accent bg-surface text-sm font-semibold text-accent-text; content: counter(stage); }
+  .roadmap > h3:first-of-type::before { @apply bg-accent text-white; }
+  .prose .roadmap > * + * { @apply mt-3; }
+  .prose .roadmap > h3 + p { @apply mt-2; }
+  .stage-meta { @apply flex flex-wrap items-center gap-2 text-sm; }
+  .stage-when { @apply text-subtle; }
+
+  /* переписка в статье — компонент .chat дизайн-системы (как на лендинге) + имя, собеседник, кнопки и подпись */
+  .prose .chat { @apply my-8 shadow-lg; }
+  .msg-who { @apply block text-xs font-semibold opacity-80; }
+  .msg-partner { @apply self-start rounded-bl-sm bg-accent-soft; }
+  .msg-actions { @apply mt-2 flex flex-wrap gap-2; }
+  .msg-btn { @apply rounded-md border border-line-strong px-2.5 py-1 text-xs font-medium text-accent-text; }
+  .chat-caption { @apply border-t border-line px-4 py-3 text-center text-xs text-muted; }
 
   /* правовые страницы: разделы — заголовки ## */
   .legal-body h2 { @apply mb-2 mt-6 text-xl font-semibold; }

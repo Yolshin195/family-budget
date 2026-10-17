@@ -6,7 +6,7 @@
   а служебные значения (дата, версия, статус, темы, шаблон…) совпадают;
 - в тексте столько же заголовков и картинок; ссылки @/… ведут на страницу того же языка;
   скриншот с языком в имени (step-1.ru.png) — того же языка, и у него есть версии для двух других;
-- у материалов блога (релизы, гайды, идеи, записи к следующему релизу) есть обязательные поля;
+- у материалов блога (статьи, релизы, гайды, идеи, записи к следующему релизу) есть обязательные поля;
 - строки интерфейса (config.toml [translations]) — одни и те же ключи на трёх языках, без пустых;
 - в шаблонах нет текста на русском или тайском: всё, что видит читатель, — через trans();
 - отзывы (data/reviews.toml) — с текстом на трёх языках;
@@ -138,9 +138,9 @@ def check_body(path: Path, lang: str, body: str) -> None:
 def check_blog_fields(path: Path, section: str, meta: dict) -> None:
     extra = meta.get("extra", {})
     topics = meta.get("taxonomies", {}).get("topics", [])
-    if section in ("releases", "guides", "ideas", "next") and "date" not in meta:
+    if section in ("articles", "releases", "guides", "ideas", "next") and "date" not in meta:
         err(path, "нет date")
-    if section in ("releases", "guides", "ideas"):
+    if section in ("articles", "releases", "guides", "ideas"):
         if not meta.get("description"):
             err(path, "нет description — это подзаголовок статьи и текст карточки")
         if not topics:
