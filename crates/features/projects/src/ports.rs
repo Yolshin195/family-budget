@@ -115,8 +115,8 @@ pub trait IdentityProvider: Send + Sync {
     async fn verify_access_token(&self, token: &str, audience: &str) -> AppResult<Option<AccessToken>>;
 }
 
-/// Начальное наполнение нового проекта (базовая валюта, категории) — реализуется в app/wiring
-/// через публичные API фич `currencies` и `categories`.
+/// Начальное наполнение нового проекта (базовая валюта, категории, стартовый счёт) — реализуется в app/wiring
+/// через публичные API фич `currencies`, `categories` и `accounts`.
 #[async_trait]
 pub trait ProjectBootstrap: Send + Sync {
     async fn init(&self, project_id: Uuid, base_currency: &str, lang: Lang) -> AppResult<()>;

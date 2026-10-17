@@ -113,22 +113,39 @@ fn err(e: kernel::error::AppError) -> anyhow::Error {
 }
 
 /// Счёт и его начальный остаток (транзакция `OPENING` на начало демо-периода).
+/// Стартовый счёт проекта (`CASH`, см. `wire_projects::DEFAULT_ACCOUNT`) уже есть — он обновляется.
 #[allow(clippy::too_many_arguments)]
 async fn account(s: &Services, p: Uuid, by: Uuid, code: &str, kind: &str, cur: &str, opening: &str, holder: Option<Uuid>, lang: Lang, names: (&str, &str, &str)) -> AppResult<()> {
     let (name, name_lang, name_ru, name_en, name_th) = localized(lang, names.0, names.1, names.2);
-    s.accounts
-        .create(p, accounts::dto::CreateAccountDto {
-            code: code.into(),
-            name,
-            name_lang,
-            name_ru,
-            name_en,
-            name_th,
-            account_kind: kind.into(),
-            currency_code: cur.into(),
-            holder_user_id: holder,
-        })
-        .await?;
+    if s.accounts.exists(p, code).await? {
+        s.accounts
+            .update(p, code, accounts::dto::UpdateAccountDto {
+                name,
+                archived: false,
+                name_lang,
+                name_ru,
+                name_en,
+                name_th,
+                account_kind: kind.into(),
+                currency_code: cur.into(),
+                holder_user_id: holder,
+            })
+            .await?;
+    } else {
+        s.accounts
+            .create(p, accounts::dto::CreateAccountDto {
+                code: code.into(),
+                name,
+                name_lang,
+                name_ru,
+                name_en,
+                name_th,
+                account_kind: kind.into(),
+                currency_code: cur.into(),
+                holder_user_id: holder,
+            })
+            .await?;
+    }
     s.accounts.set_opening(p, by, code, dec(opening), day(3, 1)).await
 }
 
