@@ -11,6 +11,7 @@ MCP-сервер для Claude: расходы голосом и по фото �
 крейт, порты и адаптеры, связки в `crates/app/src/wiring`.
 
 Что сделано по ТЗ v3 (разделы 9–13) и что осталось — [docs/tz-v3.md](docs/tz-v3.md).
+План развития, сводящий анализ конкурентов, дорожную карту и технический долг, — [docs/development-plan.md](docs/development-plan.md).
 Схема БД для https://app.diagrams.net — [docs/db-schema.drawio](docs/db-schema.drawio) (File → Open from → Device).
 
 ## Запуск
