@@ -8,6 +8,10 @@ yanked = "deny"
 ignore = [
   # rsa (Marvin attack) — только проверка подписи публичным ключом, см. .cargo/audit.toml.
   { id = "RUSTSEC-2023-0071", reason = "rsa используется openidconnect только для проверки подписи публичным ключом" },
+  # zip — build-зависимость utoipa-swagger-ui, распаковывает только vendored-архив Swagger UI, см. .cargo/audit.toml.
+  { id = "RUSTSEC-2026-0367", reason = "zip только в build.rs utoipa-swagger-ui, архив доверенный (vendored)" },
+  { id = "RUSTSEC-2026-0368", reason = "zip только в build.rs utoipa-swagger-ui, архив доверенный (vendored)" },
+  { id = "RUSTSEC-2026-0369", reason = "zip только в build.rs utoipa-swagger-ui, архив доверенный (vendored)" },
 ]
 
 [licenses]
