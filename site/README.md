@@ -39,6 +39,8 @@ site/
 | `make site-serve` | сайт с автообновлением на http://localhost:1111 |
 
 Без контейнеров: `python3 scripts/check_site.py`, `npm run site:assets`, затем `zola serve` в `site/`.
+В облачной сессии Claude (без Docker и Zola) — навык `.claude/skills/run-site`: скачивает Zola, запускает сайт, снимает
+страницы в браузере на трёх языках и готовит превью-ссылку для пользователя.
 Ассеты (`site/static/assets`) и `site/public` не коммитятся — их собирают `npm run site:assets` и `zola build`.
 
 ## Как писать
