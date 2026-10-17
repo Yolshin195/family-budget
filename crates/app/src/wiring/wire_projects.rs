@@ -1,5 +1,6 @@
 //! Связка фичи `projects`: начальное наполнение нового проекта через публичные API
-//! `currencies` и `categories` — базовая валюта и стартовое дерево категорий на трёх языках;
+//! `currencies`, `categories` и `accounts` — базовая валюта, стартовое дерево категорий на трёх
+//! языках и счёт в базовой валюте (чтобы сразу можно было вносить операции);
 //! удаление всех данных проекта во всех фичах (удаление проекта, аккаунта, сброс демо).
 
 use std::sync::{Arc, OnceLock};
@@ -9,10 +10,29 @@ use kernel::error::{AppError, AppResult};
 use kernel::i18n::Lang;
 use uuid::Uuid;
 
+#[derive(Clone)]
 pub struct BootstrapAdapter {
     pub currencies: Arc<::currencies::Service>,
     pub categories: Arc<::categories::Service>,
+    /// Фича `accounts` собирается после `projects` — подключается в конце сборки.
+    #[cfg(feature = "accounts")]
+    pub accounts: Arc<OnceLock<Arc<::accounts::Service>>>,
 }
+
+impl BootstrapAdapter {
+    pub fn new(currencies: Arc<::currencies::Service>, categories: Arc<::categories::Service>) -> Self {
+        Self {
+            currencies,
+            categories,
+            #[cfg(feature = "accounts")]
+            accounts: Arc::default(),
+        }
+    }
+}
+
+/// Стартовый счёт нового проекта в базовой валюте: (код, тип, ru, en, th).
+#[cfg(feature = "accounts")]
+pub const DEFAULT_ACCOUNT: (&str, &str, &str, &str, &str) = ("CASH", "CASH", "Наличные", "Cash", "เงินสด");
 
 /// (код, родитель, тип, ru, en, th)
 pub const DEFAULT_CATEGORIES: &[(&str, Option<&str>, &str, &str, &str, &str)] = &[
@@ -87,6 +107,26 @@ impl ::projects::ProjectBootstrap for BootstrapAdapter {
                 sort_order: (i as i32 + 1) * 10,
             };
             match self.categories.create(project_id, dto).await {
+                Ok(_) | Err(AppError::Conflict(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        #[cfg(feature = "accounts")]
+        if let Some(accounts) = self.accounts.get() {
+            let (code, kind, ru, en, th) = DEFAULT_ACCOUNT;
+            let (name, name_lang, name_ru, name_en, name_th) = localized(lang, ru, en, th);
+            let dto = ::accounts::dto::CreateAccountDto {
+                code: code.into(),
+                name,
+                name_lang,
+                name_ru,
+                name_en,
+                name_th,
+                account_kind: kind.into(),
+                currency_code: base_currency.into(),
+                holder_user_id: None,
+            };
+            match accounts.create(project_id, dto).await {
                 Ok(_) | Err(AppError::Conflict(_)) => {}
                 Err(e) => return Err(e),
             }

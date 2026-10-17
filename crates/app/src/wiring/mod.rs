@@ -42,7 +42,8 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "currencies")] let currencies_api = currencies::api(ctx, currencies::Deps {}); // @f:currencies
     #[cfg(feature = "categories")] let categories_api = categories::api(ctx, categories::Deps {}); // @f:categories
     #[cfg(feature = "projects")] let purge = wire_projects::PurgeAdapter::default(); // @f:projects
-    #[cfg(feature = "projects")] let projects_api = projects::api(ctx, projects::Deps { bootstrap: Arc::new(wire_projects::BootstrapAdapter { currencies: currencies_api.clone(), categories: categories_api.clone() }), purge: Arc::new(purge.clone()), identity: projects::identity_provider(ctx) }); // @f:projects
+    #[cfg(feature = "projects")] let bootstrap = wire_projects::BootstrapAdapter::new(currencies_api.clone(), categories_api.clone()); // @f:projects
+    #[cfg(feature = "projects")] let projects_api = projects::api(ctx, projects::Deps { bootstrap: Arc::new(bootstrap.clone()), purge: Arc::new(purge.clone()), identity: projects::identity_provider(ctx) }); // @f:projects
     #[cfg(feature = "projects")] list.push(projects::feature(projects_api.clone())); // @f:projects
     #[cfg(feature = "currencies")] list.push(currencies::feature(currencies_api.clone())); // @f:currencies
     #[cfg(feature = "rates")] let rates_api = rates::api(ctx, rates::Deps { currencies: Arc::new(wire_rates::CurrenciesLookupAdapter(currencies_api.clone())) }); // @f:rates
@@ -67,6 +68,8 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "mcp")] let mcp_api = mcp::api(ctx, mcp::Deps { ledger: Arc::new(wire_mcp::LedgerAdapter(transactions_api.clone())), budget: Arc::new(wire_mcp::BudgetAdapter(budget_api.clone())), plans: Arc::new(wire_mcp::PlansAdapter(planning_api.clone())), directories: Arc::new(wire_mcp::DirectoriesAdapter { currencies: currencies_api.clone(), accounts: accounts_api.clone(), categories: categories_api.clone() }), rates: Arc::new(wire_mcp::RatesAdapter(rates_api.clone())), limits: Arc::new(wire_mcp::LimitsAdapter(limits_api.clone())), accounts: Arc::new(wire_mcp::AccountsAdapter(projects_api.clone())), authenticator: projects_api.clone(), memberships: projects_api.clone() }); // @f:mcp
     #[cfg(feature = "mcp")] list.push(mcp::feature(ctx, mcp_api.clone())); // @f:mcp
     // @arch:build:end
+    // Стартовый счёт нового проекта — когда фича `accounts` включена.
+    #[cfg(all(feature = "projects", feature = "accounts"))] let _ = bootstrap.accounts.set(accounts_api.clone());
     // Очистка данных проекта: сначала операции и планы, потом справочники.
     #[cfg(feature = "projects")]
     {

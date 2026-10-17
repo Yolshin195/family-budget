@@ -32,7 +32,7 @@
 
 Таблицы: `fb_users`, `fb_projects`, `fb_project_members`, `fb_project_invites`, `fb_sessions`, `fb_api_tokens`, `fb_audit_log`.
 Порты: `ProjectRepository`, `AccessRepository` (PostgreSQL/память), `IdentityProvider` (Rauthy / выключен),
-`ProjectBootstrap` (базовая валюта + дерево категорий), `ProjectPurge` (удаление данных проекта во всех фичах)
+`ProjectBootstrap` (базовая валюта + дерево категорий + счёт «Наличные» в базовой валюте), `ProjectPurge` (удаление данных проекта во всех фичах)
 → `app/wiring/wire_projects.rs`.
 
 Публично: `/auth/login`, `/auth/register`, `/auth/callback`, `/auth/logout` (POST + CSRF), `/auth/dev`
