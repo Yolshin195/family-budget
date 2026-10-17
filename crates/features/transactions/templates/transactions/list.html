@@ -43,7 +43,7 @@
 <div class="stats{% if stats.len() == 3 %} stats-3{% endif %}" id="tx-totals">
   {% for s in stats %}
   <div class="stat"><p class="stat-label">{{ s.label }}</p>
-    {% for (v, cur, neg) in s.values %}<p class="stat-value{% if s.income %} text-income{% endif %}{% if *neg %} text-danger{% endif %}">{% call m::amount(v, cur) %}{% endcall %}</p>{% endfor %}</div>
+    {% for (v, cur, neg) in s.values %}<p class="stat-value{% if s.income %} text-income{% endif %}{% if *neg %} text-danger{% endif %}">{% call m::amount(v, page.cur(cur)) %}{% endcall %}</p>{% endfor %}</div>
   {% endfor %}
 </div>
 {% if statement.is_some() && page.can_write() %}
@@ -74,9 +74,9 @@
         {% for n in t.notes %}<p class="text-xs text-muted mt-0.5">{{ n }}</p>{% endfor %}
       </div>
       <div class="tx-side">
-        <p class="font-semibold{% if t.positive %} text-income{% endif %}">{% call m::amount(t.amount, t.currency) %}{% endcall %}</p>
-        {% if let Some((v, cur)) = t.second %}<p class="text-sm font-medium">{% call m::amount(v, cur) %}{% endcall %}</p>{% endif %}
-        {% if let Some(r) = t.running %}<p class="text-xs text-subtle tabular-nums">{{ page.t("running") }} {{ r }}</p>{% endif %}
+        <p class="font-semibold{% if t.positive %} text-income{% endif %}">{% call m::amount(t.amount, page.cur(t.currency)) %}{% endcall %}</p>
+        {% if let Some((v, cur)) = t.second %}<p class="text-sm font-medium">{% call m::amount(v, page.cur(cur)) %}{% endcall %}</p>{% endif %}
+        {% if let Some(r) = t.running %}<p class="text-xs text-subtle tabular-nums">{{ page.t("running") }} {{ r }}&nbsp;{{ page.cur(t.currency) }}</p>{% endif %}
         {% if page.can_write() %}
         <div class="row-actions">
           {% if t.dto.description.is_some() %}<a class="btn-ghost btn-sm" href="/transactions/{{ t.dto.id }}/translate" aria-label="{{ page.t("translate") }}: {{ t.desc }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("languages") }}"></use></svg><span class="hide-sm">{{ page.t("translate") }}</span></a>{% endif %}

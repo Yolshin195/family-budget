@@ -41,13 +41,13 @@ struct ListPage {
 }
 
 impl ListPage {
-    /// Левая и правая валюта подписи «1 <from> = [   ] <to>».
+    /// Левая и правая валюта подписи «1 <from> = [   ] <to>» (символы: «1 ₽ = [   ] ฿»).
     fn left_cur(&self) -> &str {
-        if self.inverted { &self.page.session.base_currency } else { &self.currency }
+        self.page.cur(if self.inverted { &self.page.session.base_currency } else { &self.currency })
     }
 
     fn right_cur(&self) -> &str {
-        if self.inverted { &self.currency } else { &self.page.session.base_currency }
+        self.page.cur(if self.inverted { &self.currency } else { &self.page.session.base_currency })
     }
 
     /// Последний курс в выбранном направлении: число как ввели или пересчитанное.
@@ -106,14 +106,15 @@ fn fmt_rate(v: Decimal) -> String {
     v.round_dp(dp).normalize().to_string()
 }
 
-fn row(r: &RateDto, base: &str) -> RateRow {
-    let (cur, entered) = (&r.currency_code, r.entered.normalize());
+/// `cur` и `base` — как показать валюту курса и базовую (символы: «1 ฿ = 2.5 ₽»).
+fn row(r: &RateDto, cur: &str, base: &str) -> RateRow {
+    let entered = r.entered.normalize();
     let (main, other) = if r.inverted {
         (format!("1 {base} = {entered} {cur}"), format!("1 {cur} = {} {base}", fmt_rate(r.rate)))
     } else {
         (format!("1 {cur} = {entered} {base}"), format!("1 {base} = {} {cur}", fmt_rate(r.inverse_rate)))
     };
-    RateRow { id: r.id, rate_date: r.rate_date, currency_code: cur.clone(), main, other }
+    RateRow { id: r.id, rate_date: r.rate_date, currency_code: r.currency_code.clone(), main, other }
 }
 
 /// Курс из формы: пробелы и запятая допускаются, выражения — нет.
@@ -150,7 +151,7 @@ async fn show(svc: &RateService, page: PageCtx, error: Option<String>, form: Rat
     // После ошибки — направление, в котором вводили; иначе — как у прошлого курса валюты.
     let inverted = if form.currency_code.is_empty() { svc.default_inverted(p, &currency).await? } else { form.inverted == "true" };
     let last = currencies.iter().find(|c| c.code == currency).and_then(|c| c.last.clone());
-    let rows = all.iter().map(|r| row(r, &base)).collect();
+    let rows = all.iter().map(|r| row(r, page.cur(&r.currency_code), page.cur(&base))).collect();
     let page = page.for_feature(crate::NAME, crate::i18n::dict);
     render(&ListPage { page, rows, currencies, today: chrono::Local::now().date_naive(), error, form, inverted, currency, last })
 }
@@ -211,12 +212,13 @@ mod tests {
             inverted,
             inverse_rate: d(inverse),
         };
-        let rub = row(&dto("2.50", true, "0.4", "2.5"), "THB");
-        assert_eq!((rub.main.as_str(), rub.other.as_str()), ("1 THB = 2.5 RUB", "1 RUB = 0.4 THB"));
-        let rub = row(&dto("2.48", true, "0.403225806452", "2.48"), "THB");
-        assert_eq!(rub.other, "1 RUB = 0.4032 THB");
-        let usd = row(&dto("36.5", false, "36.5", "0.027397260274"), "THB");
-        assert_eq!((usd.main.as_str(), usd.other.as_str()), ("1 USD = 36.5 THB", "1 THB = 0.0274 USD"));
+        let rub = row(&dto("2.50", true, "0.4", "2.5"), "₽", "฿");
+        assert_eq!((rub.main.as_str(), rub.other.as_str()), ("1 ฿ = 2.5 ₽", "1 ₽ = 0.4 ฿"));
+        assert_eq!(rub.currency_code, "RUB");
+        let rub = row(&dto("2.48", true, "0.403225806452", "2.48"), "₽", "฿");
+        assert_eq!(rub.other, "1 ₽ = 0.4032 ฿");
+        let usd = row(&dto("36.5", false, "36.5", "0.027397260274"), "$", "฿");
+        assert_eq!((usd.main.as_str(), usd.other.as_str()), ("1 $ = 36.5 ฿", "1 ฿ = 0.0274 $"));
         assert_eq!(fmt_rate(d("36.123456")), "36.1235");
         assert_eq!(fmt_rate(d("0.000021234567")), "0.00002123");
     }

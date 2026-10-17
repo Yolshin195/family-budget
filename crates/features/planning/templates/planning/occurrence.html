@@ -10,10 +10,10 @@
   </div>
   <dl class="grid grid-cols-2 gap-4 mt-5">
     <div><dt class="label">{{ page.t("due") }}</dt><dd class="font-medium tabular-nums">{{ page.date(o.date) }}</dd></div>
-    <div><dt class="label">{{ page.t("expected_amount") }}</dt><dd class="font-medium">{% call m::amount(page.money(o.plan.amount), o.currency) %}{% endcall %}</dd></div>
+    <div><dt class="label">{{ page.t("expected_amount") }}</dt><dd class="font-medium">{% call m::amount(page.money(o.plan.amount), page.cur(o.currency)) %}{% endcall %}</dd></div>
     {% if let Some(paid) = o.paid_amount %}
     <div><dt class="label">{{ page.t("paid_on") }}</dt><dd class="font-medium tabular-nums">{% if let Some(d) = o.paid_on %}{{ page.date(d) }}{% endif %}</dd></div>
-    <div><dt class="label">{{ page.t("amount") }}</dt><dd class="font-medium text-income">{% call m::amount(page.money(paid), o.paid_currency.as_deref().unwrap_or(o.currency.as_str())) %}{% endcall %}</dd></div>
+    <div><dt class="label">{{ page.t("amount") }}</dt><dd class="font-medium text-income">{% call m::amount(page.money(paid), page.cur(o.paid_currency.as_deref().unwrap_or(o.currency.as_str()))) %}{% endcall %}</dd></div>
     {% endif %}
   </dl>
   {% if page.can_write() %}

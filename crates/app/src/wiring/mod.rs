@@ -27,6 +27,8 @@ use kernel::feature::Feature;
 pub struct Wired {
     pub features: Vec<Feature>,
     pub projects: Arc<projects::Service>,
+    /// Сессия страницы: проект и роль + символы валют проекта.
+    pub memberships: Arc<dyn kernel::auth::Memberships>,
     #[cfg(feature = "site")]
     pub site: Arc<site::Service>,
     #[cfg(feature = "seed")]
@@ -85,6 +87,7 @@ pub fn features(ctx: &AppContext) -> Wired {
         #[cfg(feature = "mcp")] targets.list.push(mcp_api.clone());
         let _ = purge.0.set(targets);
     }
+    let memberships = Arc::new(wire_projects::SessionAdapter { projects: projects_api.clone(), currencies: currencies_api.clone() });
     Wired {
         features: list,
         #[cfg(feature = "seed")]
@@ -100,5 +103,6 @@ pub fn features(ctx: &AppContext) -> Wired {
         #[cfg(feature = "site")]
         site: site_api,
         projects: projects_api,
+        memberships,
     }
 }

@@ -33,7 +33,7 @@
       <tr{% if r.superseded %} class="row-muted"{% endif %}>
         <td><span class="indent-{{ r.depth }} inline-block">{{ r.category }}</span> <span class="text-xs text-subtle font-mono">{{ r.dto.category_code }}</span></td>
         <td>{{ page.t(r.dto.limit_period) }}</td>
-        <td class="num font-medium">{% call m::amount(page.money(r.dto.amount), page.session.base_currency) %}{% endcall %}</td>
+        <td class="num font-medium">{% call m::amount(page.money(r.dto.amount), page.cur(page.session.base_currency)) %}{% endcall %}</td>
         <td class="tabular-nums">{{ page.date(r.dto.valid_from) }} {% if r.superseded %}<span class="badge">{{ page.t("superseded") }}</span>{% endif %}</td>
         <td class="text-right">{% if page.can_write() %}<form method="post" action="/limits/{{ r.dto.id }}/delete"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
           <button class="btn-ghost btn-sm text-danger" aria-label="{{ page.t("delete") }}: {{ r.category }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("trash-2") }}"></use></svg><span class="hide-sm">{{ page.t("delete") }}</span></button></form>{% endif %}</td>

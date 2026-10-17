@@ -158,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
     let auth = AuthState {
         config: config.clone(),
         authenticator: wired.projects.clone() as Arc<dyn kernel::auth::Authenticator>,
-        memberships: wired.projects.clone() as Arc<dyn kernel::auth::Memberships>,
+        memberships: wired.memberships.clone(),
         limiter: Arc::new(RateLimiter::new()),
     };
     let web = WebState { nav: Nav(Arc::new(feats.nav)), config: config.clone() };

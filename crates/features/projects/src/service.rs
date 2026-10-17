@@ -783,6 +783,8 @@ impl Memberships for ProjectService {
             project_id: p.id,
             project_name: p.name.clone(),
             base_currency: p.base_currency.clone(),
+            // Символы валют — справочник `currencies`; заполняет связка в app/wiring.
+            currency_marks: Default::default(),
             role: me.role,
             require_2fa: p.require_2fa,
             projects: mine.into_iter().map(|(p, m)| ProjectRef { id: p.id, name: p.name, role: m.role }).collect(),

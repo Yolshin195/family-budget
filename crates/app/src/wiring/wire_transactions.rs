@@ -40,14 +40,15 @@ impl ::transactions::AccountsLookup for AccountsLookupAdapter {
         Ok(self.0.all(project_id, true).await?.into_iter().map(|a| (a.title(lang).to_string(), a.code)).map(|(t, c)| (c, t)).collect())
     }
     async fn infos(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<AccountInfo>> {
-        let symbols: Vec<(String, String)> = self.1.all(project_id, true).await?.into_iter().map(|c| (c.code, c.symbol)).collect();
+        // Как на страницах: символ, общий для нескольких валют проекта, заменяется кодом.
+        let symbols = kernel::auth::currency_marks(self.1.all(project_id, true).await?.into_iter().map(|c| (c.code, c.symbol)));
         Ok(self
             .0
             .all(project_id, false)
             .await?
             .into_iter()
             .map(|a| AccountInfo {
-                symbol: symbols.iter().find(|s| s.0 == a.currency_code).map(|s| s.1.clone()).unwrap_or_else(|| a.currency_code.clone()),
+                symbol: symbols.get(&a.currency_code).cloned().unwrap_or_else(|| a.currency_code.clone()),
                 title: a.title(lang).to_string(),
                 code: a.code,
                 currency: a.currency_code,

@@ -22,7 +22,7 @@
       <input class="input" type="date" id="occurred_on" name="occurred_on" value="{{ f.occurred_on }}" required{% call m::aria(error, "occurred_on") %}{% endcall %}>{% call m::err(error, "occurred_on") %}{% endcall %}</div>
     <div class="field"><label class="label" for="account_code" data-label-flow="{{ page.t("account") }}" data-label-transfer="{{ page.t("from") }}">{% if f.kind() == "TRANSFER" %}{{ page.t("from") }}{% else %}{{ page.t("account") }}{% endif %}</label>
       <select class="input" id="account_code" name="account_code" required data-account{% call m::aria(error, "account_code") %}{% endcall %}>
-        {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" data-rate="{{ self.rate_of(a.tag) }}" {% if f.account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
+        {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" data-sym="{{ page.cur(a.tag) }}" data-rate="{{ self.rate_of(a.tag) }}" {% if f.account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
       </select>{% call m::err(error, "account_code") %}{% endcall %}</div>
   </div>
 
@@ -59,7 +59,7 @@
       <div class="field"><label class="label" for="to_account_code">{{ page.t("to") }}</label>
         <select class="input" id="to_account_code" name="to_account_code" data-to-account{% call m::aria(error, "to_account_code") %}{% endcall %}>
           <option value=""></option>
-          {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" data-rate="{{ self.rate_of(a.tag) }}" {% if f.to_account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
+          {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" data-sym="{{ page.cur(a.tag) }}" data-rate="{{ self.rate_of(a.tag) }}" {% if f.to_account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
         </select>{% call m::err(error, "to_account_code") %}{% endcall %}</div>
       <div class="field"><label class="label" for="amount">{{ page.t("sent") }} <span class="label-note" data-from-cur></span></label>
         <input class="input num" id="amount" name="amount" value="{{ f.amount }}" inputmode="decimal" placeholder="0.00" data-sent{% if f.kind() == "TRANSFER" && id.is_none() %} autofocus{% endif %}{% call m::aria(error, "amount") %}{% endcall %}>
@@ -109,7 +109,7 @@
     <summary><svg class="icon" aria-hidden="true"><use href="{{ page.icon("scale") }}"></use></svg>{{ page.t("postings") }}</summary>
     <p class="hint mt-2">{{ page.t("postings_hint") }}</p>
     <ul class="postings mt-2" role="list">
-      {% for x in postings %}<li><span{% if x.system %} class="text-subtle"{% endif %}>{{ x.title }}</span><span class="amount">{{ x.amount }}<span class="cur">{{ x.currency }}</span></span></li>{% endfor %}
+      {% for x in postings %}<li><span{% if x.system %} class="text-subtle"{% endif %}>{{ x.title }}</span><span class="amount">{{ x.amount }}<span class="cur">{{ page.cur(x.currency) }}</span></span></li>{% endfor %}
     </ul>
   </details>
   {% endif %}

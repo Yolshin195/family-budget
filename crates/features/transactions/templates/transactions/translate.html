@@ -9,7 +9,7 @@
   <div class="quote">
     <p class="label">{{ page.t("original") }} · {{ t.description_lang }}</p>
     <p class="text-xl" lang="{{ t.description_lang|lower }}">{% if let Some(d) = t.description %}{{ d }}{% endif %}</p>
-    <p class="text-xs text-subtle mt-1">{{ page.date(t.occurred_on) }} · {{ page.money(t.total) }} {{ t.currency }}</p>
+    <p class="text-xs text-subtle mt-1">{{ page.date(t.occurred_on) }} · {{ page.money(t.total) }}&nbsp;{{ page.cur(t.currency) }}</p>
   </div>
   {% for (code, name, val) in fields %}
     <div class="field"><label class="label" for="{{ name }}">{{ code }} · {{ page.t(code) }}</label>
