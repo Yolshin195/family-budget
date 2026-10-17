@@ -1,0 +1,270 @@
+# Задачи для Claude из issues: короткая задача → план с вопросами → после одобрения PR с тестами, кодом и скриншотами.
+# Как пользоваться и что настроить один раз — docs/claude-tasks.md.
+#
+# - Метка «claude: план» (ставит шаблон задачи) — Claude читает задачу и код и отвечает комментарием: как понял,
+#   вопросы, критерии приёмки, какие тесты и экраны. Каждый ваш комментарий в такой задаче — новая версия плана.
+# - Метка «claude: в работу» — реализация по последней версии плана: ветка claude/issue-<N>, сначала коммит с тестами
+#   (они падают), потом код, PR; если менялся интерфейс — скриншоты ru/en/th и отчёт проверки комментарием в PR.
+# - Запускают только владелец и участники с правом записи (репозиторий публичный); комментарии ботов — нет.
+# - Claude работает от подписки: секрет CLAUDE_CODE_OAUTH_TOKEN (`claude setup-token`). Пушит и открывает PR от
+#   Claude GitHub App (токен через OIDC, id-token: write) — поэтому на его PR запускаются обычные проверки ci.yml.
+# - Метки создаёт job labels при изменении этого файла в main (или вручную: Actions → Run workflow).
+name: Claude tasks
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  push:
+    branches: [main]
+    paths: ['.github/workflows/claude-tasks.yml']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+# Одна задача — один прогон за раз: ответ на план, пришедший во время анализа, ждёт его окончания.
+concurrency:
+  group: claude-task-${{ github.event.issue.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  labels:
+    name: Labels
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - run: |
+          gh label create "claude: план" --force --color 7057ff \
+            --description "Claude: проанализировать задачу и предложить план"
+          gh label create "claude: в работу" --force --color 0e8a16 \
+            --description "Claude: план одобрен — тесты, код, PR"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+
+  plan:
+    name: Plan
+    if: >-
+      github.event.issue.state == 'open'
+      && !github.event.issue.pull_request
+      && !contains(github.event.issue.labels.*.name, 'claude: в работу')
+      && (
+        (github.event_name == 'issues' && github.event.label.name == 'claude: план')
+        || (github.event_name == 'issue_comment'
+          && contains(github.event.issue.labels.*.name, 'claude: план')
+          && github.event.comment.user.type != 'Bot'
+          && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      )
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 50
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: >-
+            --allowedTools "Read,Glob,Grep,Write,Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh issue comment:*),Bash(gh search:*),Bash(gh pr list:*),Bash(git log:*),Bash(git show:*),Bash(ls:*)"
+          prompt: |
+            Ты — аналитик проекта «Семейная бухгалтерия» (правила — CLAUDE.md, обзор — README.md и site/README.md).
+            Репозиторий ${{ github.repository }}, задача #${{ github.event.issue.number }}.
+
+            1. Прочитай задачу и всё обсуждение: `gh issue view ${{ github.event.issue.number }} --comments`.
+               Твои прошлые комментарии «План, версия K» — прежние версии плана; комментарии владельца после них —
+               ответы на вопросы и правки. Учти все.
+            2. Изучи код и страницы сайта, которых касается задача. Код не меняй, коммитов не делай.
+            3. Запиши план в файл `.work/plan.md` и опубликуй его одним комментарием:
+               `gh issue comment ${{ github.event.issue.number }} --body-file .work/plan.md`.
+               Каждый раз — полный текущий план, а не разница с прошлой версией. Формат:
+
+               ## План, версия K
+               **Как я понял задачу** — 2–4 предложения: что изменится для пользователя.
+               **Вопросы** — только те, без ответа на которые нельзя начинать; у каждого — вариант по умолчанию
+               («не ответите — сделаю так»). Вопросов нет — так и напиши.
+               **Что изменится** — экраны, кнопки и тексты (названия — как в интерфейсе), API и MCP, сайт.
+               **Критерии приёмки** — чек-лист проверяемых утверждений «когда …, то …». По ним пишутся тесты
+               и проверяется интерфейс, поэтому — конкретно.
+               **Тесты** — какие тесты будут написаны первыми (крейт, что проверяют); до кода они падают.
+               **Проверка интерфейса** — какие страницы и действия снять на скриншоты (ru, en, th),
+               или «интерфейс не меняется».
+               **Сайт** — что нужно по CLAUDE.md: запись в «Что нового», гайд, идея.
+               **Риски и что не входит** — коротко.
+
+               В конце: «Ответьте комментарием — обновлю план. Всё верно — поставьте метку `claude: в работу`.»
+
+            Пиши по-русски, коротко и конкретно. Задача совсем неясна — не выдумывай план, задай вопросы.
+            Задача слишком большая для одного PR — предложи разбить и скажи, что войдёт в первую часть.
+
+  implement:
+    name: Implement
+    if: >-
+      github.event_name == 'issues'
+      && github.event.issue.state == 'open'
+      && github.event.label.name == 'claude: в работу'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: write # скриншоты — в ветку claude-qa (шаг «Отчёт проверки»)
+      issues: write
+      pull-requests: write
+      id-token: write
+    # PostgreSQL для проверки интерфейса: приложение в dev-режиме с демо-данными и «Входом для разработки».
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: family_budget
+          POSTGRES_USER: fb_app
+          POSTGRES_PASSWORD: fb_app_dev
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U fb_app -d family_budget"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      ISSUE: ${{ github.event.issue.number }}
+      BRANCH: claude/issue-${{ github.event.issue.number }}
+      GH_REPO: ${{ github.repository }}
+      # Окружение `cargo run -p family_budget` для проверки интерфейса (как `make dev`, но без Rauthy).
+      APP_ENV: dev
+      SEED_DEMO: '1'
+      DEV_LOGIN: '1'
+      OIDC_ISSUER: ''
+      DATABASE_URL: postgres://fb_app:fb_app_dev@localhost:5432/family_budget
+      BIND_ADDR: 127.0.0.1:8080
+      APP_BASE_URL: http://localhost:8080
+      # scripts/guide-screenshots.mjs: Chrome раннера ubuntu-24.04.
+      CHROMIUM: /usr/bin/google-chrome
+    steps:
+      - name: Взял в работу
+        run: |
+          gh issue comment "$ISSUE" --body "Взял в работу по последней версии плана: ветка \`$BRANCH\`, \
+          [ход работы]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      # Кэш main из ci.yml/docker-publish.yml (только чтение, как в ci.yml).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+          save-if: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: >-
+            --allowedTools "Read,Glob,Grep,Write,Edit,MultiEdit,Bash(cargo:*),Bash(git:*),Bash(gh:*),Bash(npm:*),Bash(node:*),Bash(python3:*),Bash(curl:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(grep:*),Bash(find:*),Bash(wc:*),Bash(sed:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(rm:*),Bash(sleep:*),Bash(kill:*),Bash(pkill:*),Bash(psql:*)"
+          prompt: |
+            Ты — разработчик проекта «Семейная бухгалтерия» (правила — CLAUDE.md, обзор — README.md и site/README.md).
+            Репозиторий ${{ github.repository }}, задача #${{ github.event.issue.number }}, план одобрен.
+
+            ## 0. Задание
+            `gh issue view $ISSUE --comments`. Задание — последний комментарий «План, версия K» и ответы владельца
+            после него (они важнее плана). Плана нет — напиши об этом в задаче и остановись.
+
+            ## 1. Тесты — сначала, отдельным коммитом
+            `git checkout -b $BRANCH` (ветка уже есть на origin — это повторный запуск: продолжи в ней). По критериям приёмки напиши тесты так, как они устроены в репозитории
+            (соседние тесты фичи, `templates_are_translated` для новых шаблонов). Новому API нужны заглушки —
+            добавь минимальные (`todo!()`), чтобы тесты компилировались. `cargo test --workspace --locked`:
+            новые тесты должны падать, старые — проходить. Коммит «Тесты к #$ISSUE: … (пока падают)»,
+            `git push -u origin $BRANCH`.
+
+            ## 2. Код
+            Реализуй, пока не пройдут все тесты. Тесты из шага 1 не удаляй и не ослабляй; если тест оказался
+            неверным — исправь отдельным коммитом и объясни в описании PR. Соблюдай CLAUDE.md: всё, что видит
+            пользователь, — на русском, английском и тайском; запись в `site/content/releases/next/` (три файла)
+            или `Changelog: none` в описании PR; гайд — если он есть в плане.
+            Перед пушем: `cargo test --workspace --locked`; шаблоны менялись — `npm run css`;
+            сайт менялся — `python3 scripts/check_site.py`. Коммиты по-русски, `git push`.
+
+            ## 3. PR
+            `gh pr create --base main --head $BRANCH` по-русски: что сделано для пользователя, `Closes #$ISSUE`,
+            какие тесты добавлены и что проверено, `Changelog: none` — если пользователь изменений не заметит.
+
+            ## 4. Проверка интерфейса — как пользователь
+            Интерфейс не менялся — запиши это одной строкой в `.work/qa/report.md` и закончи.
+            Иначе запусти приложение в фоне: `cargo run -p family_budget` (окружение и PostgreSQL уже настроены:
+            dev-режим, демо-данные, «Вход для разработки»), дождись `curl -fs http://localhost:8080/health`.
+            Сними экраны из плана на трёх языках:
+            `node scripts/guide-screenshots.mjs .work/qa <имя>=<путь>[@клавиша] ...` (как пользоваться — в начале
+            скрипта). Нужно действие сложнее нажатия клавиши — напиши свой короткий скрипт puppeteer в `.work/`.
+            Посмотри каждый скриншот (Read) глазами пользователя: всё ли переведено, нет ли обрезанного или
+            наползающего текста, понятно ли, выполнены ли критерии приёмки. Нашёл проблему — исправь, запушь,
+            пересними. Итог — `.work/qa/report.md`: чек-лист критериев приёмки (✅/❌) и замечания.
+            Отчёт сам не публикуй — его со скриншотами выложит следующий шаг.
+
+            `.work/` в git не попадает. Не получилось довести до конца — всё равно открой PR (черновиком,
+            `--draft`) и опиши, что сделано и на чём остановился.
+
+      - name: Отчёт проверки
+        if: always()
+        run: |
+          pr=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          [ -n "$pr" ] || { echo "PR нет — отчёт некуда выложить"; exit 0; }
+          [ -f .work/qa/report.md ] || { echo "Отчёта нет"; exit 0; }
+          {
+            echo "## Проверка интерфейса"
+            echo
+            cat .work/qa/report.md
+          } > "$RUNNER_TEMP/qa.md"
+          shots=$(find .work/qa -maxdepth 1 -name '*.webp' | sort)
+          if [ -n "$shots" ]; then
+            # Картинки — в отдельную ветку claude-qa (в PR они не попадают), в комментарии — ссылки на raw.
+            dest="pr-$pr/$GITHUB_RUN_ID"
+            qa="$RUNNER_TEMP/claude-qa"
+            git init -q "$qa"
+            git -C "$qa" remote add origin "https://x-access-token:$GH_TOKEN@github.com/$GITHUB_REPOSITORY.git"
+            if git -C "$qa" fetch -q --depth 1 origin claude-qa; then
+              git -C "$qa" checkout -q FETCH_HEAD
+            else
+              git -C "$qa" checkout -q --orphan claude-qa
+            fi
+            mkdir -p "$qa/$dest"
+            cp $shots "$qa/$dest/"
+            git -C "$qa" add -A
+            git -C "$qa" -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qm "Скриншоты проверки PR #$pr"
+            git -C "$qa" push -q origin HEAD:refs/heads/claude-qa
+            {
+              echo
+              echo "### Скриншоты"
+              for f in $shots; do
+                name=$(basename "$f")
+                echo
+                echo "**$name**"
+                echo
+                echo "![$name](https://raw.githubusercontent.com/$GITHUB_REPOSITORY/claude-qa/$dest/$name)"
+              done
+            } >> "$RUNNER_TEMP/qa.md"
+          fi
+          gh pr comment "$pr" --body-file "$RUNNER_TEMP/qa.md"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Сообщить о сбое
+        if: failure() || cancelled()
+        run: |
+          gh issue comment "$ISSUE" --body "Не получилось довести задачу до конца — \
+          [лог прогона]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID). \
+          Снимите и снова поставьте метку \`claude: в работу\`, чтобы повторить."
+        env:
+          GH_TOKEN: ${{ github.token }}

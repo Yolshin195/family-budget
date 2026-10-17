@@ -7,3 +7,5 @@ vds.conf
 site/static/assets/
 site/.build/
 site/public/
+# Рабочие файлы Claude в GitHub Actions: план, скриншоты и отчёт проверки (.github/workflows/claude-tasks.yml)
+.work/

@@ -1,0 +1,14 @@
+# Задача для Claude: коротко, своими словами. Метка «claude: план» запускает анализ (.github/workflows/claude-tasks.yml):
+# Claude отвечает в комментарии планом и вопросами. Как устроено — docs/claude-tasks.md.
+name: Задача для Claude
+description: Коротко опишите, что нужно, — Claude составит план и задаст вопросы
+labels: ["claude: план"]
+body:
+  - type: textarea
+    id: task
+    attributes:
+      label: Что нужно
+      description: Пару предложений своими словами. Детали Claude уточнит в комментариях.
+      placeholder: Хочу видеть на «Обзоре», сколько осталось до конца месяца по каждому лимиту
+    validations:
+      required: true

@@ -12,6 +12,7 @@ MCP-сервер для Claude: расходы голосом и по фото �
 
 Что сделано по ТЗ v3 (разделы 9–13) и что осталось — [docs/tz-v3.md](docs/tz-v3.md).
 Схема БД для https://app.diagrams.net — [docs/db-schema.drawio](docs/db-schema.drawio) (File → Open from → Device).
+Задачи для Claude из GitHub Issues (план → тесты → код → проверка интерфейса) — [docs/claude-tasks.md](docs/claude-tasks.md).
 
 ## Запуск
 
