@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{#- Идея: что планируем. extra.status — discussing | planned | in_progress | done; для done — extra.release (путь к релизу). -#}
+{% block og_type %}article{% endblock %}
+{% block head %}{% include "partials/ld_article.html" %}{% endblock %}
+{% block content %}
+<article class="site-wrap site-narrow article">
+  {% include "partials/article_head.html" %}
+  {%- if page.extra?.release %}
+  {%- set r = get_page(path=page.extra.release, lang=lang) %}
+  <p class="note note-tip">{{ trans(key="idea_shipped_in", lang=lang) }} <a class="link" href="{{ r.permalink }}">{{ r.extra.version }}</a></p>
+  {%- endif %}
+  <div class="prose">{{ page.content | safe }}</div>
+  {% include "partials/article_foot.html" %}
+</article>
+{% endblock %}

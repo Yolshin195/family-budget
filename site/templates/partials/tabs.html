@@ -1,0 +1,7 @@
+{#- Переключатель «Все · Релизы · Гайды · Идеи» над списками блога и разделов. -#}
+{%- set here = section.relative_path | split(pat="/") | first if section is defined else "" %}
+<nav class="post-tabs" aria-label="{{ trans(key='nav_blog', lang=lang) }}">
+  {%- for k in ["blog", "releases", "guides", "ideas"] %}
+  <a class="post-tab" href="{{ get_url(path='@/' ~ k ~ '/_index.md', lang=lang) }}"{% if here == k %} aria-current="page"{% endif %}>{{ trans(key="blog_all" if k == "blog" else "nav_" ~ k, lang=lang) }}</a>
+  {%- endfor %}
+</nav>

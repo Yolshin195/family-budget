@@ -1,0 +1,8 @@
+{#- Место под комментарии к статье. Включается config.extra.comments, когда выберем сервис
+    (после переезда на сервер — Remark42 или своя форма в приложении). -#}
+{%- if config.extra.comments %}
+<section class="comments" aria-labelledby="comments">
+  <h2 class="site-h2" id="comments">{{ trans(key="comments_title", lang=lang) }}</h2>
+  <div class="comments-box" data-page="{{ page.permalink }}"></div>
+</section>
+{%- endif %}

@@ -3,3 +3,7 @@ node_modules/
 .env
 backups/
 vds.conf
+# Сайт (Zola): собранные ассеты и результат сборки
+site/static/assets/
+site/.build/
+site/public/

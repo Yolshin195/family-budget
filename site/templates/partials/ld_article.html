@@ -1,0 +1,14 @@
+{#- Структурированные данные статьи для поисковиков. -#}
+<script type="application/ld+json">{{ {
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": page.title,
+  "description": page.description or "",
+  "inLanguage": lang,
+  "datePublished": page.date,
+  "dateModified": page.updated or page.date,
+  "url": page.permalink,
+  "image": get_url(path="assets/og.png"),
+  "author": {"@type": "Organization", "name": trans(key="app_title", lang=lang)},
+  "publisher": {"@type": "Organization", "name": trans(key="app_title", lang=lang)}
+} | json_encode | safe }}</script>

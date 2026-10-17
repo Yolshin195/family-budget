@@ -1,0 +1,167 @@
+{#- Общий каркас: шапка, плашка предварительной версии, подвал, мета-теги, hreflang.
+    Дочерние шаблоны задают блоки title, description, og_type, head и content. -#}
+{%- if page is defined -%}
+  {%- set translations = page.translations -%}
+  {%- set cur = page.relative_path | split(pat="/") | first -%}
+  {%- set canonical = page.permalink -%}
+{%- elif section is defined -%}
+  {%- set translations = section.translations -%}
+  {%- set cur = section.relative_path | split(pat="/") | first -%}
+  {%- set canonical = section.permalink -%}
+{%- else -%}
+  {%- set translations = [] -%}
+  {%- set cur = "topics" if taxonomy is defined else "" -%}
+  {%- set canonical = config.base_url ~ current_path -%}
+{%- endif -%}
+{%- set app_title = trans(key="app_title", lang=lang) -%}
+{%- if page is defined -%}
+  {%- set doc_title = page.title ~ " · " ~ app_title -%}
+  {%- set doc_description = page.description -%}
+{%- elif section is defined and section.relative_path is starting_with(pat="_index") -%}
+  {%- set doc_title = section.title -%}
+  {%- set doc_description = section.description -%}
+{%- elif section is defined -%}
+  {%- set doc_title = section.title ~ " · " ~ app_title -%}
+  {%- set doc_description = section.description -%}
+{%- elif term is defined -%}
+  {%- set doc_title = trans(key="topic_" ~ term.slug, lang=lang) ~ " · " ~ app_title -%}
+  {%- set doc_description = trans(key="topics_description", lang=lang) -%}
+{%- elif taxonomy is defined -%}
+  {%- set doc_title = trans(key="topics_title", lang=lang) ~ " · " ~ app_title -%}
+  {%- set doc_description = trans(key="topics_description", lang=lang) -%}
+{%- else -%}
+  {%- set doc_title = trans(key="not_found_title", lang=lang) ~ " · " ~ app_title -%}
+  {%- set doc_description = "" -%}
+{%- endif -%}
+{%- set by_lang = translations | group_by(attribute="lang") -%}
+{%- set home = get_url(path="@/_index.md", lang=lang) -%}
+{%- set app = config.extra.app_url -%}
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{{ doc_title }}</title>
+  {%- if doc_description %}
+  <meta name="description" content="{{ doc_description }}">
+  <meta property="og:description" content="{{ doc_description }}">
+  {%- endif %}
+  {%- if config.extra.preview %}
+  <meta name="robots" content="noindex, nofollow">
+  {%- endif %}
+  <link rel="canonical" href="{{ canonical }}">
+  {%- block alternates %}
+  {%- for t in translations %}
+  <link rel="alternate" hreflang="{{ t.lang }}" href="{{ t.permalink }}">
+  {%- if t.lang == config.default_language %}
+  <link rel="alternate" hreflang="x-default" href="{{ t.permalink }}">
+  {%- endif %}
+  {%- endfor %}
+  {%- endblock %}
+  <meta property="og:type" content="{% block og_type %}website{% endblock %}">
+  <meta property="og:site_name" content="{{ trans(key='app_title', lang=lang) }}">
+  <meta property="og:title" content="{{ doc_title }}">
+  <meta property="og:url" content="{{ canonical }}">
+  <meta property="og:locale" content="{{ {'ru': 'ru_RU', 'en': 'en_US', 'th': 'th_TH'}[lang] }}">
+  <meta property="og:image" content="{{ get_url(path='assets/og.png') }}">
+  <meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#4338ca">
+  <link rel="icon" href="{{ get_url(path='assets/favicon.svg') }}" type="image/svg+xml">
+  <link rel="icon" href="{{ get_url(path='assets/favicon-32.png') }}" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="{{ get_url(path='assets/apple-touch-icon.png') }}">
+  <link rel="alternate" type="application/atom+xml" title="{{ trans(key='app_title', lang=lang) }}" href="{{ get_url(path='atom.xml', lang=lang) }}">
+  <link rel="stylesheet" href="{{ get_url(path='assets/site.css', cachebust=true) }}">
+  {% block head %}{% endblock %}
+</head>
+<body class="app-body public-body">
+<a class="skip-link" href="#main">{{ trans(key="skip_to_content", lang=lang) }}</a>
+{%- if config.extra.preview %}
+<p class="preview-bar">{{ trans(key="preview_notice", lang=lang) }} <a href="{{ app }}/?lang={{ lang }}">{{ app | replace(from="https://", to="") }}</a></p>
+{%- endif %}
+<header class="site-header">
+  <div class="site-wrap site-header-row">
+    <a href="{{ home }}" class="logo" aria-label="{{ trans(key='app_title', lang=lang) }}">
+      <span class="logo-mark">{{ <icon name="wallet" /> }}</span>
+      <span class="logo-text">{{ trans(key="app_title", lang=lang) }}</span>
+    </a>
+    {%- set nav = [["blog", "nav_blog"], ["guides", "nav_guides"], ["releases", "nav_releases"], ["ideas", "nav_ideas"], ["about.md", "nav_about"]] %}
+    <nav class="site-links" aria-label="{{ trans(key='nav_main', lang=lang) }}">
+      {%- for item in nav %}
+      {%- set path = "@/" ~ item[0] if item[0] is ending_with(pat=".md") else "@/" ~ item[0] ~ "/_index.md" %}
+      <a href="{{ get_url(path=path, lang=lang) }}"{% if cur == item[0] or (cur in ["topics"] and item[0] == "blog") %} aria-current="page"{% endif %}>{{ trans(key=item[1], lang=lang) }}</a>
+      {%- endfor %}
+    </nav>
+    <div class="site-nav">
+      <div class="lang-switch" role="group" aria-label="{{ trans(key='nav_language', lang=lang) }}">
+        {%- block lang_links %}
+        {%- for l in config.extra.langs %}
+        {%- set href = by_lang[l][0].permalink if l in by_lang else get_url(path="@/_index.md", lang=l) %}
+        <a href="{{ href }}" class="lang-link" hreflang="{{ l }}" lang="{{ l }}" title="{{ trans(key='lang_' ~ l, lang=l) }}"{% if l == lang %} aria-current="true"{% endif %}>{{ l | upper }}</a>
+        {%- endfor %}
+        {%- endblock %}
+      </div>
+      <a class="btn-ghost" href="{{ app }}/auth/login">{{ trans(key="nav_login", lang=lang) }}</a>
+      <a class="btn-primary hide-sm" href="{{ app }}/auth/register">{{ trans(key="cta_create", lang=lang) }}</a>
+      <details class="site-menu">
+        <summary class="btn-ghost" aria-label="{{ trans(key='nav_menu', lang=lang) }}">{{ <icon name="menu" /> }}</summary>
+        <nav class="site-menu-panel" aria-label="{{ trans(key='nav_main', lang=lang) }}">
+          {%- for item in nav %}
+          {%- set path = "@/" ~ item[0] if item[0] is ending_with(pat=".md") else "@/" ~ item[0] ~ "/_index.md" %}
+          <a href="{{ get_url(path=path, lang=lang) }}"{% if cur == item[0] %} aria-current="page"{% endif %}>{{ trans(key=item[1], lang=lang) }}</a>
+          {%- endfor %}
+          <a href="{{ get_url(path='@/feedback.md', lang=lang) }}">{{ trans(key="nav_feedback", lang=lang) }}</a>
+        </nav>
+      </details>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+{% block content %}{% endblock %}
+</main>
+
+<footer class="site-footer">
+  <div class="site-wrap footer-grid">
+    <div>
+      <a href="{{ home }}" class="logo">
+        <span class="logo-mark">{{ <icon name="wallet" /> }}</span>
+        <span class="logo-text">{{ trans(key="app_title", lang=lang) }}</span>
+      </a>
+      <p class="mt-3 text-sm text-subtle">© 2026 {{ trans(key="app_title", lang=lang) }}</p>
+    </div>
+    <nav aria-label="{{ trans(key='footer_sections', lang=lang) }}">
+      <h2 class="footer-title">{{ trans(key="footer_sections", lang=lang) }}</h2>
+      <ul class="footer-col" role="list">
+        <li><a href="{{ get_url(path='@/blog/_index.md', lang=lang) }}">{{ trans(key="nav_blog", lang=lang) }}</a></li>
+        <li><a href="{{ get_url(path='@/releases/_index.md', lang=lang) }}">{{ trans(key="nav_releases", lang=lang) }}</a></li>
+        <li><a href="{{ get_url(path='@/guides/_index.md', lang=lang) }}">{{ trans(key="nav_guides", lang=lang) }}</a></li>
+        <li><a href="{{ get_url(path='@/ideas/_index.md', lang=lang) }}">{{ trans(key="nav_ideas", lang=lang) }}</a></li>
+        <li><a href="{{ get_url(path='@/about.md', lang=lang) }}">{{ trans(key="nav_about", lang=lang) }}</a></li>
+        <li><a href="{{ get_url(path='@/feedback.md', lang=lang) }}">{{ trans(key="nav_feedback", lang=lang) }}</a></li>
+      </ul>
+    </nav>
+    <nav aria-label="{{ trans(key='footer_legal', lang=lang) }}">
+      <h2 class="footer-title">{{ trans(key="footer_legal", lang=lang) }}</h2>
+      <ul class="footer-col" role="list">
+        <li><a href="{{ get_url(path='@/privacy.md', lang=lang) }}">{{ trans(key="footer_privacy", lang=lang) }}</a></li>
+        <li><a href="{{ get_url(path='@/terms.md', lang=lang) }}">{{ trans(key="footer_terms", lang=lang) }}</a></li>
+        <li><a href="{{ get_url(path='@/data-deletion.md', lang=lang) }}">{{ trans(key="footer_deletion", lang=lang) }}</a></li>
+      </ul>
+    </nav>
+    <div>
+      <h2 class="footer-title">{{ trans(key="footer_contacts", lang=lang) }}</h2>
+      <ul class="footer-col" role="list">
+        {%- if config.extra.contact_email %}
+        <li><a href="mailto:{{ config.extra.contact_email }}">{{ config.extra.contact_email }}</a></li>
+        {%- endif %}
+        <li><a href="{{ config.extra.repo_url }}/issues">GitHub Issues</a></li>
+        <li><a href="{{ get_url(path='atom.xml', lang=lang) }}">{{ trans(key="footer_rss", lang=lang) }}</a></li>
+        <li><a href="{{ config.extra.repo_url }}">{{ trans(key="footer_source", lang=lang) }}</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

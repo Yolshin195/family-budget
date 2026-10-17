@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+{#- Лендинг: тексты — в [extra] content/_index{,.en,.th}.md, порядок блоков и иконки — здесь и там же.
+    «Посмотреть демо» ведёт на лендинг приложения: POST /demo принимает запросы только со своего адреса. -#}
+{% block head %}
+  <link rel="preload" as="image" href="{{ get_url(path='assets/overview.webp') }}" type="image/webp" fetchpriority="high">
+  {%- set x = section.extra %}
+  <script type="application/ld+json">{{ {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "inLanguage": lang,
+    "mainEntity": [{"@type": "Question", "name": i.q, "acceptedAnswer": {"@type": "Answer", "text": i.a} } for i in x.faq.items]
+  } | json_encode | safe }}</script>
+{% endblock %}
+{% block content %}
+{%- set x = section.extra %}
+{%- set app = config.extra.app_url %}
+<section class="hero">
+  <div class="site-wrap hero-grid">
+    <div class="hero-copy">
+      <a class="hero-badge" href="#claude">{{ <icon name="sparkles" cls="icon icon-sm" /> }}{{ x.hero.badge }}</a>
+      <h1 class="hero-title">{{ x.hero.title }}</h1>
+      <p class="hero-subtitle">{{ x.hero.subtitle }}</p>
+      <div class="hero-actions">
+        <a class="btn-primary btn-lg" href="{{ app }}/auth/register">{{ trans(key="cta_create", lang=lang) }}</a>
+      </div>
+      <p class="have-account">{{ trans(key="cta_have_account", lang=lang) }} <a class="link-button" href="{{ app }}/auth/login">{{ trans(key="nav_login", lang=lang) }}</a></p>
+      <p class="hero-demo">
+        <a class="link-button" href="{{ app }}/?lang={{ lang }}#demo">{{ <icon name="eye" /> }}{{ trans(key="cta_demo", lang=lang) }}</a>
+        <span class="text-subtle text-sm">· {{ trans(key="cta_demo_hint", lang=lang) }}</span>
+      </p>
+    </div>
+    <figure class="hero-shot">
+      <img src="{{ get_url(path='assets/overview.webp') }}" width="1280" height="800" alt="{{ x.hero.alt }}" fetchpriority="high" decoding="async">
+    </figure>
+  </div>
+</section>
+
+<section class="site-section" aria-labelledby="benefits">
+  <div class="site-wrap">
+    <h2 class="site-h2" id="benefits">{{ x.benefits.title }}</h2>
+    <ul class="benefits" role="list">
+      {%- for b in x.benefits.items %}
+      <li class="benefit">
+        <span class="benefit-icon">{{ <icon name={b.icon} /> }}</span>
+        <h3 class="benefit-title">{{ b.title }}</h3>
+        <p class="benefit-text">{{ b.text }}</p>
+      </li>
+      {%- endfor %}
+    </ul>
+  </div>
+</section>
+
+{#- Claude через MCP: сценарии, пример переписки на чеке из демо-данных и границы доступа. #}
+<section class="site-section site-section-alt" aria-labelledby="claude">
+  <div class="site-wrap">
+    <h2 class="site-h2" id="claude">{{ x.ai.title }}</h2>
+    <p class="site-lead">{{ x.ai.lead }}</p>
+    <div class="ai-grid">
+      <div>
+        <ul class="ai-list" role="list">
+          {%- for b in x.ai.items %}
+          <li>
+            <span class="benefit-icon">{{ <icon name={b.icon} /> }}</span>
+            <h3 class="benefit-title">{{ b.title }}</h3>
+            <p class="benefit-text">{{ b.text }}</p>
+          </li>
+          {%- endfor %}
+        </ul>
+        <p class="works-in">{{ x.ai.works_in }}
+          <span class="badge">claude.ai</span><span class="badge">{{ x.ai.phone }}</span><span class="badge">Claude Desktop</span><span class="badge">Claude Code</span>
+        </p>
+      </div>
+      <figure class="chat" aria-label="{{ x.chat.label }}">
+        <div class="chat-head">
+          {{ <icon name="sparkles" cls="icon text-accent-text" /> }}Claude
+          <span class="badge badge-accent">{{ <icon name="wallet" cls="icon icon-xs" /> }}{{ trans(key="app_title", lang=lang) }}</span>
+        </div>
+        <div class="chat-body">
+          <div class="msg msg-user">
+            <div class="msg-photo">{{ <icon name="image" cls="icon icon-sm" /> }}{{ x.chat.photo }}</div>
+            {{ x.chat.q1 }}
+          </div>
+          <span class="msg-tool">{{ <icon name="circle-check" cls="icon icon-xs" /> }}{{ trans(key="app_title", lang=lang) }} · {{ x.chat.tool }}</span>
+          <div class="msg msg-ai">
+            {{ x.chat.a1 }}
+            <ul class="msg-lines" role="list">
+              {%- for l in x.chat.lines %}
+              <li><span>{{ l.label }}</span><span>{{ l.sum }}</span></li>
+              {%- endfor %}
+            </ul>
+          </div>
+          <div class="msg msg-user">{{ x.chat.q2 }}</div>
+          <div class="msg msg-ai">
+            {{ x.chat.a2_pre }} <b>{{ x.chat.a2_amount }}</b> {{ x.chat.a2_post }}
+            <div class="msg-bar" aria-hidden="true"><span></span></div>
+          </div>
+        </div>
+      </figure>
+    </div>
+    <ul class="trust" role="list">
+      {%- for b in x.ai.trust %}
+      <li class="trust-item">{{ <icon name={b.icon} /> }}
+        <span><strong>{{ b.title }}</strong>{{ b.text }}</span></li>
+      {%- endfor %}
+    </ul>
+  </div>
+</section>
+
+<section class="site-section" aria-labelledby="how">
+  <div class="site-wrap">
+    <h2 class="site-h2" id="how">{{ x.how.title }}</h2>
+    <ol class="steps">
+      {%- for s in x.how.steps %}
+      <li class="step">
+        <h3 class="step-title">{{ s.title }}</h3>
+        <p class="text-muted">{{ s.text }}</p>
+      </li>
+      {%- endfor %}
+    </ol>
+  </div>
+</section>
+
+<section class="site-section site-section-alt" aria-labelledby="security">
+  <div class="site-wrap">
+    <h2 class="site-h2" id="security">{{ x.security.title }}</h2>
+    <ul class="secure" role="list">
+      {%- for b in x.security.items %}
+      <li>
+        <span class="benefit-icon">{{ <icon name={b.icon} /> }}</span>
+        <h3 class="benefit-title">{{ b.title }}</h3>
+        <p class="benefit-text">{{ b.text }}</p>
+      </li>
+      {%- endfor %}
+    </ul>
+  </div>
+</section>
+
+<section class="site-section" aria-labelledby="demo">
+  <div class="site-wrap demo-box">
+    <div>
+      <h2 class="site-h2 !mb-2" id="demo">{{ x.demo.title }}</h2>
+      <p class="text-muted max-w-2xl">{{ x.demo.text }}</p>
+    </div>
+    <a class="btn-secondary btn-lg" href="{{ app }}/?lang={{ lang }}#demo">{{ <icon name="eye" /> }}{{ trans(key="cta_demo", lang=lang) }}</a>
+  </div>
+</section>
+
+{#- Последние материалы блога: релизы, гайды и идеи вместе. #}
+{%- set rel = get_section(path="releases/_index.md", lang=lang) %}
+{%- set gui = get_section(path="guides/_index.md", lang=lang) %}
+{%- set ide = get_section(path="ideas/_index.md", lang=lang) %}
+{%- set latest = [...rel.pages, ...gui.pages, ...ide.pages] | sort(attribute="date") | reverse %}
+{%- if latest %}
+<section class="site-section !pt-0" aria-labelledby="latest">
+  <div class="site-wrap">
+    <div class="section-head">
+      <h2 class="site-h2 !mb-0" id="latest">{{ trans(key="latest_title", lang=lang) }}</h2>
+      <a class="link" href="{{ get_url(path='@/blog/_index.md', lang=lang) }}">{{ trans(key="latest_all", lang=lang) }} →</a>
+    </div>
+    <div class="cards">
+      {%- for p in latest[:3] %}
+      {{ <card p={p} lang={lang} /> }}
+      {%- endfor %}
+    </div>
+  </div>
+</section>
+{%- endif %}
+
+<section class="site-section !pt-0" aria-labelledby="faq">
+  <div class="site-wrap site-narrow">
+    <h2 class="site-h2" id="faq">{{ x.faq.title }}</h2>
+    <div class="faq">
+      {%- for i in x.faq.items %}
+      <details class="faq-item">
+        <summary>{{ i.q }}{{ <icon name="chevron-down" cls="icon faq-chevron" /> }}</summary>
+        <p>{{ i.a }}</p>
+      </details>
+      {%- endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="site-section final-cta" aria-labelledby="final">
+  <div class="site-wrap text-center">
+    <h2 class="site-h2" id="final">{{ x.final.title }}</h2>
+    <p class="text-muted mb-6">{{ x.final.text }}</p>
+    <a class="btn-primary btn-lg" href="{{ app }}/auth/register">{{ trans(key="cta_create", lang=lang) }}</a>
+    <p class="have-account">{{ trans(key="cta_have_account", lang=lang) }} <a class="link-button" href="{{ app }}/auth/login">{{ trans(key="nav_login", lang=lang) }}</a></p>
+  </div>
+</section>
+{% endblock %}

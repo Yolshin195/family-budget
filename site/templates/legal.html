@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{#- Правовые страницы: privacy, terms, data-deletion. Разделы — заголовки ## в Markdown, контакты добавляет шаблон. -#}
+{% block content %}
+<div class="site-wrap site-narrow legal">
+  <h1 class="site-h1">{{ page.title }}</h1>
+  <p class="lead">{{ page.description }}</p>
+  <div class="legal-body">{{ page.content | safe }}</div>
+  <section>
+    <h2>{{ trans(key="footer_contacts", lang=lang) }}</h2>
+    <p>{{ trans(key="contacts_text", lang=lang) }}
+      {%- if config.extra.contact_email %} <a class="link" href="mailto:{{ config.extra.contact_email }}">{{ config.extra.contact_email }}</a>{% else %} <a class="link" href="{{ config.extra.repo_url }}/issues">GitHub Issues</a>{% endif %}</p>
+  </section>
+  <p class="text-sm text-subtle mt-8">{{ trans(key="updated", lang=lang) }}: {{ <when value={page.extra.updated} lang={lang} /> }}</p>
+</div>
+{% endblock %}

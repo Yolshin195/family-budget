@@ -1,0 +1,30 @@
+{# Компоненты Tera: доступны во всех шаблонах и в Markdown-контенте без импорта ({{ <icon name="zap" /> }}).
+   Компоненты видят только переданные параметры — язык передаётся явно. #}
+
+{% component icon(name: string, cls: string = "icon") %}<svg class="{{ cls }}" aria-hidden="true"><use href="{{ get_url(path='assets/icons.svg', cachebust=true) }}#i-{{ name }}"></use></svg>{% endcomponent icon %}
+
+{% component when(value, lang: string) %}<time datetime="{{ value | date(format='%Y-%m-%d') }}">{{ value | date(format=trans(key="date_format", lang=lang), locale=lang) }}</time>{% endcomponent when %}
+
+{# Раздел страницы по пути из content: releases/0-1-0.en.md → releases. #}
+{% component kind_badge(kind: string, lang: string) %}{% if kind in ["releases", "guides", "ideas"] %}<span class="kind kind-{{ kind }}">{{ trans(key="kind_" ~ kind, lang=lang) }}</span>{% endif %}{% endcomponent kind_badge %}
+
+{% component topic_links(topics, lang: string) %}{% if topics %}<ul class="topic-list" role="list">{% for t in topics %}<li><a class="topic" href="{{ get_taxonomy_url(kind='topics', term=t, lang=lang) }}">{{ trans(key="topic_" ~ t, lang=lang) }}</a></li>{% endfor %}</ul>{% endif %}{% endcomponent topic_links %}
+
+{# Карточка материала в списках: блог, разделы, темы, лендинг. #}
+{% component card(p, lang: string) %}
+{% set kind = p.relative_path | split(pat="/") | first %}
+<article class="post-card">
+  <div class="post-meta">
+    {{ <kind_badge kind={kind} lang={lang} /> }}
+    {% if p.extra?.version %}<span class="badge">{{ trans(key="release_version", lang=lang) }} {{ p.extra.version }}</span>{% endif %}
+    {% if p.extra?.status %}<span class="status status-{{ p.extra.status }}">{{ trans(key="idea_" ~ p.extra.status, lang=lang) }}</span>{% endif %}
+    {% if p.date %}<span class="post-date">{{ <when value={p.date} lang={lang} /> }}</span>{% endif %}
+  </div>
+  <h3 class="post-title"><a href="{{ p.permalink }}">{{ p.title }}</a></h3>
+  {% if p.description %}<p class="post-text">{{ p.description }}</p>{% endif %}
+  {{ <topic_links topics={p.taxonomies?.topics or []} lang={lang} /> }}
+</article>
+{% endcomponent card %}
+
+{# Блок-выноска в статьях (одним абзацем, Markdown внутри строки работает): {% <note kind="tip"> %}Текст{% </note> %} — kind: info | tip | warn. #}
+{% component note(kind: string = "info") %}<div class="note note-{{ kind }}" role="note">{{ body | markdown(inline=true) | safe }}</div>{% endcomponent note %}

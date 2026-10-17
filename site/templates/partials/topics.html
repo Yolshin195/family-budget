@@ -1,0 +1,12 @@
+{#- Все темы со счётчиком материалов. -#}
+{%- set tx = get_taxonomy(kind="topics", lang=lang) %}
+{%- if tx.items %}
+<div class="topics-bar">
+  <span class="text-sm text-subtle">{{ trans(key="topics_title", lang=lang) }}:</span>
+  <ul class="topic-list" role="list">
+    {%- for t in tx.items | sort(attribute="slug") %}
+    <li><a class="topic" href="{{ t.permalink }}"{% if term is defined and term.slug == t.slug %} aria-current="page"{% endif %}>{{ trans(key="topic_" ~ t.slug, lang=lang) }} <span class="topic-count">{{ t.pages | length }}</span></a></li>
+    {%- endfor %}
+  </ul>
+</div>
+{%- endif %}

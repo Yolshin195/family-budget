@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{#- Идеи по статусам: в работе → в планах → обсуждаем → готово. -#}
+{% block content %}
+<div class="site-wrap list-page">
+  <h1 class="site-h1">{{ section.title }}</h1>
+  {% if section.description %}<p class="article-lead">{{ section.description }}</p>{% endif %}
+  {% include "partials/tabs.html" %}
+  {%- for status in ["in_progress", "planned", "discussing", "done"] %}
+  {%- set items = [p for p in section.pages if p.extra.status == status] %}
+  {%- if items %}
+  <h2 class="group-title"><span class="status status-{{ status }}">{{ trans(key="idea_" ~ status, lang=lang) }}</span></h2>
+  <div class="cards">
+    {%- for p in items %}
+    {{ <card p={p} lang={lang} /> }}
+    {%- endfor %}
+  </div>
+  {%- endif %}
+  {%- endfor %}
+  {%- if not section.pages %}<p class="text-muted">{{ trans(key="empty_section", lang=lang) }}</p>{% endif %}
+</div>
+{% endblock %}
