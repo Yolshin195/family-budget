@@ -111,6 +111,7 @@ struct TxView {
     /// Главная сумма со знаком и её валюта.
     amount: String,
     currency: String,
+    /// Сумма прибавила средства — зелёным. В выписке и входящий перевод: он пополнил этот счёт.
     positive: bool,
     /// Вторая сумма перевода с обменом: «+3 912,40» и валюта.
     second: Option<(String, String)>,
@@ -316,7 +317,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             lines: if t.lines.len() > 1 || t.lines.first().is_some_and(|l| l.note.is_some()) { lines } else { Vec::new() },
             amount: signed(lang, value),
             currency,
-            positive: value > Decimal::ZERO && !t.is_transfer(),
+            positive: value > Decimal::ZERO,
             second,
             notes,
             running: if only_account { running.get(&t.id).map(|b| money_in(lang, *b)) } else { None },
