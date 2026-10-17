@@ -57,6 +57,8 @@ pub struct Payment {
     pub transaction_id: Uuid,
     pub occurred_on: NaiveDate,
     pub amount: Decimal,
+    /// Валюта `amount` (счёт операции, у перевода — счёт списания).
+    pub currency: String,
 }
 
 #[async_trait]

@@ -1,6 +1,6 @@
 //! Входящий адаптер: календарь платежей и плановые операции.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use askama::Template;
@@ -103,10 +103,15 @@ fn target(plan: &PlanDto, categories: &HashMap<String, String>, accounts: &HashM
 
 // ---------------------------------------------------------------- календарь
 
+#[derive(Clone)]
 struct OccView {
     href: String,
     title: String,
     amount: String,
+    /// Валюта суммы (валюта счёта).
+    currency: String,
+    /// «≈ сумма» в базовой валюте — только если валюта счёта не базовая.
+    approx: String,
     status: String,
     is_expense: bool,
     is_transfer: bool,
@@ -141,6 +146,9 @@ struct CalendarPage {
     paid: String,
     income: String,
     overdue: usize,
+    base: String,
+    /// Валюты без курса к базовой — их суммы посчитаны как 1:1.
+    missing_rates: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -158,6 +166,15 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
     let grid_to = last + Days::new(6 - last.weekday().num_days_from_monday() as u64);
     let t = today();
     let occ = svc.occurrences(page.session.project_id, grid_from, grid_to, t).await?;
+    let fx = svc.to_base(page.session.project_id, &page.session.base_currency).await?;
+    let mut missing = BTreeSet::new();
+    // Итоги — в базовой валюте по курсу на дату вхождения, как в «Обзоре».
+    let mut to_base = |cur: &str, amount: Decimal, date: NaiveDate| {
+        fx.convert(cur, amount, date).unwrap_or_else(|| {
+            missing.insert(cur.to_string());
+            amount
+        })
+    };
 
     let (mut to_pay, mut paid, mut income, mut overdue) = (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO, 0);
     let mut by_day: HashMap<NaiveDate, Vec<OccView>> = HashMap::new();
@@ -165,6 +182,8 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
     for o in &occ {
         let in_month = o.date >= first && o.date <= last;
         // Плановый перевод не расход и не доход: в сводке месяца только как просроченный.
+        let (amount, currency) = o.shown_amount();
+        let in_base = to_base(currency, amount, o.date);
         if in_month && o.plan.is_transfer() {
             if o.status == "OVERDUE" {
                 overdue += 1;
@@ -172,22 +191,22 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
         } else if in_month {
             match (o.plan.is_expense(), o.is_open(), o.status.as_str()) {
                 (true, true, s) => {
-                    to_pay += o.plan.amount;
+                    to_pay += in_base;
                     if s == "OVERDUE" {
                         overdue += 1;
                     }
                 }
-                (true, false, "PAID") => paid += o.paid_amount.unwrap_or_default(),
-                (false, true, _) => income += o.plan.amount,
-                (false, false, "PAID") => income += o.paid_amount.unwrap_or_default(),
+                (true, false, "PAID") => paid += in_base,
+                (false, true, _) | (false, false, "PAID") => income += in_base,
                 _ => {}
             }
         }
-        let amount = o.paid_amount.unwrap_or(o.plan.amount);
         by_day.entry(o.date).or_default().push(OccView {
             href: format!("/planning/occurrence/{}/{}?back={}", o.plan.id, o.date, url_encode(&back)),
             title: o.plan.title(lang).to_string(),
             amount: money_in(lang, amount),
+            approx: if currency == fx.base() { String::new() } else { money_in(lang, in_base) },
+            currency: currency.to_string(),
             status: o.status.clone(),
             is_expense: o.plan.is_expense(),
             is_transfer: o.plan.is_transfer(),
@@ -206,7 +225,7 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
                 agenda.push(AgendaDay {
                     label: format!("{wd}, {}", page.date(&d)),
                     is_today: d == t,
-                    items: items.iter().map(|o| OccView { href: o.href.clone(), title: o.title.clone(), amount: o.amount.clone(), status: o.status.clone(), is_expense: o.is_expense, is_transfer: o.is_transfer }).collect(),
+                    items: items.clone(),
                 });
             }
             week.push(DayCell { day: d.day(), in_month, is_today: d == t, items });
@@ -226,6 +245,8 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
         paid: money_in(lang, paid),
         income: money_in(lang, income),
         overdue,
+        base: fx.base().to_string(),
+        missing_rates: missing.into_iter().collect::<Vec<_>>().join(", "),
         page: ctx(page),
     })
 }
@@ -299,13 +320,15 @@ async fn unskip(
 #[template(path = "planning/plans.html")]
 struct PlansPage {
     page: PageCtx,
-    plans: Vec<(PlanDto, String, String)>,
+    /// (план, категория или счёт зачисления, сумма, валюта счёта).
+    plans: Vec<(PlanDto, String, String, String)>,
 }
 
 async fn plans(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
     let p = page.session.project_id;
     let titles: HashMap<String, String> = svc.category_titles(p, page.lang).await?.into_iter().collect();
     let accounts: HashMap<String, String> = svc.account_choices(p, page.lang).await?.into_iter().map(|a| (a.code, a.label)).collect();
+    let currencies = svc.account_currencies(p).await?;
     let plans = svc
         .list(p)
         .await?
@@ -313,7 +336,8 @@ async fn plans(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResu
         .map(|x| {
             let cat = target(&x, &titles, &accounts);
             let amount = money_in(page.lang, x.amount);
-            (x, cat, amount)
+            let currency = currencies.get(&x.account_code).cloned().unwrap_or_default();
+            (x, cat, amount, currency)
         })
         .collect();
     render(&PlansPage { page: nested(page, false), plans })

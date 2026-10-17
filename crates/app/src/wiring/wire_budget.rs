@@ -70,6 +70,7 @@ impl ::budget::PlansSource for PlansAdapter {
                 kind: o.plan.tx_kind,
                 account_code: o.plan.account_code,
                 category_code: o.plan.category_code,
+                to_account_code: o.plan.to_account_code,
                 amount: o.plan.amount,
                 status: o.status,
             })

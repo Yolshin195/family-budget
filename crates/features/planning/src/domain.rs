@@ -252,6 +252,34 @@ pub fn status(date: NaiveDate, today: NaiveDate, paid: Option<(Uuid, Decimal, Na
     }
 }
 
+/// Пересчёт в базовую валюту по тому же правилу, что в «Обзоре»: курс на дату, иначе последний
+/// известный до неё, иначе самый ранний.
+pub struct ToBase {
+    base: String,
+    /// (валюта, дата, курс к базовой).
+    rates: Vec<(String, NaiveDate, Decimal)>,
+}
+
+impl ToBase {
+    pub fn new(base: &str, rates: Vec<(String, NaiveDate, Decimal)>) -> Self {
+        Self { base: base.to_string(), rates }
+    }
+
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
+    /// Сумма в базовой валюте; `None` — курса к базовой нет.
+    pub fn convert(&self, currency: &str, amount: Decimal, date: NaiveDate) -> Option<Decimal> {
+        if currency == self.base {
+            return Some(amount);
+        }
+        let mine = self.rates.iter().filter(|r| r.0 == currency);
+        let rate = mine.clone().filter(|r| r.1 <= date).max_by_key(|r| r.1).or_else(|| mine.min_by_key(|r| r.1))?.2;
+        Some((amount * rate).round_dp(2))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +349,18 @@ mod tests {
         assert_eq!(status(d(2026, 10, 15), today, None, false), Status::Expected);
         assert_eq!(status(d(2026, 10, 5), today, None, true), Status::Skipped);
         assert_eq!(status(d(2026, 10, 5), today, Some((Uuid::nil(), Decimal::ONE, today)), true).code(), "PAID");
+    }
+
+    #[test]
+    fn to_base_uses_rate_on_date() {
+        let r = |m: u32, v: &str| ("RUB".to_string(), d(2026, m, 1), v.parse::<Decimal>().unwrap());
+        let fx = ToBase::new("THB", vec![r(9, "0.4"), r(10, "0.38")]);
+        let amount = Decimal::from(150_000);
+        assert_eq!(fx.convert("THB", amount, d(2026, 10, 20)), Some(amount), "базовая — как есть");
+        assert_eq!(fx.convert("RUB", amount, d(2026, 10, 20)), Some(Decimal::from(57_000)), "курс на дату");
+        assert_eq!(fx.convert("RUB", amount, d(2026, 9, 20)), Some(Decimal::from(60_000)), "последний известный до даты");
+        assert_eq!(fx.convert("RUB", amount, d(2026, 1, 20)), Some(Decimal::from(60_000)), "раньше всех курсов — самый ранний");
+        assert_eq!(fx.convert("USD", amount, d(2026, 10, 20)), None, "курса нет");
     }
 
     #[test]

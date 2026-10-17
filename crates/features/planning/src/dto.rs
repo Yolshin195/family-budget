@@ -87,11 +87,15 @@ pub struct OccurrenceDto {
     pub date: NaiveDate,
     /// EXPECTED / OVERDUE / PAID / SKIPPED
     pub status: String,
+    /// Валюта ожидаемой суммы — валюта счёта плана
+    pub currency: String,
     /// Транзакция оплаты (для PAID)
     pub transaction_id: Option<Uuid>,
     /// Фактически оплачено (для PAID)
     #[schema(value_type = Option<String>)]
     pub paid_amount: Option<Decimal>,
+    /// Валюта оплаты (для PAID; счёт оплаты может отличаться от счёта плана)
+    pub paid_currency: Option<String>,
     pub paid_on: Option<NaiveDate>,
 }
 
@@ -188,5 +192,13 @@ impl PlanDto {
 impl OccurrenceDto {
     pub fn is_open(&self) -> bool {
         self.status == "EXPECTED" || self.status == "OVERDUE"
+    }
+
+    /// Сумма вхождения и её валюта: фактическая у оплаченного, иначе ожидаемая.
+    pub fn shown_amount(&self) -> (Decimal, &str) {
+        match (self.paid_amount, &self.paid_currency) {
+            (Some(a), Some(c)) => (a, c),
+            _ => (self.plan.amount, &self.currency),
+        }
     }
 }

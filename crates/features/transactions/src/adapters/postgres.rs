@@ -284,7 +284,7 @@ impl TransactionRepository for PostgresTransactionRepository {
             .into_iter()
             .filter_map(|t| {
                 let (plan_id, plan_date) = t.plan?;
-                Some(Payment { plan_id, plan_date, transaction_id: t.id, occurred_on: t.occurred_on, amount: t.total() })
+                Some(Payment { plan_id, plan_date, transaction_id: t.id, occurred_on: t.occurred_on, amount: t.total(), currency: t.currency().to_string() })
             })
             .collect())
     }

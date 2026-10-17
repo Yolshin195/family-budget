@@ -77,6 +77,7 @@ impl PlansSource for Fake {
             kind: kind.into(),
             account_code: "CARD".into(),
             category_code: cat.map(Into::into),
+            to_account_code: (kind == "TRANSFER").then(|| "USD_CARD".into()),
             amount: dec(amount),
             title: "x".into(),
             status: "EXPECTED".into(),
@@ -134,6 +135,9 @@ async fn report_converts_currency_and_rolls_up() {
     assert_eq!(food.available, Some(dec("370")));
     assert_eq!(r.income_fact, dec("50000"));
     assert_eq!((r.accounts[0].balance, r.accounts[1].balance), (dec("47400"), dec("90")), "остатки — суммы проводок");
+    // Прогноз: CARD − 1 000 (расход) − 5 000 (перевод); USD_CARD + 5 000 ฿ / 33 = 151,52 $.
+    assert_eq!((r.accounts[0].forecast, r.accounts[1].forecast), (dec("41400"), dec("241.52")), "прогноз остатков — с планами");
+    assert_eq!(r.net_fact(), dec("49370"), "итог по факту — без планов");
     assert_eq!(r.expense_planned, dec("1000"), "плановый перевод не входит в расходы");
     assert_eq!(r.upcoming.len(), 2, "но виден в «Предстоящих»");
     assert_eq!(r.fx_result, dec("-100"), "курсовая разница — отдельно от расходов");

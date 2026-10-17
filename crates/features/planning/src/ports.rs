@@ -35,6 +35,8 @@ pub struct PaidRef {
     pub plan_date: NaiveDate,
     pub transaction_id: Uuid,
     pub amount: Decimal,
+    /// Валюта `amount` (счёт оплаты, у перевода — счёт списания).
+    pub currency: String,
     pub paid_on: NaiveDate,
 }
 
@@ -50,6 +52,15 @@ pub trait PaymentsLookup: Send + Sync {
 pub trait AccountsLookup: Send + Sync {
     async fn exists(&self, project_id: Uuid, code: &str) -> AppResult<bool>;
     async fn choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>>;
+    /// Валюты счетов: (код счёта, код валюты), включая архивные.
+    async fn currencies(&self, project_id: Uuid) -> AppResult<Vec<(String, String)>>;
+}
+
+/// Что нужно от справочника `rates`.
+#[async_trait]
+pub trait RatesLookup: Send + Sync {
+    /// Все курсы проекта: (валюта, дата, курс к базовой).
+    async fn all(&self, project_id: Uuid) -> AppResult<Vec<(String, NaiveDate, Decimal)>>;
 }
 
 /// Что нужно от справочника `categories`.
@@ -66,4 +77,5 @@ pub struct Deps {
     pub payments: Arc<dyn PaymentsLookup>,
     pub accounts: Arc<dyn AccountsLookup>,
     pub categories: Arc<dyn CategoriesLookup>,
+    pub rates: Arc<dyn RatesLookup>,
 }

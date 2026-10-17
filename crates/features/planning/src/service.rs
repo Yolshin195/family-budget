@@ -10,7 +10,7 @@ use kernel::i18n::Lang;
 use kernel::web::Choice;
 use uuid::Uuid;
 
-use crate::domain::{Plan, status};
+use crate::domain::{Plan, ToBase, status};
 use crate::dto::{OccurrenceDto, PlanDto, PlanInput};
 use crate::ports::{Deps, PlanRepository};
 
@@ -103,14 +103,13 @@ impl PlanningService {
             return Err(AppError::Validation(format!("период: от 1 дня до {MAX_RANGE_DAYS} дней")));
         }
         let plans = self.repo.list(project_id).await?;
-        let paid: HashMap<(Uuid, NaiveDate), _> = self
-            .deps
-            .payments
-            .paid(project_id, from, to)
-            .await?
-            .into_iter()
-            .map(|p| ((p.plan_id, p.plan_date), (p.transaction_id, p.amount, p.paid_on)))
-            .collect();
+        let currency_of: HashMap<String, String> = self.deps.accounts.currencies(project_id).await?.into_iter().collect();
+        let mut paid_currency = HashMap::new();
+        let mut paid = HashMap::new();
+        for p in self.deps.payments.paid(project_id, from, to).await? {
+            paid_currency.insert((p.plan_id, p.plan_date), p.currency);
+            paid.insert((p.plan_id, p.plan_date), (p.transaction_id, p.amount, p.paid_on));
+        }
         let skips: HashSet<(Uuid, NaiveDate)> = self.repo.skips(project_id, from, to).await?.into_iter().collect();
         let mut out = Vec::new();
         for plan in plans {
@@ -125,7 +124,16 @@ impl PlanningService {
                     crate::domain::Status::Paid { transaction_id, amount, paid_on } => (Some(*transaction_id), Some(*amount), Some(*paid_on)),
                     _ => (None, None, None),
                 };
-                out.push(OccurrenceDto { plan: plan.clone().into(), date, status: st.code().into(), transaction_id, paid_amount, paid_on });
+                out.push(OccurrenceDto {
+                    plan: plan.clone().into(),
+                    date,
+                    status: st.code().into(),
+                    currency: currency_of.get(&plan.account_code).cloned().unwrap_or_default(),
+                    transaction_id,
+                    paid_amount,
+                    paid_currency: transaction_id.and_then(|_| paid_currency.get(&(plan.id, date)).cloned()),
+                    paid_on,
+                });
             }
         }
         out.sort_by(|a, b| a.date.cmp(&b.date).then(a.plan.name.cmp(&b.plan.name)));
@@ -169,6 +177,16 @@ impl PlanningService {
 
     pub async fn category_choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>> {
         self.deps.categories.choices(project_id, lang).await
+    }
+
+    /// Пересчёт сумм в базовую валюту проекта.
+    pub async fn to_base(&self, project_id: Uuid, base_currency: &str) -> AppResult<ToBase> {
+        Ok(ToBase::new(base_currency, self.deps.rates.all(project_id).await?))
+    }
+
+    /// Валюты счетов: код счёта → код валюты.
+    pub async fn account_currencies(&self, project_id: Uuid) -> AppResult<HashMap<String, String>> {
+        Ok(self.deps.accounts.currencies(project_id).await?.into_iter().collect())
     }
 
     pub async fn category_titles(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<(String, String)>> {
