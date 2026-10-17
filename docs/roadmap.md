@@ -151,7 +151,8 @@
 
 Цель — продукт, который не стыдно рекомендовать.
 
-- [ ] Свой сервис входа: тайский, TOTP, passkey, Telegram, нормальный выход (`docs/id-service-prompt.md`).
+- [ ] Свой сервис входа: тайский, TOTP, passkey, Telegram, нормальный выход (`docs/id-service-prompt.md`; что даст и чего
+  не хватает в go-microcore — `docs/microcore-audit.md`).
 - [ ] Сайт — на основной домен; лендинг и правовые страницы уходят из приложения.
 - [ ] Форма отзывов и комментарии на сайте (идея `feedback-on-site`).
 - [ ] Lighthouse ≥ 90, Mozilla Observatory, формальный проход OWASP ASVS L2.
