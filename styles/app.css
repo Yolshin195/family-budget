@@ -349,6 +349,12 @@
   .tree-toggle .icon { transition: transform .15s; }
   .tree-toggle[aria-expanded='true'] .icon { transform: rotate(90deg); }
   .tree-spacer { @apply inline-block w-6; }
+  /* Сортируемые заголовки «Расходов»: ссылка на следующее состояние, стрелка у активной колонки. */
+  .th-sort { @apply inline-flex items-center gap-1 hover:text-default; }
+  .th-sort .icon { @apply opacity-40 transition-transform; }
+  [aria-sort] .th-sort { @apply text-default; }
+  [aria-sort] .th-sort .icon { @apply opacity-100; }
+  [aria-sort='ascending'] .th-sort .icon { transform: rotate(180deg); }
   .row-add { @apply ml-1 grid h-7 w-7 place-items-center rounded-md text-subtle opacity-0 hover:bg-accent-soft hover:text-accent-text focus:opacity-100; }
   tr:hover .row-add, tr:focus-within .row-add { @apply opacity-100; }
   @media (hover: none) { .row-add { @apply opacity-100; } }

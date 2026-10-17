@@ -9,23 +9,23 @@
 <div class="toolbar">
   <nav class="seg seg-sm" aria-label="{{ page.t("view") }}">
     {% for v in ["week", "month", "year"] %}
-      <a href="?view={{ v }}&amp;date={{ today }}&amp;member={{ member }}&amp;mode={{ mode }}" class="seg-link"{% if view == *v %} aria-current="page"{% endif %}>{{ page.t(v) }}</a>
+      <a href="?view={{ v }}&amp;date={{ today }}&amp;member={{ member }}&amp;mode={{ mode }}{{ sort_q }}" class="seg-link"{% if view == *v %} aria-current="page"{% endif %}>{{ page.t(v) }}</a>
     {% endfor %}
   </nav>
   <nav class="seg seg-sm" aria-label="{{ page.t("mode") }}">
     {% for md in ["fact", "forecast"] %}
-      <a href="?view={{ view }}&amp;date={{ current }}&amp;member={{ member }}&amp;mode={{ md }}" class="seg-link"{% if mode == *md %} aria-current="page"{% endif %}>{{ page.t(md) }}</a>
+      <a href="?view={{ view }}&amp;date={{ current }}&amp;member={{ member }}&amp;mode={{ md }}{{ sort_q }}" class="seg-link"{% if mode == *md %} aria-current="page"{% endif %}>{{ page.t(md) }}</a>
     {% endfor %}
   </nav>
   <nav class="pager" aria-label="{{ page.t("period_nav") }}">
-    <a class="btn-icon" href="?view={{ view }}&amp;date={{ prev }}&amp;member={{ member }}&amp;mode={{ mode }}" aria-label="{{ page.t("prev") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
+    <a class="btn-icon" href="?view={{ view }}&amp;date={{ prev }}&amp;member={{ member }}&amp;mode={{ mode }}{{ sort_q }}" aria-label="{{ page.t("prev") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
     <span class="pager-title" aria-live="polite">{{ title }}</span>
-    <a class="btn-icon" href="?view={{ view }}&amp;date={{ next }}&amp;member={{ member }}&amp;mode={{ mode }}" aria-label="{{ page.t("next") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
+    <a class="btn-icon" href="?view={{ view }}&amp;date={{ next }}&amp;member={{ member }}&amp;mode={{ mode }}{{ sort_q }}" aria-label="{{ page.t("next") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
   </nav>
-  <a class="btn-ghost btn-sm" href="?view={{ view }}&amp;member={{ member }}&amp;mode={{ mode }}">{{ page.t("today") }}</a>
+  <a class="btn-ghost btn-sm" href="?view={{ view }}&amp;member={{ member }}&amp;mode={{ mode }}{{ sort_q }}">{{ page.t("today") }}</a>
   {% if page.session.members.len() > 1 %}
   <form method="get" class="ml-auto" data-autosubmit>
-    <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="date" value="{{ current }}"><input type="hidden" name="mode" value="{{ mode }}">
+    <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="date" value="{{ current }}"><input type="hidden" name="mode" value="{{ mode }}">{% if !sort.is_empty() %}<input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="dir" value="{{ dir }}">{% endif %}
     <label class="sr-only" for="member">{{ page.t("member") }}</label>
     <select class="input input-sm" id="member" name="member">
       <option value="">{{ page.t("all_members") }}</option>
@@ -93,10 +93,13 @@
       {% else %}
       <div class="table-wrap">
       <table class="table table-budget" id="tree" data-tree>
+        <caption class="sr-only">{{ page.t("expenses") }}. {{ page.t("sort_hint") }}</caption>
         <thead><tr>
-          <th scope="col">{{ page.t("category") }}</th><th scope="col" class="num">{{ page.t("limit") }}</th><th scope="col" class="num">{{ page.t("fact") }}</th>
-          <th scope="col" class="num">{{ page.t("plan") }}</th><th scope="col" class="num">{{ page.t("forecast") }}</th><th scope="col" class="num">{{ page.t("available") }}</th>
-          <th scope="col" class="w-36"><span class="sr-only">%</span></th></tr></thead>
+          {% for h in heads %}
+          <th scope="col" class="{% if h.num %}num{% endif %}{% if h.key == "percent" %} w-36{% endif %}"{% if !h.aria_sort.is_empty() %} aria-sort="{{ h.aria_sort }}"{% endif %}>
+            <a class="th-sort" href="{{ h.href }}" data-sort="{{ h.key }}">{% if h.sr.is_empty() %}{{ h.label }}{% else %}<span aria-hidden="true">{{ h.label }}</span><span class="sr-only">{{ h.sr }}</span>{% endif %}<svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon(h.icon) }}"></use></svg></a></th>
+          {% endfor %}
+        </tr></thead>
         <tbody>
         {% for r in expenses %}
           <tr data-code="{{ r.code }}" data-parent="{{ r.parent }}" data-depth="{{ r.depth }}"{% if r.depth >= 2 %} hidden{% endif %}{% if r.is_zero %} class="row-muted"{% endif %}>
