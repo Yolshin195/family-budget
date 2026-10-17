@@ -35,8 +35,9 @@ for (const [lang, locale] of Object.entries(locales)) {
   if (family) await page.goto(base + family, { waitUntil: 'networkidle0' });
   await page.goto(`${base}/lang/${lang}?back=/budget`, { waitUntil: 'networkidle0' });
   for (const spec of specs) {
-    const [name, target] = spec.split('=');
-    const [path, key] = target.split('@');
+    // Имя — до первого «=»: в пути могут быть свои «=» (/budget?view=year).
+    const name = spec.slice(0, spec.indexOf('='));
+    const [path, key] = spec.slice(spec.indexOf('=') + 1).split('@');
     await page.goto(base + path, { waitUntil: 'networkidle0' });
     if (key) {
       await page.keyboard.press(key);
