@@ -16,7 +16,8 @@
   {% include "partials/tabs.html" %}
   {% include "partials/topics.html" %}
   <div class="cards">
-    {%- for p in term.pages | sort(attribute="date") | reverse %}
+    {#- Записи «к следующему релизу» отдельных страниц не имеют — они видны на «Что нового». #}
+    {%- for p in [p for p in term.pages if not p.relative_path is starting_with(pat="releases/next/")] | sort(attribute="date") | reverse %}
     {{ <card p={p} lang={lang} /> }}
     {%- endfor %}
   </div>
