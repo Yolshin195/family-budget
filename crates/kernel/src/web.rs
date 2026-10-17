@@ -228,6 +228,11 @@ impl PageCtx {
         money_in(self.lang, value)
     }
 
+    /// Валюта рядом с суммой: символ (`฿`), иначе код.
+    pub fn cur<'a>(&'a self, code: &'a str) -> &'a str {
+        self.session.cur(code)
+    }
+
     pub fn date(&self, d: &NaiveDate) -> String {
         date_in(self.lang, *d)
     }

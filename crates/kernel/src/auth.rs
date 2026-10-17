@@ -12,6 +12,7 @@
 //!
 //! Меняющие запросы по cookie-сессии проходят CSRF-проверку: заголовок `Origin` + токен
 //! (поле формы `_csrf` или заголовок `X-CSRF-Token`). VIEWER получает 403 на любое изменение.
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -209,6 +210,8 @@ pub struct Session {
     pub project_name: String,
     /// Базовая валюта проекта — в ней считается бюджет.
     pub base_currency: String,
+    /// Как показывать валюты проекта рядом с суммами: код → символ (см. `currency_marks`).
+    pub currency_marks: HashMap<String, String>,
     pub role: Role,
     pub projects: Vec<ProjectRef>,
     /// Участники активного проекта.
@@ -224,6 +227,11 @@ pub struct Session {
 }
 
 impl Session {
+    /// Валюта рядом с суммой: символ, если он есть, иначе код.
+    pub fn cur<'a>(&'a self, code: &'a str) -> &'a str {
+        self.currency_marks.get(code).map(String::as_str).unwrap_or(code)
+    }
+
     pub fn member_name(&self, user_id: &Uuid) -> String {
         self.members.iter().find(|m| m.user_id == *user_id).map(|m| m.name.clone()).unwrap_or_else(|| "—".into())
     }
@@ -247,10 +255,19 @@ pub struct SessionInfo {
     pub project_id: Uuid,
     pub project_name: String,
     pub base_currency: String,
+    /// Код → символ валют проекта; пусто — показываются коды.
+    pub currency_marks: HashMap<String, String>,
     pub role: Role,
     pub require_2fa: bool,
     pub projects: Vec<ProjectRef>,
     pub members: Vec<MemberRef>,
+}
+
+/// Символы валют для показа рядом с суммами из пар (код, символ). Пустой символ и символ, общий
+/// для нескольких валют проекта (`$` у USD и CAD), не берутся — у таких валют остаётся код.
+pub fn currency_marks(list: impl IntoIterator<Item = (String, String)>) -> HashMap<String, String> {
+    let list: Vec<(String, String)> = list.into_iter().map(|(c, s)| (c, s.trim().to_string())).filter(|(_, s)| !s.is_empty()).collect();
+    list.iter().filter(|(_, s)| list.iter().filter(|(_, x)| x == s).count() == 1).cloned().collect()
 }
 
 /// Порт ядра: кто пользователь и в каких проектах состоит.
@@ -528,6 +545,7 @@ pub async fn require_user(State(auth): State<AuthState>, req: Request, next: Nex
         project_id: info.project_id,
         project_name: info.project_name,
         base_currency: info.base_currency,
+        currency_marks: info.currency_marks,
         role: info.role,
         projects: info.projects,
         members: info.members,
@@ -621,5 +639,15 @@ mod tests {
         let mut r = HeaderMap::new();
         r.insert(REFERER, "https://evil.example/x".parse().unwrap());
         assert!(!same_origin(&c, &r));
+    }
+
+    #[test]
+    fn currency_symbols() {
+        let p = |c: &str, s: &str| (c.to_string(), s.to_string());
+        let m = currency_marks([p("THB", "฿"), p("RUB", "₽"), p("USD", "$"), p("CAD", "$"), p("XXX", " ")]);
+        assert_eq!(m.get("THB").map(String::as_str), Some("฿"));
+        assert_eq!(m.get("RUB").map(String::as_str), Some("₽"));
+        assert!(!m.contains_key("USD") && !m.contains_key("CAD"), "общий символ — остаются коды");
+        assert!(!m.contains_key("XXX"), "пустой символ — код");
     }
 }

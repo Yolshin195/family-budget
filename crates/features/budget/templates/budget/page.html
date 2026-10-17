@@ -45,34 +45,34 @@
   <div class="stat">
     <p class="stat-label">{{ page.t("incomes") }}</p>
     {% if mode == "forecast" %}
-    <p class="stat-value text-income">{% call m::amount(inc_total, base) %}{% endcall %}</p>
-    <p class="stat-note">{{ page.t("fact") }} {{ inc_fact }} · {{ page.t("plan") }} {{ inc_plan }}</p>
+    <p class="stat-value text-income">{% call m::amount(inc_total, page.cur(base)) %}{% endcall %}</p>
+    <p class="stat-note">{{ page.t("fact") }} {{ inc_fact }}&nbsp;{{ page.cur(base) }} · {{ page.t("plan") }} {{ inc_plan }}&nbsp;{{ page.cur(base) }}</p>
     {% else %}
-    <p class="stat-value text-income">{% call m::amount(inc_fact, base) %}{% endcall %}</p>
-    <p class="stat-note">{{ page.t("expected") }} {{ inc_plan }} · {{ page.t("forecast") }} {{ inc_total }}</p>
+    <p class="stat-value text-income">{% call m::amount(inc_fact, page.cur(base)) %}{% endcall %}</p>
+    <p class="stat-note">{{ page.t("expected") }} {{ inc_plan }}&nbsp;{{ page.cur(base) }} · {{ page.t("forecast") }} {{ inc_total }}&nbsp;{{ page.cur(base) }}</p>
     {% endif %}
   </div>
   <div class="stat">
     <p class="stat-label">{{ page.t("expenses") }}</p>
     {% if mode == "forecast" %}
-    <p class="stat-value">{% call m::amount(exp_total, base) %}{% endcall %}</p>
-    <p class="stat-note">{{ page.t("fact") }} {{ exp_fact }} · {{ page.t("plan") }} {{ exp_plan }}</p>
+    <p class="stat-value">{% call m::amount(exp_total, page.cur(base)) %}{% endcall %}</p>
+    <p class="stat-note">{{ page.t("fact") }} {{ exp_fact }}&nbsp;{{ page.cur(base) }} · {{ page.t("plan") }} {{ exp_plan }}&nbsp;{{ page.cur(base) }}</p>
     {% else %}
-    <p class="stat-value">{% call m::amount(exp_fact, base) %}{% endcall %}</p>
-    <p class="stat-note">{{ page.t("expected") }} {{ exp_plan }} · {{ page.t("forecast") }} {{ exp_total }}</p>
+    <p class="stat-value">{% call m::amount(exp_fact, page.cur(base)) %}{% endcall %}</p>
+    <p class="stat-note">{{ page.t("expected") }} {{ exp_plan }}&nbsp;{{ page.cur(base) }} · {{ page.t("forecast") }} {{ exp_total }}&nbsp;{{ page.cur(base) }}</p>
     {% endif %}
   </div>
   <div class="stat">
     <p class="stat-label">{% if mode == "forecast" %}{{ page.t("net") }}{% else %}{{ page.t("net_fact") }}{% endif %}</p>
-    <p class="stat-value{% if net_negative %} text-danger{% endif %}">{% call m::amount(net, base) %}{% endcall %}</p>
+    <p class="stat-value{% if net_negative %} text-danger{% endif %}">{% call m::amount(net, page.cur(base)) %}{% endcall %}</p>
     <p class="stat-note">{{ page.t("base_currency") }}: {{ base }}</p>
-    {% if !fx.is_empty() %}<p class="stat-note" title="{{ page.t("fx_hint") }}">{{ page.t("fx_result") }}: <span class="{% if fx_negative %}text-danger{% else %}text-income{% endif %}">{{ fx }}</span></p>{% endif %}
+    {% if !fx.is_empty() %}<p class="stat-note" title="{{ page.t("fx_hint") }}">{{ page.t("fx_result") }}: <span class="{% if fx_negative %}text-danger{% else %}text-income{% endif %}">{{ fx }}&nbsp;{{ page.cur(base) }}</span></p>{% endif %}
   </div>
   <div class="stat col-span-2 lg:col-span-1">
     <p class="stat-label">{% if mode == "forecast" %}{{ page.t("accounts_forecast") }}{% else %}{{ page.t("accounts") }}{% endif %}</p>
     <ul class="stat-list">
       {% for (name, bal, cur, neg) in accounts %}
-        <li><span class="truncate text-muted">{{ name }}</span><span class="amount{% if *neg %} text-danger{% endif %}">{{ bal }}<span class="cur">{{ cur }}</span></span></li>
+        <li><span class="truncate text-muted">{{ name }}</span><span class="amount{% if *neg %} text-danger{% endif %}">{{ bal }}<span class="cur">{{ page.cur(cur) }}</span></span></li>
       {% endfor %}
     </ul>
   </div>
@@ -158,8 +158,8 @@
         <li><a href="{{ u.href }}" class="upcoming-item">
           <span class="tabular-nums text-xs w-11 shrink-0{% if u.overdue %} text-danger font-medium{% else %} text-subtle{% endif %}">{{ u.date }}</span>
           <span class="grow truncate">{{ u.title }}</span>
-          {% if u.is_transfer %}<span class="amount text-muted" title="{{ page.t("transfer") }}"><svg class="icon icon-sm inline" aria-hidden="true"><use href="{{ page.icon("arrow-right-left") }}"></use></svg> {{ u.amount }}</span>
-          {% else %}<span class="amount{% if !u.is_expense %} text-income{% endif %}">{% if u.is_expense %}−{% else %}+{% endif %}{{ u.amount }}</span>{% endif %}</a></li>
+          {% if u.is_transfer %}<span class="amount text-muted" title="{{ page.t("transfer") }}"><svg class="icon icon-sm inline" aria-hidden="true"><use href="{{ page.icon("arrow-right-left") }}"></use></svg> {{ u.amount }}<span class="cur">{{ page.cur(base) }}</span></span>
+          {% else %}<span class="amount{% if !u.is_expense %} text-income{% endif %}">{% if u.is_expense %}−{% else %}+{% endif %}{{ u.amount }}<span class="cur">{{ page.cur(base) }}</span></span>{% endif %}</a></li>
       {% endfor %}
     </ul>
     {% endif %}

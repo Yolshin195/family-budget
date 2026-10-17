@@ -284,10 +284,10 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             notes.push(page_t(&page, "refund"));
         }
         if let (Some(to_cur), Some(got)) = (&t.to_currency, t.to_amount) {
-            notes.push(format!("{} {}", page_t(&page, "rate"), rate_text(lang, t.sent(), &t.currency, got, to_cur)));
+            notes.push(format!("{} {}", page_t(&page, "rate"), rate_text(lang, t.sent(), page.cur(&t.currency), got, page.cur(to_cur))));
         }
         if let (Some(fee), Some(cat)) = (t.fee_amount, &t.fee_category_code) {
-            notes.push(format!("{} {} {} · {}", page_t(&page, "fee_short"), money_in(lang, fee), t.currency, cat_title(cat)));
+            notes.push(format!("{} {}\u{a0}{} · {}", page_t(&page, "fee_short"), money_in(lang, fee), page.cur(&t.currency), cat_title(cat)));
         }
         let desc = match t.title(lang) {
             "" if !desc_fallback.is_empty() => desc_fallback,

@@ -12,6 +12,8 @@
   var locale = lang === 'th' ? 'th-TH-u-ca-gregory' : lang === 'en' ? 'en-US' : 'ru-RU';
   var csrf = (body && body.dataset.csrf) || '';
   var canWrite = !!(body && body.dataset.canWrite);
+  // Символ базовой валюты для сумм (฿); если символа нет — код.
+  var baseSym = (body && (body.dataset.baseSym || body.dataset.base)) || '';
 
   function money(v) {
     return new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
@@ -186,7 +188,7 @@
         var v = evalAmount(input.value);
         if (isNaN(v)) { out.textContent = ''; return; }
         var d = Math.round((v - book) * 10000) / 10000;
-        out.textContent = d === 0 ? out.dataset.same : (d > 0 ? out.dataset.more : out.dataset.less) + ' ' + money(Math.abs(d));
+        out.textContent = d === 0 ? out.dataset.same : (d > 0 ? out.dataset.more : out.dataset.less) + ' ' + money(Math.abs(d)) + (out.dataset.cur ? '\u00a0' + out.dataset.cur : '');
         if (cat && d !== 0) filterOptions(cat, d > 0 ? 'INCOME' : 'EXPENSE');
       };
       input.addEventListener('input', sync); sync();
@@ -245,7 +247,7 @@
     var kind = function () { var r = $('[name=tx_kind]:checked', form); return r ? r.value : 'EXPENSE'; };
     var flow = $('[data-section=flow]', form), transfer = $('[data-section=transfer]', form), accLabel = $('label[for=account_code]', form);
     var refund = $('[data-refund]', form);
-    function opt(sel) { var o = sel && sel.selectedOptions[0]; return o ? { cur: o.dataset.cur || '', rate: parseFloat(o.dataset.rate) } : { cur: '', rate: NaN }; }
+    function opt(sel) { var o = sel && sel.selectedOptions[0]; return o ? { cur: o.dataset.cur || '', sym: o.dataset.sym || o.dataset.cur || '', rate: parseFloat(o.dataset.rate) } : { cur: '', sym: '', rate: NaN }; }
     // Перевод: валюты счетов, «Зачислено» — только при разных валютах, курс из сумм (без комиссии).
     function syncTransfer() {
       if (!transfer) return;
@@ -257,7 +259,7 @@
       var line = $('[data-rate-line]', form);
       if (line) {
         var fee = evalAmount($('[data-fee]', form).value), sent = evalAmount($('[data-sent]', form).value) - (isNaN(fee) ? 0 : fee);
-        line.textContent = differ ? rateText(sent, f.cur, evalAmount($('[data-received]', form).value), t.cur, f.rate, t.rate) : '';
+        line.textContent = differ ? rateText(sent, f.sym, evalAmount($('[data-received]', form).value), t.sym, f.rate, t.rate) : '';
       }
     }
     function syncKind() {
@@ -273,7 +275,7 @@
       $$('[data-amount]', form).forEach(function (i) { var v = evalAmount(i.value); if (!isNaN(v)) s += v; });
       totalEl.textContent = money(s);
       var acc = $('[name=account_code]', form);
-      curEl.textContent = acc && acc.selectedOptions[0] ? acc.selectedOptions[0].dataset.cur || '' : '';
+      curEl.textContent = acc && acc.selectedOptions[0] ? opt(acc).sym : '';
       return s;
     }
     function warn() {
@@ -288,7 +290,7 @@
         });
         var worst = null;
         Object.keys(per).forEach(function (code) { var w = limitWarning(d, code, per[code]); if (w && (!worst || w.rank > worst.rank)) worst = w; });
-        showLimit(note, worst, d.base_currency);
+        showLimit(note, worst, baseSym || d.base_currency);
       }).catch(function () { note.textContent = ''; });
     }
     lines.addEventListener('click', function (e) {
@@ -427,12 +429,13 @@
     $$('form[data-rate-form]', scope).forEach(function (form) {
       if (form.dataset.bound) return;
       form.dataset.bound = '1';
-      var t = form.dataset, base = t.base, sel = $('select[name=currency_code]', form), input = $('input[name=rate]', form);
+      var t = form.dataset, base = t.baseSym || t.base, sel = $('select[name=currency_code]', form), input = $('input[name=rate]', form);
       var inv = $('[data-rate-inverted]', form), last = $('[data-rate-last]', form), preview = $('[data-rate-preview]', form);
       var warn = $('[data-rate-warn]', form), warnText = $('[data-rate-warn-text]', form);
       var plain = function (v) { return String(Math.round(v * 1e6) / 1e6); };
       var isInv = function () { return inv.value === 'true'; };
-      var cur = function () { return sel.value; };
+      // Символ выбранной валюты для подписей (₽), значение списка — код.
+      var cur = function () { var o = sel.selectedOptions[0]; return o ? o.dataset.sym || o.value : ''; };
       function prev() {
         var o = sel.selectedOptions[0], r = o ? parseFloat(o.dataset.rate) : NaN;
         return r > 0 ? { rate: r, entered: parseFloat(o.dataset.entered), inverted: o.dataset.inverted === 'true', date: o.dataset.date } : null;
@@ -548,7 +551,7 @@
     var f = account(), t = accountBy($('#q-to').value), differ = !!(f && t && f.currency !== t.currency);
     $('#q-exchange').hidden = !differ;
     $('#q-to-cur').textContent = t ? t.currency : '';
-    $('#q-rate').textContent = differ ? rateText(evalAmount($('#q-amount').value), f.currency, evalAmount($('#q-to-amount').value), t.currency, parseFloat(f.rate_to_base), parseFloat(t.rate_to_base)) : '';
+    $('#q-rate').textContent = differ ? rateText(evalAmount($('#q-amount').value), f.symbol, evalAmount($('#q-to-amount').value), t.symbol, parseFloat(f.rate_to_base), parseFloat(t.rate_to_base)) : '';
   }
   function pickCategory(code) {
     Q.category = code;
@@ -623,8 +626,8 @@
     var v = evalAmount($('#q-amount').value), a = account();
     var amount = (isNaN(v) ? 0 : v) * (a ? parseFloat(a.rate_to_base) : 1);
     var w = limitWarning(Q.data, Q.category, amount);
-    if (w && w.left != null && isNaN(v) && w.rank === 0) { el.className = 'limit-note'; el.textContent = (i18n.available || '') + ': ' + money(w.left) + ' ' + Q.data.base_currency; return; }
-    showLimit(el, w, Q.data.base_currency);
+    if (w && w.left != null && isNaN(v) && w.rank === 0) { el.className = 'limit-note'; el.textContent = (i18n.available || '') + ': ' + money(w.left) + ' ' + (baseSym || Q.data.base_currency); return; }
+    showLimit(el, w, baseSym || Q.data.base_currency);
   }
   function fillAccounts() {
     var sel = $('#q-account'), keep = sel.value; sel.textContent = '';

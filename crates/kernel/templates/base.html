@@ -17,7 +17,7 @@
   <script src="{{ page.asset("htmx.min.js") }}" defer></script>
   <script src="{{ page.asset("app.js") }}" defer></script>
 </head>
-<body class="app-body" data-csrf="{{ page.csrf() }}" data-can-write="{% if page.can_write() %}1{% endif %}" data-lang="{{ page.lang.code() }}" data-base="{{ page.session.base_currency }}">
+<body class="app-body" data-csrf="{{ page.csrf() }}" data-can-write="{% if page.can_write() %}1{% endif %}" data-lang="{{ page.lang.code() }}" data-base="{{ page.session.base_currency }}" data-base-sym="{{ page.cur(page.session.base_currency) }}">
 <a class="skip-link" href="#main">{{ page.t("skip_to_content") }}</a>
 <div class="app">
   <aside class="sidebar" id="sidebar" aria-label="{{ page.t("nav.main") }}">

@@ -20,7 +20,7 @@
     </div>
     <dl class="mt-4 flex items-end justify-between gap-4 text-sm">
       <div><dt class="text-xs text-subtle">{{ page.t("balance") }}</dt>
-        <dd class="text-lg font-semibold{% if *negative %} text-danger{% endif %}">{% call m::amount(balance, a.currency_code) %}{% endcall %}</dd></div>
+        <dd class="text-lg font-semibold{% if *negative %} text-danger{% endif %}">{% call m::amount(balance, page.cur(a.currency_code)) %}{% endcall %}</dd></div>
       <div class="text-right"><dt class="text-xs text-subtle">{{ page.t("holder") }}</dt>
         <dd>{% if let Some(h) = a.holder_user_id %}{{ page.session.member_name(h) }}{% else %}{{ page.t("nobody") }}{% endif %}</dd></div>
     </dl>

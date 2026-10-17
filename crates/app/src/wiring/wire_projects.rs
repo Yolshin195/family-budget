@@ -1,11 +1,13 @@
 //! Связка фичи `projects`: начальное наполнение нового проекта через публичные API
 //! `currencies`, `categories` и `accounts` — базовая валюта, стартовое дерево категорий на трёх
 //! языках и счёт в базовой валюте (чтобы сразу можно было вносить операции);
-//! удаление всех данных проекта во всех фичах (удаление проекта, аккаунта, сброс демо).
+//! удаление всех данных проекта во всех фичах (удаление проекта, аккаунта, сброс демо);
+//! сессия страницы с символами валют проекта.
 
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
+use kernel::auth::{Memberships, SessionInfo};
 use kernel::error::{AppError, AppResult};
 use kernel::i18n::Lang;
 use uuid::Uuid;
@@ -180,5 +182,22 @@ impl ::projects::ProjectPurge for PurgeAdapter {
             }
         }
         Ok(())
+    }
+}
+
+/// Порт ядра `Memberships`: сессия из `projects` + символы валют проекта из `currencies`
+/// (страницы показывают `฿` рядом с суммой вместо `THB`).
+pub struct SessionAdapter {
+    pub projects: Arc<::projects::Service>,
+    pub currencies: Arc<::currencies::Service>,
+}
+
+#[async_trait]
+impl Memberships for SessionAdapter {
+    async fn session(&self, user_id: Uuid, project: Option<Uuid>) -> AppResult<Option<SessionInfo>> {
+        let Some(mut info) = self.projects.session(user_id, project).await? else { return Ok(None) };
+        let list = self.currencies.all(info.project_id, true).await?;
+        info.currency_marks = kernel::auth::currency_marks(list.into_iter().map(|c| (c.code, c.symbol)));
+        Ok(Some(info))
     }
 }

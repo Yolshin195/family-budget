@@ -6,13 +6,13 @@
 <p class="text-muted mb-4 max-w-3xl">{{ page.t("hint") }} {{ page.t("base_is") }} <b>{{ page.session.base_currency }}</b>.</p>
 {% call m::form_alert(error, "rate_date,currency_code,rate") %}{% endcall %}
 {% if page.can_write() %}
-<form method="post" class="card card-pad mb-6 flex flex-wrap items-start gap-4" data-form data-rate-form data-base="{{ page.session.base_currency }}"
+<form method="post" class="card card-pad mb-6 flex flex-wrap items-start gap-4" data-form data-rate-form data-base="{{ page.session.base_currency }}" data-base-sym="{{ page.cur(page.session.base_currency) }}"
   data-t-last="{{ page.t("last") }}" data-t-per="{{ page.t("per") }}" data-t-less="{{ page.t("warn_less") }}" data-t-more="{{ page.t("warn_more") }}" data-t-check="{{ page.t("warn_check") }}">
   <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
   <div class="field !mb-0"><label class="label" for="rate_date">{{ page.t("date") }}</label>
     <input class="input" type="date" id="rate_date" name="rate_date" value="{% if form.rate_date.is_empty() %}{{ today }}{% else %}{{ form.rate_date }}{% endif %}" required{% call m::aria(error, "rate_date") %}{% endcall %}>{% call m::err(error, "rate_date") %}{% endcall %}</div>
   <div class="field !mb-0"><label class="label" for="currency_code">{{ page.t("currency") }}</label>
-    <select class="input" id="currency_code" name="currency_code"{% call m::aria(error, "currency_code") %}{% endcall %}>{% for c in currencies %}<option value="{{ c.code }}"{% if c.code == currency %} selected{% endif %}{% if let Some(l) = c.last %} data-entered="{{ l.entered }}" data-inverted="{{ l.inverted }}" data-rate="{{ l.rate }}" data-inverse="{{ l.inverse }}" data-date="{{ l.date }}"{% endif %}>{{ c.label }}</option>{% endfor %}</select>
+    <select class="input" id="currency_code" name="currency_code"{% call m::aria(error, "currency_code") %}{% endcall %}>{% for c in currencies %}<option value="{{ c.code }}" data-sym="{{ page.cur(c.code) }}"{% if c.code == currency %} selected{% endif %}{% if let Some(l) = c.last %} data-entered="{{ l.entered }}" data-inverted="{{ l.inverted }}" data-rate="{{ l.rate }}" data-inverse="{{ l.inverse }}" data-date="{{ l.date }}"{% endif %}>{{ c.label }}</option>{% endfor %}</select>
     {% call m::err(error, "currency_code") %}{% endcall %}</div>
   <div class="field !mb-0"><label class="label" for="rate">{{ page.t("rate") }}</label>
     <div class="flex items-center gap-2">

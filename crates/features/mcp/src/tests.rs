@@ -383,6 +383,7 @@ impl Memberships for FakeMemberships {
             project_id: *p,
             project_name: "Семья".into(),
             base_currency: "THB".into(),
+            currency_marks: Default::default(),
             role: *role,
             require_2fa: *tfa,
             projects: mine.iter().map(|x| ProjectRef { id: x.1, name: "Семья".into(), role: x.2 }).collect(),
