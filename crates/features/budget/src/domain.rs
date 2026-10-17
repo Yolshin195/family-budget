@@ -1,6 +1,7 @@
 //! Расчёт бюджета: факт, план, лимит по дереву категорий за неделю / месяц / год.
 //! Чистые функции без ввода-вывода — всё, что нужно, приходит параметрами.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use chrono::{Datelike, Days, Months, NaiveDate};
@@ -243,6 +244,134 @@ pub fn compute(nodes: &[Node], facts: &[Amount], planned: &[Amount], limits: &[L
     rows
 }
 
+/// Колонка сортировки таблицы бюджета.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortKey {
+    Category,
+    Limit,
+    Fact,
+    Plan,
+    Forecast,
+    Available,
+    Percent,
+}
+
+impl SortKey {
+    pub const ALL: [SortKey; 7] = [SortKey::Category, SortKey::Limit, SortKey::Fact, SortKey::Plan, SortKey::Forecast, SortKey::Available, SortKey::Percent];
+
+    pub fn parse(s: &str) -> Option<SortKey> {
+        SortKey::ALL.into_iter().find(|k| k.code() == s)
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            SortKey::Category => "category",
+            SortKey::Limit => "limit",
+            SortKey::Fact => "fact",
+            SortKey::Plan => "plan",
+            SortKey::Forecast => "forecast",
+            SortKey::Available => "available",
+            SortKey::Percent => "percent",
+        }
+    }
+
+    /// Первый клик: названия — по алфавиту, суммы — крупные сверху.
+    pub fn default_dir(self) -> Dir {
+        if self == SortKey::Category { Dir::Asc } else { Dir::Desc }
+    }
+}
+
+/// Направление сортировки.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dir {
+    Asc,
+    Desc,
+}
+
+impl Dir {
+    pub fn parse(s: &str) -> Option<Dir> {
+        match s {
+            "asc" => Some(Dir::Asc),
+            "desc" => Some(Dir::Desc),
+            _ => None,
+        }
+    }
+
+    pub fn code(self) -> &'static str {
+        match self {
+            Dir::Asc => "asc",
+            Dir::Desc => "desc",
+        }
+    }
+}
+
+/// Сортировка после клика по колонке `col`: направление колонки по умолчанию → обратное → исходный порядок.
+pub fn next_sort(current: Option<(SortKey, Dir)>, col: SortKey) -> Option<(SortKey, Dir)> {
+    match current {
+        Some((k, d)) if k == col && d == col.default_dir() => Some((col, if d == Dir::Asc { Dir::Desc } else { Dir::Asc })),
+        Some((k, _)) if k == col => None,
+        _ => Some((col, col.default_dir())),
+    }
+}
+
+/// Значение строки для сортировки; `None` — пустая ячейка.
+#[derive(PartialEq, PartialOrd)]
+enum SortValue {
+    Text(String),
+    Num(Decimal),
+}
+
+fn sort_value(r: &Row, key: SortKey) -> Option<SortValue> {
+    let num = |v: Option<Decimal>| v.map(SortValue::Num);
+    match key {
+        SortKey::Category => Some(SortValue::Text(r.title.to_lowercase().replace('ё', "е"))),
+        SortKey::Limit => num(r.limit),
+        SortKey::Fact => num(Some(r.fact)),
+        // Нулевой план в таблице не показывается — это пустая ячейка.
+        SortKey::Plan => num(Some(r.planned).filter(|p| !p.is_zero())),
+        SortKey::Forecast => num(Some(r.forecast)),
+        SortKey::Available => num(r.available),
+        SortKey::Percent => num(r.percent.map(Decimal::from)),
+    }
+}
+
+/// Отсортировать строки (в порядке обхода в глубину) внутри каждого уровня дерева: меняется только порядок
+/// братьев, дети остаются сразу под своим родителем. Пустые значения — в конце при любом направлении,
+/// при равенстве сохраняется исходный порядок.
+pub fn sort_tree(rows: Vec<Row>, key: SortKey, dir: Dir) -> Vec<Row> {
+    let index: HashMap<&str, usize> = rows.iter().enumerate().map(|(i, r)| (r.code.as_str(), i)).collect();
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); rows.len()];
+    let mut roots = Vec::new();
+    for (i, r) in rows.iter().enumerate() {
+        match r.parent_code.as_deref().and_then(|p| index.get(p)) {
+            Some(&p) => children[p].push(i),
+            None => roots.push(i),
+        }
+    }
+    let values: Vec<Option<SortValue>> = rows.iter().map(|r| sort_value(r, key)).collect();
+    let cmp = |a: &usize, b: &usize| match (&values[*a], &values[*b]) {
+        (Some(x), Some(y)) => {
+            let o = x.partial_cmp(y).unwrap_or(Ordering::Equal);
+            if dir == Dir::Desc { o.reverse() } else { o }
+        }
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    };
+    roots.sort_by(cmp);
+    for c in &mut children {
+        c.sort_by(cmp);
+    }
+    let mut order = Vec::with_capacity(rows.len());
+    let mut stack: Vec<usize> = roots.into_iter().rev().collect();
+    while let Some(i) = stack.pop() {
+        order.push(i);
+        stack.extend(children[i].iter().rev());
+    }
+    let mut slots: Vec<Option<Row>> = rows.into_iter().map(Some).collect();
+    order.into_iter().filter_map(|i| slots[i].take()).collect()
+}
+
 /// Курс валюты на дату: последний известный не позже даты, иначе самый ранний (для будущих дат — последний).
 pub fn rate_on(rates: &[(String, NaiveDate, Decimal)], currency: &str, base: &str, date: NaiveDate) -> Option<Decimal> {
     if currency == base {
@@ -334,6 +463,97 @@ mod tests {
         assert_eq!(rows[0].percent, Some(109));
         assert!(rows[0].children_over_limit, "15 000 + 3 000 > 16 000");
         assert_eq!(rows[2].available, Some(dec("-1500")));
+    }
+
+    /// Еда → (Продукты → Овощи, Кафе), Дом → (Аренда, Свет), Связь.
+    fn sample_rows() -> Vec<Row> {
+        let nodes = vec![
+            node("FOOD", None, 0),
+            node("GROC", Some("FOOD"), 1),
+            node("VEG", Some("GROC"), 2),
+            node("CAFE", Some("FOOD"), 1),
+            node("HOME", None, 0),
+            node("RENT", Some("HOME"), 1),
+            node("UTIL", Some("HOME"), 1),
+            node("PHONE", None, 0),
+        ];
+        let facts = vec![amt("VEG", "100"), amt("GROC", "50"), amt("CAFE", "240"), amt("RENT", "300"), amt("UTIL", "80"), amt("PHONE", "20")];
+        let planned = vec![amt("UTIL", "40"), amt("PHONE", "10")];
+        let limits = vec![lim("FOOD", View::Month, "500"), lim("RENT", View::Month, "300"), lim("PHONE", View::Month, "100")];
+        compute(&nodes, &facts, &planned, &limits, &Period::containing(View::Month, d(2026, 10, 1)))
+    }
+    fn codes(rows: &[Row]) -> Vec<&str> {
+        rows.iter().map(|r| r.code.as_str()).collect()
+    }
+    /// Порядок — обход в глубину: между строкой и её родителем — только потомки родителя.
+    fn assert_tree_order(rows: &[Row]) {
+        for (i, r) in rows.iter().enumerate() {
+            let Some(p) = r.parent_code.as_deref() else { continue };
+            let pi = rows.iter().position(|x| x.code == p).expect("родитель в таблице");
+            assert!(pi < i, "{} должен идти под {p}", r.code);
+            assert!(rows[pi + 1..i].iter().all(|x| x.depth > rows[pi].depth), "{} оторван от {p}", r.code);
+        }
+    }
+
+    #[test]
+    fn sort_tree_sorts_siblings_only() {
+        // факт: Еда 390 (Продукты 150, Кафе 240), Дом 380 (Аренда 300, Свет 80), Связь 20
+        let rows = sort_tree(sample_rows(), SortKey::Fact, Dir::Desc);
+        assert_eq!(codes(&rows), ["FOOD", "CAFE", "GROC", "VEG", "HOME", "RENT", "UTIL", "PHONE"]);
+        assert_tree_order(&rows);
+        let rows = sort_tree(sample_rows(), SortKey::Fact, Dir::Asc);
+        assert_eq!(codes(&rows), ["PHONE", "HOME", "UTIL", "RENT", "FOOD", "GROC", "VEG", "CAFE"]);
+        assert_tree_order(&rows);
+    }
+
+    #[test]
+    fn sort_tree_empty_last_both_directions() {
+        // лимиты: Еда 500, Связь 100, у Дома нет; среди детей Дома лимит только у Аренды
+        for dir in [Dir::Desc, Dir::Asc] {
+            let rows = sort_tree(sample_rows(), SortKey::Limit, dir);
+            let roots: Vec<&str> = rows.iter().filter(|r| r.depth == 0).map(|r| r.code.as_str()).collect();
+            assert_eq!(roots.last(), Some(&"HOME"), "{dir:?}: без лимита — в конце");
+            let home_kids: Vec<&str> = rows.iter().filter(|r| r.parent_code.as_deref() == Some("HOME")).map(|r| r.code.as_str()).collect();
+            assert_eq!(home_kids, ["RENT", "UTIL"], "{dir:?}");
+            assert_tree_order(&rows);
+        }
+        // план есть только у Света и Связи (и у Дома как суммы); нулевой план — пустой
+        for dir in [Dir::Desc, Dir::Asc] {
+            let rows = sort_tree(sample_rows(), SortKey::Plan, dir);
+            assert_eq!(rows.last().map(|r| r.code.as_str()), Some("CAFE"), "{dir:?}: Еда без плана — после Дома и Связи");
+            assert_eq!(rows.iter().rfind(|r| r.depth == 0).map(|r| r.code.as_str()), Some("FOOD"), "{dir:?}");
+        }
+    }
+
+    #[test]
+    fn sort_tree_category_alphabetical_and_stable() {
+        let mut rows = sample_rows();
+        for (r, t) in rows.iter_mut().zip(["еда", "Продукты", "Овощи", "Кафе", "Ёлка", "Аренда", "Свет", "Жильё"]) {
+            r.title = t.into();
+        }
+        // регистр не важен, «Ёлка» сравнивается как «Елка»: между «еда» и «Жильё»
+        assert_eq!(codes(&sort_tree(rows.clone(), SortKey::Category, Dir::Asc)), ["FOOD", "CAFE", "GROC", "VEG", "HOME", "RENT", "UTIL", "PHONE"]);
+        assert_eq!(codes(&sort_tree(rows, SortKey::Category, Dir::Desc)), ["PHONE", "HOME", "UTIL", "RENT", "FOOD", "GROC", "VEG", "CAFE"]);
+        // при равенстве — исходный порядок, в обе стороны
+        for dir in [Dir::Asc, Dir::Desc] {
+            let same = sort_tree(sample_rows(), SortKey::Percent, dir);
+            let kids: Vec<&str> = same.iter().filter(|r| r.parent_code.as_deref() == Some("FOOD")).map(|r| r.code.as_str()).collect();
+            assert_eq!(kids, ["GROC", "CAFE"], "{dir:?}: процента нет ни у кого — порядок справочника");
+        }
+    }
+
+    #[test]
+    fn sort_click_cycle() {
+        use SortKey::*;
+        assert_eq!(next_sort(None, Fact), Some((Fact, Dir::Desc)), "суммы — сначала крупные");
+        assert_eq!(next_sort(Some((Fact, Dir::Desc)), Fact), Some((Fact, Dir::Asc)));
+        assert_eq!(next_sort(Some((Fact, Dir::Asc)), Fact), None, "третий клик — исходный порядок");
+        assert_eq!(next_sort(None, Category), Some((Category, Dir::Asc)), "названия — по алфавиту");
+        assert_eq!(next_sort(Some((Category, Dir::Asc)), Category), Some((Category, Dir::Desc)));
+        assert_eq!(next_sort(Some((Category, Dir::Desc)), Category), None);
+        assert_eq!(next_sort(Some((Fact, Dir::Asc)), Limit), Some((Limit, Dir::Desc)), "другая колонка — с её направления");
+        assert_eq!(SortKey::ALL.map(|k| SortKey::parse(k.code())), SortKey::ALL.map(Some));
+        assert_eq!((SortKey::parse("title"), Dir::parse("up")), (None, None));
     }
 
     #[test]

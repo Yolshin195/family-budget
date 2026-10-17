@@ -8,12 +8,12 @@ use axum::routing::get;
 use axum::{Extension, Router};
 use chrono::{Datelike, NaiveDate};
 use kernel::i18n::{Lang, month_name};
-use kernel::web::{PageCtx, PageResult, money_in, render};
+use kernel::web::{PageCtx, PageResult, money_in, render, url_encode};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::domain::{Level, Period, Row, View};
+use crate::domain::{Dir, Level, Period, Row, SortKey, View, next_sort, sort_tree};
 use crate::service::{BudgetService, Report};
 
 type Svc = State<Arc<BudgetService>>;
@@ -30,6 +30,25 @@ struct Params {
     member: String,
     /// fact (по умолчанию) / forecast
     mode: String,
+    /// Колонка сортировки «Расходов» (`SortKey::code`); пусто — порядок справочника.
+    sort: String,
+    /// asc / desc; пусто — направление колонки по умолчанию.
+    dir: String,
+}
+
+/// Заголовок сортируемой колонки «Расходов».
+struct SortHead {
+    key: &'static str,
+    label: String,
+    /// Подпись для чтения с экрана, если `label` — значок.
+    sr: String,
+    /// Ссылка на следующее состояние сортировки по этой колонке.
+    href: String,
+    /// ascending / descending / пусто — колонка не активна.
+    aria_sort: &'static str,
+    /// Стрелка направления у активной колонки, нейтральный значок у остальных.
+    icon: &'static str,
+    num: bool,
 }
 
 struct RowView {
@@ -77,6 +96,12 @@ struct BudgetPage {
     member: String,
     /// Режим сводки: `fact` — что уже произошло, `forecast` — чем закончится период с учётом планов.
     mode: &'static str,
+    /// Сортировка «Расходов» для скрытых полей формы участника (пусто — порядок справочника).
+    sort: &'static str,
+    dir: &'static str,
+    /// Хвост ссылок периода и режима, сохраняющий сортировку: `&sort=…&dir=…` или пусто.
+    sort_q: String,
+    heads: Vec<SortHead>,
     expenses: Vec<RowView>,
     incomes: Vec<RowView>,
     exp_fact: String,
@@ -148,6 +173,10 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
     let money = |v: Decimal| money_in(lang, v);
 
     let forecast = q.mode == "forecast";
+    let mode = if forecast { "forecast" } else { "fact" };
+    let sort = SortKey::parse(&q.sort).map(|k| (k, Dir::parse(&q.dir).unwrap_or(k.default_dir())));
+    let sort_q = |s: Option<(SortKey, Dir)>| s.map(|(k, d)| format!("&sort={}&dir={}", k.code(), d.code())).unwrap_or_default();
+    let base_q = format!("?view={}&date={}&member={}&mode={mode}", view.code(), period.from, url_encode(&q.member));
     let exp_total = r.expense_fact + r.expense_planned;
     let inc_total = r.income_fact + r.income_planned;
     let net = if forecast { r.net_forecast() } else { r.net_fact() };
@@ -165,6 +194,29 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         })
         .collect();
     let page = page.for_feature(crate::NAME, crate::i18n::dict);
+    let heads = SortKey::ALL
+        .into_iter()
+        .map(|k| {
+            let active = sort.filter(|(s, _)| *s == k).map(|(_, d)| d);
+            SortHead {
+                key: k.code(),
+                label: if k == SortKey::Percent { "%".into() } else { page.t(if k == SortKey::Category { "category" } else { k.code() }) },
+                sr: if k == SortKey::Percent { page.t("percent") } else { String::new() },
+                href: format!("{base_q}{}", sort_q(next_sort(sort, k))),
+                aria_sort: match active {
+                    Some(Dir::Asc) => "ascending",
+                    Some(Dir::Desc) => "descending",
+                    None => "",
+                },
+                icon: if active.is_some() { "chevron-down" } else { "chevrons-up-down" },
+                num: k != SortKey::Category,
+            }
+        })
+        .collect();
+    let expenses = match sort {
+        Some((k, d)) => sort_tree(r.expenses, k, d),
+        None => r.expenses,
+    };
     render(&BudgetPage {
         view: view.code(),
         title: period_title(&period, &page),
@@ -173,7 +225,11 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         today: today.to_string(),
         current: period.from.to_string(),
         member: q.member,
-        mode: if forecast { "forecast" } else { "fact" },
+        mode,
+        sort: sort.map(|(k, _)| k.code()).unwrap_or_default(),
+        dir: sort.map(|(_, d)| d.code()).unwrap_or_default(),
+        sort_q: sort_q(sort),
+        heads,
         exp_fact: money(r.expense_fact),
         exp_plan: money(r.expense_planned),
         exp_total: money(exp_total),
@@ -195,7 +251,7 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         upcoming,
         missing_rates: r.missing_rates.join(", "),
         base: r.base_currency.clone(),
-        expenses: r.expenses.into_iter().map(|x| row_view(lang, x)).collect(),
+        expenses: expenses.into_iter().map(|x| row_view(lang, x)).collect(),
         incomes: r.incomes.into_iter().map(|x| row_view(lang, x)).collect(),
         page,
     })

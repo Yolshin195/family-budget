@@ -366,20 +366,58 @@
     b.textContent = expand ? b.dataset.labelCollapse : b.dataset.labelExpand;
   });
 
+  // Свёрнутость дерева переживает подмену страницы: видимые строки, раскрытые узлы и «Развернуть всё».
+  // Строки, которых раньше не было (новая категория), остаются как отдал сервер.
+  function treeState() {
+    var table = $('table[data-tree]');
+    if (!table) return null;
+    var s = { shown: {}, open: {}, expand: null };
+    $$('tbody tr', table).forEach(function (r) {
+      s.shown[r.dataset.code] = !r.hidden;
+      var t = $('[data-toggle]', r); if (t) s.open[r.dataset.code] = t.getAttribute('aria-expanded') === 'true';
+    });
+    var b = $('[data-tree-expand]'); if (b) s.expand = b.getAttribute('aria-pressed') === 'true';
+    return s;
+  }
+  function restoreTree(s) {
+    var table = $('table[data-tree]');
+    if (!s || !table) return;
+    $$('tbody tr', table).forEach(function (r) {
+      var code = r.dataset.code;
+      if (code in s.shown) r.hidden = !s.shown[code];
+      var t = $('[data-toggle]', r); if (t && code in s.open) t.setAttribute('aria-expanded', String(s.open[code]));
+    });
+    var b = $('[data-tree-expand]');
+    if (b && s.expand !== null) { b.setAttribute('aria-pressed', String(s.expand)); b.textContent = s.expand ? b.dataset.labelCollapse : b.dataset.labelExpand; }
+  }
+
   /* ---------------------------------------------------------------- обновление цифр страницы без перезагрузки */
-  function refreshPage() {
+  function swapMain(url, after) {
     var main = $('#main');
     if (!main) return;
-    var url = location.pathname + location.search;
+    var tree = treeState();
+    var done = function () { var m = $('#main'); restoreTree(tree); bindPage(m); if (after) after(m); };
     if (window.htmx) {
-      window.htmx.ajax('GET', url, { target: '#main', select: '#main', swap: 'outerHTML' }).then(function () { bindPage($('#main')); });
+      window.htmx.ajax('GET', url, { target: '#main', select: '#main', swap: 'outerHTML' }).then(done);
     } else {
       fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.text(); }).then(function (html) {
         var next = new DOMParser().parseFromString(html, 'text/html').querySelector('#main');
-        if (next) { main.replaceWith(next); bindPage(next); }
+        if (next) { main.replaceWith(next); done(); }
       });
     }
   }
+  function refreshPage() { swapMain(location.pathname + location.search); }
+  // Сортировка «Расходов»: без JS — обычная ссылка, с JS — подмена страницы без потери свёрнутости.
+  doc.addEventListener('click', function (e) {
+    var a = e.target.closest && e.target.closest('table[data-tree] a[data-sort]');
+    if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.button) return;
+    e.preventDefault();
+    var href = a.getAttribute('href'), key = a.dataset.sort;
+    swapMain(href, function (m) {
+      history.replaceState(null, '', href);
+      var f = $('table[data-tree] a[data-sort="' + key + '"]', m); if (f) f.focus();
+    });
+  });
   // Курс валюты (справочник «Курсы»): направление ввода выбирает пользователь кнопкой ⇄ — «1 RUB = x THB» или
   // «1 THB = x RUB» (скрытое поле inverted). Новая валюта открывается в направлении её прошлого курса.
   // Подсказка «последний: …», предпросмотр пересчёта и предупреждение, если курс отличается от прошлого больше

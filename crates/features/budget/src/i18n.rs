@@ -25,6 +25,8 @@ pub fn dict(key: &str) -> Option<Tr> {
         "inherited" => ("ограничено лимитом родителя", "limited by parent's limit", "จำกัดโดยวงเงินหมวดหลัก"),
         "all_members" => ("Все участники", "All members", "สมาชิกทั้งหมด"),
         "base_currency" => ("Суммы в базовой валюте", "Amounts in base currency", "จำนวนเงินในสกุลหลัก"),
+        "sort_hint" => ("Нажмите заголовок колонки, чтобы отсортировать", "Select a column header to sort", "แตะหัวคอลัมน์เพื่อเรียงลำดับ"),
+        "percent" => ("% лимита", "% of limit", "% ของวงเงิน"),
         "expand" => ("Развернуть всё", "Expand all", "ขยายทั้งหมด"),
         "set_limits" => ("Настроить лимиты", "Set limits", "ตั้งวงเงิน"),
         "period_nav" => ("Выбор периода", "Period navigation", "เลือกช่วงเวลา"),
