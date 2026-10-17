@@ -1,0 +1,118 @@
+/* Стили сайта поверх дизайн-системы приложения (styles/app.css): токены, кнопки, бейджи, лендинг — оттуда.
+ * Здесь — только то, чего в приложении нет: навигация сайта, карточки и списки блога, статьи. */
+@layer components {
+  .preview-bar { @apply bg-accent-soft px-4 py-2 text-center text-sm text-accent-text; }
+  .preview-bar a { @apply font-medium underline underline-offset-2 hover:no-underline; }
+
+  /* шапка: разделы видны с md, на телефоне — в меню */
+  .site-links { @apply hidden flex-1 items-center gap-1 pl-4 lg:flex; }
+  .site-links a { @apply rounded-lg px-3 py-2 text-sm font-medium text-muted hover:bg-sunken hover:text-default; }
+  .site-links a[aria-current='page'] { @apply text-default; box-shadow: inset 0 -2px 0 rgb(var(--accent)); border-radius: 0; }
+  .site-menu { @apply relative lg:hidden; }
+  .site-menu > summary { @apply px-2.5; }
+  .site-menu-panel { @apply absolute right-0 top-12 z-40 flex w-56 flex-col rounded-xl border border-line bg-surface p-2 shadow-xl; }
+  .site-menu-panel a { @apply rounded-lg px-3 py-2.5 text-sm font-medium hover:bg-sunken; }
+  .site-menu-panel a[aria-current='page'] { @apply bg-accent-soft text-accent-text; }
+
+  .section-head { @apply mb-8 flex flex-wrap items-baseline justify-between gap-3; }
+  .site-header .logo-text { @apply max-sm:hidden; }
+
+  /* подвал */
+  .footer-grid { @apply grid gap-8 sm:grid-cols-2 lg:grid-cols-4; }
+  .footer-title { @apply mb-3 text-sm font-semibold; }
+  .footer-col { @apply space-y-2 text-sm text-muted; }
+  .footer-col a { @apply hover:text-default hover:underline; }
+
+  /* списки: блог, разделы, темы */
+  .list-page { @apply py-10 md:py-14; }
+  .post-tabs { @apply mb-6 mt-8 flex gap-1 overflow-x-auto border-b border-line; }
+  .post-tab { @apply -mb-px whitespace-nowrap border-b-2 border-transparent px-3 py-2.5 text-sm font-medium text-muted hover:text-default; }
+  .post-tab[aria-current='page'] { @apply border-accent text-default; }
+  .topics-bar { @apply mb-8 flex flex-wrap items-center gap-2; }
+  .topic-list { @apply flex flex-wrap gap-2; }
+  .topic { @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 py-1 text-sm text-muted hover:border-line-strong hover:text-default; }
+  .topic[aria-current='page'] { @apply border-accent bg-accent-soft text-accent-text; }
+  .topic-count { @apply text-xs text-subtle; }
+  .cards { @apply grid gap-4 md:grid-cols-2 lg:grid-cols-3; }
+  .post-card { @apply flex flex-col gap-3 rounded-xl border border-line bg-surface p-5; }
+  .post-meta { @apply flex flex-wrap items-center gap-2 text-sm; }
+  .post-date { @apply text-subtle; }
+  .post-title { @apply text-xl font-semibold leading-snug; }
+  .post-title a { @apply hover:text-accent-text; }
+  .post-text { @apply text-sm text-muted; }
+  .group-title { @apply mb-4 mt-10 first-of-type:mt-0; }
+
+  /* тип материала и статус идеи */
+  .kind { @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold; }
+  .kind-releases { @apply bg-accent-soft text-accent-text; }
+  .kind-guides { @apply bg-income-soft text-income; }
+  .kind-ideas { @apply bg-warn-soft text-warn; }
+  .status { @apply inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium; }
+  .status-discussing { @apply border-line bg-sunken text-muted; }
+  .status-planned { @apply border-transparent bg-info-soft text-info; }
+  .status-in_progress { @apply border-transparent bg-warn-soft text-warn; }
+  .status-done { @apply border-transparent bg-income-soft text-income; }
+
+  /* «Что нового»: записи к следующему релизу */
+  .next-box { @apply mb-8 rounded-xl border border-dashed border-line-strong bg-surface p-5 md:p-6; }
+  .next-title { @apply mb-1 flex items-center gap-2 text-xl font-semibold; }
+  .change-title { @apply mb-2 mt-5 text-sm font-semibold uppercase tracking-wide; }
+  .change-new { @apply text-accent-text; }
+  .change-improved { @apply text-income; }
+  .change-fixed { @apply text-warn; }
+  .changes { @apply space-y-3 text-sm text-muted; }
+  .changes strong { @apply font-semibold text-default; }
+
+  /* статья */
+  .article { @apply py-10 md:py-14; }
+  .post-crumbs { @apply mb-4 flex gap-2 text-sm text-subtle; }
+  .post-crumbs a { @apply hover:text-default hover:underline; }
+  .article-title { @apply mt-3 text-3xl font-semibold leading-tight md:text-[2.5rem]; letter-spacing: -0.02em; }
+  .article-lead { @apply mt-3 max-w-2xl text-xl text-muted; }
+  .article-cta { @apply my-10 flex flex-wrap items-center gap-4 border-t border-line pt-8; }
+  .toc { @apply my-8 rounded-xl border border-line bg-surface p-5; }
+  .toc-title { @apply mb-2 text-sm font-semibold; }
+  .toc ol { @apply space-y-1 text-sm; }
+  .toc a { @apply text-accent-text hover:underline; }
+  .note { @apply my-6 rounded-lg border px-4 py-3 text-sm; }
+  .note-info { @apply border-info/30 bg-info-soft; }
+  .note-tip { @apply border-income/30 bg-income-soft; }
+  .note-warn { @apply border-warn/30 bg-warn-soft; }
+
+  /* текст статей из Markdown */
+  .prose { @apply mt-8 text-base leading-7; }
+  .prose > * + * { @apply mt-5; }
+  .prose h2 { @apply mt-12 text-2xl font-semibold; }
+  .prose h3 { @apply mt-8 text-xl font-semibold; }
+  .prose a { @apply text-accent-text underline underline-offset-2 hover:no-underline; }
+  .prose ul { @apply list-disc space-y-1.5 pl-6; }
+  .prose ol { @apply list-decimal space-y-1.5 pl-6; }
+  .prose li::marker { @apply text-subtle; }
+  .prose strong { @apply font-semibold; }
+  .prose code { @apply rounded bg-sunken px-1.5 py-0.5 text-[0.9em]; }
+  .prose pre { @apply overflow-x-auto rounded-lg border border-line bg-surface p-4 text-sm; }
+  .prose pre code { @apply bg-transparent p-0; }
+  .prose blockquote { @apply border-l-4 border-line-strong pl-4 text-muted; }
+  .prose img { @apply h-auto max-w-full rounded-xl border border-line shadow-lg; }
+  .prose table { @apply w-full text-sm; }
+  .prose th { @apply border-b border-line-strong py-2 pr-4 text-left font-semibold; }
+  .prose td { @apply border-b border-line py-2 pr-4 align-top; }
+  .prose kbd { @apply rounded border border-line-strong bg-surface px-1.5 text-xs; }
+  .prose hr { @apply my-10 border-line; }
+  .prose .zola-anchor { @apply ml-2 text-subtle no-underline opacity-0; }
+  .prose h2:hover .zola-anchor, .prose h3:hover .zola-anchor { @apply opacity-100; }
+
+  /* правовые страницы: разделы — заголовки ## */
+  .legal-body h2 { @apply mb-2 mt-6 text-xl font-semibold; }
+  .legal-body p { @apply text-muted; }
+
+  /* отзывы */
+  .reviews { @apply mt-12; }
+  .review { @apply mb-4 rounded-xl border border-line bg-surface p-5; }
+  .review blockquote { @apply text-base; }
+  .review figcaption { @apply mt-3 text-sm text-muted; }
+  .comments { @apply mt-12; }
+
+  .not-found { @apply py-16; }
+  .not-found-item { @apply mt-8; }
+}

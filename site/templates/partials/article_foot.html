@@ -1,0 +1,7 @@
+{#- Подвал статьи: темы, призыв открыть приложение, комментарии, назад к списку. -#}
+{{ <topic_links topics={page.taxonomies?.topics or []} lang={lang} /> }}
+<div class="article-cta">
+  <a class="btn-primary" href="{{ config.extra.app_url }}/?lang={{ lang }}">{{ trans(key="cta_open_app", lang=lang) }}</a>
+  <a class="link" href="{{ get_url(path='@/blog/_index.md', lang=lang) }}">← {{ trans(key="back_to_blog", lang=lang) }}</a>
+</div>
+{% include "partials/comments.html" %}

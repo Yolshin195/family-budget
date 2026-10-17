@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block lang_links %}
+{%- for l in config.extra.langs %}
+<a href="{{ get_url(path='@/blog/_index.md', lang=l) | replace(from='/blog/', to='/topics/') }}" class="lang-link" hreflang="{{ l }}" lang="{{ l }}" title="{{ trans(key='lang_' ~ l, lang=l) }}"{% if l == lang %} aria-current="true"{% endif %}>{{ l | upper }}</a>
+{%- endfor %}
+{% endblock %}
+{% block content %}
+<div class="site-wrap list-page">
+  <h1 class="site-h1">{{ trans(key="topics_title", lang=lang) }}</h1>
+  <p class="article-lead">{{ trans(key="topics_description", lang=lang) }}</p>
+  {% include "partials/tabs.html" %}
+  {% include "partials/topics.html" %}
+</div>
+{% endblock %}

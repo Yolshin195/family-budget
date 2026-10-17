@@ -1,0 +1,7 @@
+User-agent: *
+{%- if config.extra.preview %}
+Disallow: /
+{%- else %}
+Allow: /
+Sitemap: {{ get_url(path="sitemap.xml") }}
+{%- endif %}

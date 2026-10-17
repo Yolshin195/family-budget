@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{#- Релиз: одна страница на версию (extra.version). Разделы «Новое / Улучшено / Исправлено» — заголовки ## в тексте. -#}
+{% block og_type %}article{% endblock %}
+{% block head %}{% include "partials/ld_article.html" %}{% endblock %}
+{% block content %}
+<article class="site-wrap site-narrow article">
+  {% include "partials/article_head.html" %}
+  <div class="prose">{{ page.content | safe }}</div>
+  {% include "partials/article_foot.html" %}
+</article>
+{% endblock %}

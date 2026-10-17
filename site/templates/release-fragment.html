@@ -1,0 +1,6 @@
+{#- Запись «к следующему релизу» (content/releases/next/) отдельной страницей не показывается:
+    Zola всё равно создаёт файл — он перенаправляет на «Что нового». -#}
+{%- set target = get_url(path="@/releases/_index.md", lang=lang) ~ "#next" -%}
+<!doctype html>
+<html lang="{{ lang }}"><head><meta charset="utf-8"><meta name="robots" content="noindex"><link rel="canonical" href="{{ target }}"><meta http-equiv="refresh" content="0; url={{ target }}"><title>{{ page.title }}</title></head>
+<body><a href="{{ target }}">{{ trans(key="nav_releases", lang=lang) }}</a></body></html>

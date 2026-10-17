@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{#- Отзывы: тексты из data/reviews.toml (оригинал и переводы на два других языка), как оставить отзыв — в Markdown. -#}
+{% block content %}
+{%- set data = load_data(path="data/reviews.toml") %}
+<div class="site-wrap site-narrow article">
+  <h1 class="site-h1">{{ page.title }}</h1>
+  {% if page.description %}<p class="article-lead">{{ page.description }}</p>{% endif %}
+  <div class="prose">{{ page.content | safe }}</div>
+  <section class="reviews" aria-labelledby="reviews">
+    <h2 class="site-h2" id="reviews">{{ trans(key="reviews_title", lang=lang) }}</h2>
+    {%- for r in data.reviews | sort(attribute="date") | reverse %}
+    <figure class="review">
+      <blockquote>{{ r.text[lang] }}</blockquote>
+      <figcaption>
+        <strong>{{ r.author }}</strong> · {{ <when value={r.date} lang={lang} /> }}
+        {%- if r.lang != lang %} · <span class="text-subtle">{{ trans(key="review_translated", lang=lang) }} {{ trans(key="lang_" ~ r.lang, lang=lang) | lower }}</span>{% endif %}
+      </figcaption>
+    </figure>
+    {%- else %}
+    <p class="text-muted">{{ trans(key="reviews_empty", lang=lang) }}</p>
+    {%- endfor %}
+  </section>
+  {% include "partials/comments.html" %}
+</div>
+{% endblock %}

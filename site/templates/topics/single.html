@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{#- Тема: материалы всех разделов с этой темой. Название темы — перевод topic_<slug> из config.toml. -#}
+{% block alternates %}
+{%- for l in config.extra.langs %}
+  <link rel="alternate" hreflang="{{ l }}" href="{{ get_taxonomy_url(kind='topics', term=term.slug, lang=l) }}">
+{%- endfor %}
+{% endblock %}
+{% block lang_links %}
+{%- for l in config.extra.langs %}
+<a href="{{ get_taxonomy_url(kind='topics', term=term.slug, lang=l) }}" class="lang-link" hreflang="{{ l }}" lang="{{ l }}" title="{{ trans(key='lang_' ~ l, lang=l) }}"{% if l == lang %} aria-current="true"{% endif %}>{{ l | upper }}</a>
+{%- endfor %}
+{% endblock %}
+{% block content %}
+<div class="site-wrap list-page">
+  <h1 class="site-h1">{{ trans(key="topic_" ~ term.slug, lang=lang) }}</h1>
+  {% include "partials/tabs.html" %}
+  {% include "partials/topics.html" %}
+  <div class="cards">
+    {%- for p in term.pages | sort(attribute="date") | reverse %}
+    {{ <card p={p} lang={lang} /> }}
+    {%- endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{#- Раздел блога (гайды и др.): вкладки, темы, карточки. -#}
+{% block content %}
+<div class="site-wrap list-page">
+  <h1 class="site-h1">{{ section.title }}</h1>
+  {% if section.description %}<p class="article-lead">{{ section.description }}</p>{% endif %}
+  {% include "partials/tabs.html" %}
+  <div class="cards">
+    {%- for p in section.pages %}
+    {{ <card p={p} lang={lang} /> }}
+    {%- else %}
+    <p class="text-muted">{{ trans(key="empty_section", lang=lang) }}</p>
+    {%- endfor %}
+  </div>
+</div>
+{% endblock %}

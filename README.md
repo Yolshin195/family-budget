@@ -89,6 +89,14 @@ gh attestation verify oci://ghcr.io/yolshin195/family-budget:latest -R Yolshin19
 Чтобы запускать готовый образ вместо локальной сборки, у сервиса `app` в `compose.yaml` уберите `build: .` и укажите
 `image: ghcr.io/yolshin195/family-budget:<тег>`.
 
+## Сайт: лендинг и блог
+
+`site/` — статический сайт на Zola: лендинг, блог («Что нового» по версиям, гайды со скриншотами, идеи), «О проекте»,
+отзывы и правовые страницы — всё на русском, английском и тайском. Пока публикуется на GitHub Pages
+(`.github/workflows/site.yml`) отдельно от приложения и закрыт от индексации. Команды: `make site-check`, `make site`,
+`make site-serve`. Как писать статьи и записи о релизах — [site/README.md](site/README.md), правила для Claude —
+[CLAUDE.md](CLAUDE.md).
+
 ## MCP для Claude
 
 `https://<домен>/mcp` — бюджет в Claude (claude.ai, приложение на телефоне, Claude Desktop, Claude Code): контекст,
@@ -137,7 +145,9 @@ crates/features/
   site                   лендинг, правовые страницы, sitemap, robots, без таблиц   (blank → вручную)
 crates/app               main, wiring (адаптеры портов), seed (демо-данные), assets, static/
 deploy/                  postgres/init-roles.sh, rauthy/bootstrap (клиент и демо-пользователи стенда)
-scripts/                 build-assets.mjs, screenshot.mjs, backup.sh, restore-check.sh
+scripts/                 build-assets.mjs, screenshot.mjs, backup.sh, restore-check.sh,
+                         build-site.mjs, check_site.py, guide-screenshots.mjs (сайт)
+site/                    сайт на Zola: лендинг, блог, гайды, идеи, правовые страницы (site/README.md)
 ```
 
 У каждой фичи: `adapters/http.rs` (REST под `/api/<фича>`), `adapters/web.rs` + `templates/` (страницы).

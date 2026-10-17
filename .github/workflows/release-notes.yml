@@ -1,0 +1,68 @@
+# Каждое изменение приложения, заметное пользователю, сопровождается записью «к следующему релизу» на сайте:
+# site/content/releases/next/<slug>.md, .en.md, .th.md (как писать — site/README.md). Из этих записей собирается
+# блок «В разработке» на странице «Что нового», а при смене версии — статья о релизе.
+#
+# Проверка падает, если PR меняет код или шаблоны приложения (crates/**/*.rs, шаблоны, статика), но не трогает
+# site/content/releases/. Изменение не видно пользователю (рефакторинг, тесты, CI) — строка `Changelog: none`
+# в описании PR. Обновления зависимостей от Renovate не проверяются.
+name: Release notes
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-notes-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Release note for user-visible changes
+    if: github.event.pull_request.user.login != 'renovate[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Changed files need a release note
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          changed=$(git diff --name-only "$BASE_SHA"...HEAD)
+          app=$(grep -E '^crates/.+\.(rs|html|css|js)$|^crates/app/static/' <<< "$changed" \
+            | grep -vE '(^|/)tests?(\.rs|/)' || true)
+          if [ -z "$app" ]; then
+            echo "Код приложения не менялся — запись не нужна."
+            exit 0
+          fi
+          if grep -qE '^site/content/releases/' <<< "$changed"; then
+            echo "Запись о релизе есть:"
+            grep -E '^site/content/releases/' <<< "$changed"
+            exit 0
+          fi
+          if grep -qiE '^\s*changelog:\s*none\s*$' <<< "$PR_BODY"; then
+            echo "В описании PR — «Changelog: none»: изменение не видно пользователю."
+            exit 0
+          fi
+          {
+            echo "### Нет записи в «Что нового»"
+            echo
+            echo "PR меняет приложение, но не добавляет запись в \`site/content/releases/next/\` (на трёх языках)."
+            echo "Добавьте её (site/README.md) или, если пользователь изменений не заметит, строку \`Changelog: none\` в описание PR."
+            echo
+            echo '```'
+            echo "$app"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Нет записи в site/content/releases/next/ — или «Changelog: none» в описании PR (site/README.md)"
+          exit 1

@@ -1,0 +1,17 @@
+{#- Шапка статьи: тип, версия или статус, дата, время чтения, заголовок, лид. Подключается через include. -#}
+{%- set kind = page.relative_path | split(pat="/") | first %}
+<nav class="post-crumbs" aria-label="breadcrumb">
+  <a href="{{ get_url(path='@/blog/_index.md', lang=lang) }}">{{ trans(key="nav_blog", lang=lang) }}</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ get_url(path='@/' ~ kind ~ '/_index.md', lang=lang) }}">{{ trans(key="nav_" ~ kind, lang=lang) }}</a>
+</nav>
+<div class="post-meta">
+  {{ <kind_badge kind={kind} lang={lang} /> }}
+  {%- if page.extra?.version %}<span class="badge">{{ trans(key="release_version", lang=lang) }} {{ page.extra.version }}</span>{% endif %}
+  {%- if page.extra?.status %}<span class="status status-{{ page.extra.status }}">{{ trans(key="idea_" ~ page.extra.status, lang=lang) }}</span>{% endif %}
+  {%- if page.extra?.level %}<span class="badge">{{ trans(key="level_" ~ page.extra.level, lang=lang) }}</span>{% endif %}
+  <span class="post-date">{{ <when value={page.date} lang={lang} /> }}</span>
+  <span class="post-date">· {{ page.reading_time }} {{ trans(key="reading_time", lang=lang) }}</span>
+</div>
+<h1 class="article-title">{{ page.title }}</h1>
+{%- if page.description %}<p class="article-lead">{{ page.description }}</p>{% endif %}

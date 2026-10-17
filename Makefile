@@ -8,9 +8,12 @@ APP_PORT ?= 8080
 URL      := http://localhost:$(APP_PORT)
 # Node для сборки CSS и статики — в контейнере, на машине ставить не нужно.
 NODE     := $(ENGINE) run --rm -v "$(CURDIR)":/w -w /w docker.io/library/node:22-alpine
+# Сайт (site/): генератор Zola и проверка трёх языков — тоже в контейнерах. Версия — как в .github/workflows/site.yml.
+ZOLA     := $(ENGINE) run --rm -v "$(CURDIR)/site":/app -w /app ghcr.io/getzola/zola:v0.23.6
+PYTHON   := $(ENGINE) run --rm -v "$(CURDIR)":/w -w /w docker.io/library/python:3.12-alpine python3
 
 .DEFAULT_GOAL := up
-.PHONY: up down restart logs ps build rebuild clean db dev test css assets db-roles rauthy-secrets backup restore-check audit help
+.PHONY: up down restart logs ps build rebuild clean db dev test css assets db-roles rauthy-secrets backup restore-check audit site site-check site-serve help
 
 up: ## Собрать образ и запустить приложение, PostgreSQL и Rauthy в фоне
 	$(COMPOSE) up -d --build
@@ -64,6 +67,18 @@ css: ## Пересобрать Tailwind CSS после правки шаблон
 
 assets: ## Пересобрать всю статику: CSS, htmx, шрифты, иконки, favicon, OG-картинку
 	$(NODE) sh -c "npm ci --silent && npm run build"
+
+site-check: ## Сайт: всё на трёх языках, ссылки и структура статей (scripts/check_site.py)
+	$(PYTHON) scripts/check_site.py
+
+site: site-check ## Сайт: проверка, ассеты (CSS, иконки, шрифты) и сборка в site/public
+	$(NODE) sh -c "npm ci --silent && npm run site:assets"
+	$(ZOLA) build
+
+site-serve: site-check ## Сайт с автообновлением: http://localhost:1111
+	$(NODE) sh -c "npm ci --silent && npm run site:assets"
+	$(ENGINE) run --rm -it -v "$(CURDIR)/site":/app -w /app -p 1111:1111 -p 1024:1024 ghcr.io/getzola/zola:v0.23.6 \
+		serve --interface 0.0.0.0 --port 1111 --base-url localhost
 
 backup: ## Зашифрованные резервные копии баз family_budget и rauthy (не больше трёх копий каждой)
 	ENGINE=$(ENGINE) ./scripts/backup.sh
