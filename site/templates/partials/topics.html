@@ -1,11 +1,14 @@
-{#- Все темы со счётчиком материалов. -#}
+{#- Все темы со счётчиком материалов (без записей «к следующему релизу»: у них нет своих страниц). -#}
 {%- set tx = get_taxonomy(kind="topics", lang=lang) %}
 {%- if tx.items %}
 <div class="topics-bar">
   <span class="text-sm text-subtle">{{ trans(key="topics_title", lang=lang) }}:</span>
   <ul class="topic-list" role="list">
     {%- for t in tx.items | sort(attribute="slug") %}
-    <li><a class="topic" href="{{ t.permalink }}"{% if term is defined and term.slug == t.slug %} aria-current="page"{% endif %}>{{ trans(key="topic_" ~ t.slug, lang=lang) }} <span class="topic-count">{{ t.pages | length }}</span></a></li>
+    {%- set count = [p for p in t.pages if not p.relative_path is starting_with(pat="releases/next/")] | length %}
+    {%- if count %}
+    <li><a class="topic" href="{{ t.permalink }}"{% if term is defined and term.slug == t.slug %} aria-current="page"{% endif %}>{{ trans(key="topic_" ~ t.slug, lang=lang) }} <span class="topic-count">{{ count }}</span></a></li>
+    {%- endif %}
     {%- endfor %}
   </ul>
 </div>
