@@ -16,11 +16,16 @@
   <a class="btn-ghost btn-sm" href="?month={{ this_month }}">{{ page.t("today") }}</a>
 </div>
 
+{% if !missing_rates.is_empty() %}
+<div class="alert alert-warn mb-4" role="note"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("triangle-alert") }}"></use></svg>
+  <span>{{ page.t("missing_rates") }} <b>{{ missing_rates }}</b> · <a class="link" href="/rates">{{ page.t("nav_rates") }}</a></span></div>
+{% endif %}
+
 <div class="stats">
-  <div class="stat"><p class="stat-label">{{ page.t("planned_exp") }}</p><p class="stat-value">{% call m::amount(still_to_pay, page.session.base_currency) %}{% endcall %}</p>
+  <div class="stat"><p class="stat-label">{{ page.t("planned_exp") }}</p><p class="stat-value">{% call m::amount(still_to_pay, base) %}{% endcall %}</p>
     {% if overdue > 0 %}<p class="stat-note text-danger">{{ page.t("OVERDUE") }}: {{ overdue }}</p>{% endif %}</div>
-  <div class="stat"><p class="stat-label">{{ page.t("paid_exp") }}</p><p class="stat-value">{% call m::amount(paid, page.session.base_currency) %}{% endcall %}</p></div>
-  <div class="stat"><p class="stat-label">{{ page.t("planned_inc") }}</p><p class="stat-value text-income">{% call m::amount(income, page.session.base_currency) %}{% endcall %}</p></div>
+  <div class="stat"><p class="stat-label">{{ page.t("paid_exp") }}</p><p class="stat-value">{% call m::amount(paid, base) %}{% endcall %}</p></div>
+  <div class="stat"><p class="stat-label">{{ page.t("planned_inc") }}</p><p class="stat-value text-income">{% call m::amount(income, base) %}{% endcall %}</p></div>
   <div class="stat"><p class="stat-label">{{ page.t("legend") }}</p>
     <ul class="legend">
       <li><span class="occ-dot occ-expected" aria-hidden="true"></span>{{ page.t("EXPECTED") }}</li>
@@ -38,9 +43,9 @@
     <div class="cal-day{% if !c.in_month %} cal-out{% endif %}{% if c.is_today %} cal-today{% endif %}">
       <div class="cal-num">{{ c.day }}</div>
       {% for o in c.items %}
-        <a href="{{ o.href }}" class="occ occ-{{ o.status|lower }}" title="{{ o.title }} · {{ o.amount }} · {{ page.t(o.status) }}">
+        <a href="{{ o.href }}" class="occ occ-{{ o.status|lower }}" title="{{ o.title }} · {{ o.amount }} {{ o.currency }}{% if !o.approx.is_empty() %} ≈ {{ o.approx }} {{ base }}{% endif %} · {{ page.t(o.status) }}">
           <span class="occ-title">{% if o.status == "PAID" %}<svg class="icon icon-xs" aria-hidden="true"><use href="{{ page.icon("check") }}"></use></svg>{% endif %}{{ o.title }}</span>
-          <span class="occ-amount{% if !o.is_expense && !o.is_transfer %} text-income{% endif %}">{% if o.is_transfer %}⇄ {% else if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}</span>
+          <span class="occ-amount{% if !o.is_expense && !o.is_transfer %} text-income{% endif %}">{% if o.is_transfer %}⇄ {% else if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}{% if !o.approx.is_empty() %}<span class="cur">{{ o.currency }}</span>{% endif %}</span>
           <span class="sr-only">{{ page.t(o.status) }}</span>
         </a>
       {% endfor %}
@@ -59,7 +64,8 @@
       <span class="occ-dot occ-{{ o.status|lower }}" aria-hidden="true"></span>
       <span class="grow min-w-0"><span class="block truncate{% if o.status == "SKIPPED" %} line-through text-subtle{% endif %}">{{ o.title }}</span>
         <span class="text-xs {% if o.status == "OVERDUE" %}text-danger{% else %}text-subtle{% endif %}">{{ page.t(o.status) }}</span></span>
-      <span class="amount{% if !o.is_expense && !o.is_transfer %} text-income{% endif %}">{% if o.is_transfer %}⇄ {% else if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}</span>
+      <span class="flex flex-col items-end shrink-0"><span class="amount{% if !o.is_expense && !o.is_transfer %} text-income{% endif %}">{% if o.is_transfer %}⇄ {% else if o.is_expense %}−{% else %}+{% endif %}{{ o.amount }}<span class="cur">{{ o.currency }}</span></span>
+        {% if !o.approx.is_empty() %}<span class="text-xs text-subtle tabular-nums">≈ {{ o.approx }} {{ base }}</span>{% endif %}</span>
     </a></li>
     {% endfor %}
   </ul>

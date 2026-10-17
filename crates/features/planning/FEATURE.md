@@ -5,9 +5,12 @@
 окончания. Плановый перевод (например, в копилку) не меняет доходы и расходы бюджета, «Оплатил» открывает форму
 перевода (сумму зачисления при обмене вводят при оплате). Вхождения вычисляются на лету; статусы EXPECTED / OVERDUE / PAID / SKIPPED.
 PAID — есть транзакция с этим `plan_id` + `plan_date` (порт `PaymentsLookup`), SKIPPED — запись в `fb_plan_skips`.
+У вхождения есть `currency` (валюта счёта плана) и у оплаченного — `paid_currency` (валюта счёта оплаты).
+Итоги календаря («Ещё к оплате», «Оплачено», «Ожидаемые доходы») — в базовой валюте по курсу на дату вхождения
+(`ToBase`, то же правило, что в «Обзоре»); строки — в валюте счёта, у небазовой — «≈ сумма» в базовой.
 
 Таблицы: `fb_plans`, `fb_plan_skips`.
-Порты: `PaymentsLookup`, `AccountsLookup`, `CategoriesLookup` → `app/wiring/wire_planning.rs`.
+Порты: `PaymentsLookup`, `AccountsLookup`, `CategoriesLookup`, `RatesLookup` → `app/wiring/wire_planning.rs`.
 
 REST (`/api/planning`): `/plans` CRUD, `/plans/{id}/skips/{date}` POST/DELETE, `/occurrences?from&to`.
 Страницы (`/planning`): календарь месяца (на телефоне — список по дням), карточка вхождения («Оплатил» → форма

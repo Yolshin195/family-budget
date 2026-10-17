@@ -119,6 +119,7 @@ impl TransactionRepository for InMemoryTransactionRepository {
                     transaction_id: r.id,
                     occurred_on: r.occurred_on,
                     amount: r.total(),
+                    currency: r.currency().to_string(),
                 })
             })
             .collect())

@@ -28,6 +28,8 @@ struct Params {
     view: String,
     date: String,
     member: String,
+    /// fact (по умолчанию) / forecast
+    mode: String,
 }
 
 struct RowView {
@@ -73,6 +75,8 @@ struct BudgetPage {
     /// Начало показанного периода (фильтр участника не сбрасывает период).
     current: String,
     member: String,
+    /// Режим сводки: `fact` — что уже произошло, `forecast` — чем закончится период с учётом планов.
+    mode: &'static str,
     expenses: Vec<RowView>,
     incomes: Vec<RowView>,
     exp_fact: String,
@@ -143,9 +147,10 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
     let lang = page.lang;
     let money = |v: Decimal| money_in(lang, v);
 
+    let forecast = q.mode == "forecast";
     let exp_total = r.expense_fact + r.expense_planned;
     let inc_total = r.income_fact + r.income_planned;
-    let net = r.net_forecast();
+    let net = if forecast { r.net_forecast() } else { r.net_fact() };
     let upcoming = r
         .upcoming
         .iter()
@@ -168,6 +173,7 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         today: today.to_string(),
         current: period.from.to_string(),
         member: q.member,
+        mode: if forecast { "forecast" } else { "fact" },
         exp_fact: money(r.expense_fact),
         exp_plan: money(r.expense_planned),
         exp_total: money(exp_total),
@@ -181,7 +187,10 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         accounts: r
             .accounts
             .iter()
-            .map(|a| (a.title.clone(), money(a.balance), a.currency.clone(), a.balance < Decimal::ZERO))
+            .map(|a| {
+                let v = if forecast { a.forecast } else { a.balance };
+                (a.title.clone(), money(v), a.currency.clone(), v < Decimal::ZERO)
+            })
             .collect(),
         upcoming,
         missing_rates: r.missing_rates.join(", "),

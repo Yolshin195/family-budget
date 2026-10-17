@@ -43,6 +43,8 @@ pub struct PlannedRec {
     pub account_code: String,
     /// Категория расхода или дохода; у перевода — нет.
     pub category_code: Option<String>,
+    /// Счёт зачисления перевода.
+    pub to_account_code: Option<String>,
     pub amount: Decimal,
     pub title: String,
     /// EXPECTED / OVERDUE

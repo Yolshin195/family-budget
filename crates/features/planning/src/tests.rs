@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::adapters::memory::InMemoryPlanRepository;
 use crate::dto::PlanInput;
-use crate::ports::{AccountsLookup, CategoriesLookup, Deps, PaidRef, PaymentsLookup};
+use crate::ports::{AccountsLookup, CategoriesLookup, Deps, PaidRef, PaymentsLookup, RatesLookup};
 use crate::service::PlanningService;
 
 #[derive(Default)]
@@ -34,6 +34,18 @@ impl AccountsLookup for FakeAccounts {
     }
     async fn choices(&self, _p: Uuid, _l: Lang) -> AppResult<Vec<Choice>> {
         Ok(vec![])
+    }
+    async fn currencies(&self, _p: Uuid) -> AppResult<Vec<(String, String)>> {
+        Ok(vec![("CARD".into(), "THB".into()), ("SAVINGS".into(), "RUB".into())])
+    }
+}
+
+struct FakeRates;
+
+#[async_trait::async_trait]
+impl RatesLookup for FakeRates {
+    async fn all(&self, _p: Uuid) -> AppResult<Vec<(String, NaiveDate, Decimal)>> {
+        Ok(vec![("RUB".into(), NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), Decimal::from_str("0.4").unwrap())])
     }
 }
 
@@ -58,7 +70,7 @@ fn setup() -> (PlanningService, Arc<FakePayments>) {
     let payments = Arc::new(FakePayments::default());
     let svc = PlanningService::new(
         Arc::new(InMemoryPlanRepository::default()),
-        Deps { payments: Arc::new(payments.clone()), accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories) },
+        Deps { payments: Arc::new(payments.clone()), accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), rates: Arc::new(FakeRates) },
     );
     (svc, payments)
 }
@@ -98,6 +110,7 @@ async fn calendar_statuses() {
         plan_date: d(9, 5),
         transaction_id: Uuid::new_v4(),
         amount: Decimal::from_str("15200").unwrap(),
+        currency: "THB".into(),
         paid_on: d(9, 6),
     });
     svc.skip(p, u, plan.id, d(8, 5)).await.unwrap();
@@ -105,6 +118,8 @@ async fn calendar_statuses() {
     let st: Vec<_> = occ.iter().map(|o| (o.date, o.status.as_str())).collect();
     assert_eq!(st, vec![(d(8, 5), "SKIPPED"), (d(9, 5), "PAID"), (d(10, 5), "OVERDUE"), (d(11, 5), "EXPECTED")]);
     assert_eq!(occ[1].paid_amount, Some(Decimal::from(15200)));
+    assert_eq!(occ[1].shown_amount(), (Decimal::from(15200), "THB"), "у оплаченного — сумма и валюта оплаты");
+    assert_eq!(occ[3].shown_amount(), (Decimal::from(15000), "THB"), "у ожидаемого — план в валюте счёта");
     // нельзя пропустить оплаченное и дату вне правила
     assert!(matches!(svc.skip(p, u, plan.id, d(9, 5)).await.unwrap_err(), AppError::Conflict(_)));
     assert!(matches!(svc.skip(p, u, plan.id, d(9, 6)).await.unwrap_err(), AppError::NotFound(_)));

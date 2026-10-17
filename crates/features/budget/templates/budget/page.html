@@ -9,18 +9,23 @@
 <div class="toolbar">
   <nav class="seg seg-sm" aria-label="{{ page.t("view") }}">
     {% for v in ["week", "month", "year"] %}
-      <a href="?view={{ v }}&amp;date={{ today }}&amp;member={{ member }}" class="seg-link"{% if view == *v %} aria-current="page"{% endif %}>{{ page.t(v) }}</a>
+      <a href="?view={{ v }}&amp;date={{ today }}&amp;member={{ member }}&amp;mode={{ mode }}" class="seg-link"{% if view == *v %} aria-current="page"{% endif %}>{{ page.t(v) }}</a>
+    {% endfor %}
+  </nav>
+  <nav class="seg seg-sm" aria-label="{{ page.t("mode") }}">
+    {% for md in ["fact", "forecast"] %}
+      <a href="?view={{ view }}&amp;date={{ current }}&amp;member={{ member }}&amp;mode={{ md }}" class="seg-link"{% if mode == *md %} aria-current="page"{% endif %}>{{ page.t(md) }}</a>
     {% endfor %}
   </nav>
   <nav class="pager" aria-label="{{ page.t("period_nav") }}">
-    <a class="btn-icon" href="?view={{ view }}&amp;date={{ prev }}&amp;member={{ member }}" aria-label="{{ page.t("prev") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
+    <a class="btn-icon" href="?view={{ view }}&amp;date={{ prev }}&amp;member={{ member }}&amp;mode={{ mode }}" aria-label="{{ page.t("prev") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
     <span class="pager-title" aria-live="polite">{{ title }}</span>
-    <a class="btn-icon" href="?view={{ view }}&amp;date={{ next }}&amp;member={{ member }}" aria-label="{{ page.t("next") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
+    <a class="btn-icon" href="?view={{ view }}&amp;date={{ next }}&amp;member={{ member }}&amp;mode={{ mode }}" aria-label="{{ page.t("next") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
   </nav>
-  <a class="btn-ghost btn-sm" href="?view={{ view }}&amp;member={{ member }}">{{ page.t("today") }}</a>
+  <a class="btn-ghost btn-sm" href="?view={{ view }}&amp;member={{ member }}&amp;mode={{ mode }}">{{ page.t("today") }}</a>
   {% if page.session.members.len() > 1 %}
   <form method="get" class="ml-auto" data-autosubmit>
-    <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="date" value="{{ current }}">
+    <input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="date" value="{{ current }}"><input type="hidden" name="mode" value="{{ mode }}">
     <label class="sr-only" for="member">{{ page.t("member") }}</label>
     <select class="input input-sm" id="member" name="member">
       <option value="">{{ page.t("all_members") }}</option>
@@ -39,22 +44,32 @@
 <div class="stats stats-4" id="budget-summary">
   <div class="stat">
     <p class="stat-label">{{ page.t("incomes") }}</p>
+    {% if mode == "forecast" %}
     <p class="stat-value text-income">{% call m::amount(inc_total, base) %}{% endcall %}</p>
     <p class="stat-note">{{ page.t("fact") }} {{ inc_fact }} · {{ page.t("plan") }} {{ inc_plan }}</p>
+    {% else %}
+    <p class="stat-value text-income">{% call m::amount(inc_fact, base) %}{% endcall %}</p>
+    <p class="stat-note">{{ page.t("expected") }} {{ inc_plan }} · {{ page.t("forecast") }} {{ inc_total }}</p>
+    {% endif %}
   </div>
   <div class="stat">
     <p class="stat-label">{{ page.t("expenses") }}</p>
+    {% if mode == "forecast" %}
     <p class="stat-value">{% call m::amount(exp_total, base) %}{% endcall %}</p>
     <p class="stat-note">{{ page.t("fact") }} {{ exp_fact }} · {{ page.t("plan") }} {{ exp_plan }}</p>
+    {% else %}
+    <p class="stat-value">{% call m::amount(exp_fact, base) %}{% endcall %}</p>
+    <p class="stat-note">{{ page.t("expected") }} {{ exp_plan }} · {{ page.t("forecast") }} {{ exp_total }}</p>
+    {% endif %}
   </div>
   <div class="stat">
-    <p class="stat-label">{{ page.t("net") }}</p>
+    <p class="stat-label">{% if mode == "forecast" %}{{ page.t("net") }}{% else %}{{ page.t("net_fact") }}{% endif %}</p>
     <p class="stat-value{% if net_negative %} text-danger{% endif %}">{% call m::amount(net, base) %}{% endcall %}</p>
     <p class="stat-note">{{ page.t("base_currency") }}: {{ base }}</p>
     {% if !fx.is_empty() %}<p class="stat-note" title="{{ page.t("fx_hint") }}">{{ page.t("fx_result") }}: <span class="{% if fx_negative %}text-danger{% else %}text-income{% endif %}">{{ fx }}</span></p>{% endif %}
   </div>
   <div class="stat col-span-2 lg:col-span-1">
-    <p class="stat-label">{{ page.t("accounts") }}</p>
+    <p class="stat-label">{% if mode == "forecast" %}{{ page.t("accounts_forecast") }}{% else %}{{ page.t("accounts") }}{% endif %}</p>
     <ul class="stat-list">
       {% for (name, bal, cur, neg) in accounts %}
         <li><span class="truncate text-muted">{{ name }}</span><span class="amount{% if *neg %} text-danger{% endif %}">{{ bal }}<span class="cur">{{ cur }}</span></span></li>

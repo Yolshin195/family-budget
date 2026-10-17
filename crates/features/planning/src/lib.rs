@@ -20,8 +20,9 @@ use kernel::feature::Feature;
 use kernel::web::{NavGroup, NavItem, Web};
 use utoipa::OpenApi;
 
+pub use domain::ToBase;
 pub use dto::{OccurrenceDto, PlanDto};
-pub use ports::{AccountsLookup, CategoriesLookup, Deps, PaidRef, PaymentsLookup};
+pub use ports::{AccountsLookup, CategoriesLookup, Deps, PaidRef, PaymentsLookup, RatesLookup};
 /// Use cases фичи.
 pub use service::PlanningService as Service;
 

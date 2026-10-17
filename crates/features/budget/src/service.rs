@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use chrono::NaiveDate;
+use chrono::{Datelike, Days, NaiveDate};
 use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use rust_decimal::Decimal;
@@ -22,6 +22,9 @@ pub struct AccountBalance {
     pub currency: String,
     /// Остаток на конец периода в валюте счёта.
     pub balance: Decimal,
+    /// Прогноз остатка на конец периода: `balance` плюс нерешённые планы по этому счёту — с начала
+    /// текущего месяца (или периода, если он раньше) по конец периода.
+    pub forecast: Decimal,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +51,10 @@ impl Report {
     pub fn net_forecast(&self) -> Decimal {
         self.income_fact + self.income_planned - self.expense_fact - self.expense_planned
     }
+
+    pub fn net_fact(&self) -> Decimal {
+        self.income_fact - self.expense_fact
+    }
 }
 
 impl BudgetService {
@@ -71,37 +78,56 @@ impl BudgetService {
         let rates = d.rates.all(project_id).await?;
         let limits = d.limits.rules(project_id).await?;
         let facts = d.facts.lines(project_id, period.from, period.to).await?;
-        let planned = d.plans.open(project_id, period.from, period.to, today, lang).await?;
+        // Для прогноза остатков нужны и нерешённые планы между текущим месяцем и началом периода.
+        let open_from = period.from.min(today.with_day(1).unwrap_or(today)).max(period.to - Days::new(3 * 365));
+        let planned = d.plans.open(project_id, open_from, period.to, today, lang).await?;
 
         let exchange = d.facts.exchange(project_id, period.from, period.to).await?;
 
         let currency_of: HashMap<&str, &str> = accounts.iter().map(|a| (a.code.as_str(), a.currency.as_str())).collect();
         let mut missing = BTreeSet::new();
-        let mut to_base = |cur: &str, amount: Decimal, date: NaiveDate| -> Decimal {
-            match rate_on(&rates, cur, base_currency, date) {
-                Some(r) => (amount * r).round_dp(2),
-                None => {
-                    missing.insert(cur.to_string());
+        // Пересчёт между валютами через базовую по курсам на дату; без курса — 1:1.
+        let mut convert = |from: &str, to: &str, amount: Decimal, date: NaiveDate| -> Decimal {
+            if from == to {
+                return amount.round_dp(2);
+            }
+            match (rate_on(&rates, from, base_currency, date), rate_on(&rates, to, base_currency, date)) {
+                (Some(a), Some(b)) if !b.is_zero() => (amount * a / b).round_dp(2),
+                (a, b) => {
+                    missing.extend(a.is_none().then(|| from.to_string()));
+                    missing.extend(b.is_none().then(|| to.to_string()));
                     amount
                 }
             }
         };
+
         let mine = |who: Uuid| member.is_none_or(|m| who == m);
 
         let (mut exp_f, mut exp_p, mut inc_f, mut inc_p) = (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO, Decimal::ZERO);
         let mut fact_amounts = Vec::new();
         for f in facts.iter().filter(|f| mine(f.created_by)) {
-            let a = to_base(&f.currency, f.amount, f.date);
+            let a = convert(&f.currency, base_currency, f.amount, f.date);
             if f.kind == "EXPENSE" { exp_f += a } else { inc_f += a }
             fact_amounts.push(Amount { category_code: f.category_code.clone(), amount: a });
         }
         // Обмен валют: проводки «Обмен валют» в базовой валюте. Отдали больше, чем получили, — потеря.
-        let fx_result = -exchange.iter().filter(|x| mine(x.created_by)).map(|x| to_base(&x.currency, x.amount, x.date)).sum::<Decimal>();
+        let fx_result = -exchange.iter().filter(|x| mine(x.created_by)).map(|x| convert(&x.currency, base_currency, x.amount, x.date)).sum::<Decimal>();
         let mut plan_amounts = Vec::new();
         let mut upcoming = Vec::new();
+        // Изменение остатков счетов нерешёнными планами (в валютах счетов).
+        let mut pending: HashMap<String, Decimal> = HashMap::new();
         for p in planned {
             let cur = currency_of.get(p.account_code.as_str()).copied().unwrap_or(base_currency);
-            let a = to_base(cur, p.amount, p.date);
+            let sign = if p.kind == "INCOME" { Decimal::ONE } else { -Decimal::ONE };
+            *pending.entry(p.account_code.clone()).or_default() += sign * p.amount;
+            if let Some(to) = p.to_account_code.as_deref().filter(|_| p.kind == "TRANSFER") {
+                let to_cur = currency_of.get(to).copied().unwrap_or(base_currency);
+                *pending.entry(to.to_string()).or_default() += convert(cur, to_cur, p.amount, p.date);
+            }
+            if p.date < period.from {
+                continue;
+            }
+            let a = convert(cur, base_currency, p.amount, p.date);
             // Плановый перевод не меняет доходы и расходы — он только виден в «Предстоящих».
             if let Some(code) = p.category_code.clone().filter(|_| p.kind != "TRANSFER") {
                 if p.kind == "EXPENSE" { exp_p += a } else { inc_p += a }
@@ -110,7 +136,6 @@ impl BudgetService {
             upcoming.push(PlannedRec { amount: a, ..p });
         }
         upcoming.sort_by_key(|p| p.date);
-        drop(to_base);
 
         let rows = compute(&nodes, &fact_amounts, &plan_amounts, &limits, &period);
         // Архивные категории без движения не показываем.
@@ -125,7 +150,11 @@ impl BudgetService {
         let accounts = accounts
             .into_iter()
             .filter(|a| !a.archived)
-            .map(|a| AccountBalance { balance: balances.get(&a.code).copied().unwrap_or_default(), code: a.code, title: a.title, currency: a.currency })
+            .map(|a| {
+                let balance = balances.get(&a.code).copied().unwrap_or_default();
+                let forecast = balance + pending.get(&a.code).copied().unwrap_or_default();
+                AccountBalance { balance, forecast, code: a.code, title: a.title, currency: a.currency }
+            })
             .collect();
 
         Ok(Report {

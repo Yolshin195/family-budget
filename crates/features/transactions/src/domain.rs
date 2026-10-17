@@ -395,6 +395,13 @@ impl Transaction {
         }
     }
 
+    /// Валюта суммы `total`: валюта счёта операции, у перевода — счёта списания.
+    pub fn currency(&self) -> &str {
+        let mut accounts = self.postings.iter().filter(|p| p.ref_kind == RefKind::Account);
+        let main = if self.tx_kind == TxKind::Transfer { accounts.find(|p| p.amount < Decimal::ZERO) } else { accounts.next() };
+        main.map_or("", |p| p.currency.as_str())
+    }
+
     /// Как транзакция изменила остаток счёта.
     pub fn amount_on(&self, account: &str) -> Decimal {
         self.postings.iter().filter(|p| p.is_account(account)).map(|p| p.amount).sum()
