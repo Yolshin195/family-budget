@@ -642,10 +642,12 @@ impl<T: AsDecimal + ?Sized> AsDecimal for &T {
 /// Разбор суммы из формы: пробелы, запятая или точка как разделитель дроби и простая арифметика
 /// `120+45`, `3*40`, `500-120` (как в быстром расходе — работает и без JS).
 pub fn parse_money(field: &str, value: &str) -> Result<Decimal, String> {
-    let bad = || format!("{field}: '{value}' — не число");
+    let bad = || crate::error::Problem::validation(field, crate::i18n::tr(None, "err.not_a_number", &[("value", &value)])).to_string();
+    // Переполнение `Decimal` — ошибка ввода, а не паника (техдолг #20).
+    let too_big = || crate::error::Problem::validation(field, crate::i18n::tr(None, "err.too_big", &[])).to_string();
     let cleaned: String = value.chars().filter(|c| !c.is_whitespace() && *c != '\u{202F}' && *c != '\u{00A0}').collect::<String>().replace(',', ".");
     if cleaned.is_empty() {
-        return Err(format!("{field}: введите сумму"));
+        return Err(crate::error::Problem::validation(field, crate::i18n::tr(None, "err.enter_amount", &[])).to_string());
     }
     // Сумма слагаемых, каждое — произведение/частное множителей.
     let mut total = Decimal::ZERO;
@@ -660,8 +662,8 @@ pub fn parse_money(field: &str, value: &str) -> Result<Decimal, String> {
                 let n: Decimal = num.parse().map_err(|_| bad())?;
                 acc = Some(match (acc, op) {
                     (None, _) => n,
-                    (Some(a), '*') => a * n,
-                    (Some(a), _) if !n.is_zero() => a / n,
+                    (Some(a), '*') => a.checked_mul(n).ok_or_else(too_big)?,
+                    (Some(a), _) if !n.is_zero() => a.checked_div(n).ok_or_else(too_big)?,
                     _ => return Err(bad()),
                 });
                 op = ch;
@@ -674,14 +676,14 @@ pub fn parse_money(field: &str, value: &str) -> Result<Decimal, String> {
     };
     for (i, ch) in cleaned.chars().enumerate() {
         if (ch == '+' || ch == '-') && i > 0 && !term.ends_with(['*', '/']) {
-            total += flush(&term, sign)?;
+            total = total.checked_add(flush(&term, sign)?).ok_or_else(too_big)?;
             term.clear();
             sign = if ch == '-' { -Decimal::ONE } else { Decimal::ONE };
         } else {
             term.push(ch);
         }
     }
-    total += flush(&term, sign)?;
+    total = total.checked_add(flush(&term, sign)?).ok_or_else(too_big)?;
     Ok(total.round_dp(4))
 }
 
@@ -784,6 +786,9 @@ mod tests {
         assert!(parse_money("a", "1/0").is_err());
         assert!(parse_money("a", "").is_err());
         assert!(parse_money("a", "5+").is_err());
+        // Техдолг #20: переполнение — ошибка поля, а не паника сервера.
+        assert_eq!(parse_money("a", "79228162514264337593543950335*10").unwrap_err(), "a: слишком большое число");
+        assert!(parse_money("a", "79228162514264337593543950335+79228162514264337593543950335").is_err());
     }
 
     #[test]

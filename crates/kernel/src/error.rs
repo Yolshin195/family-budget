@@ -4,10 +4,59 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 
+use crate::i18n::tr;
+
+/// Коды ошибок [`Problem`] для API и MCP (поле `error` ответа).
+pub mod codes {
+    pub const VALIDATION: &str = "VALIDATION";
+    /// Ссылка на запись, которой нет (счёт, категория, план).
+    pub const NOT_FOUND: &str = "NOT_FOUND";
+    /// Сумма позиции не сходится с количеством × ценой − скидкой.
+    pub const AMOUNT_MISMATCH: &str = "AMOUNT_MISMATCH";
+    /// Категория не того типа (доход в расходе и наоборот).
+    pub const KIND_MISMATCH: &str = "KIND_MISMATCH";
+}
+
+/// Ошибка входных данных с кодом для API и текстом на языке пользователя (техдолг #9).
+/// Текст переводится при создании — на язык текущего запроса ([`crate::i18n::current`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Problem {
+    /// Один из [`codes`].
+    pub code: &'static str,
+    /// Поле формы или запроса (`items[2].amount`); пусто — ошибка не привязана к полю.
+    pub field: String,
+    pub message: String,
+}
+
+impl Problem {
+    pub fn new(code: &'static str, field: &str, message: String) -> Self {
+        Self { code, field: field.to_string(), message }
+    }
+
+    pub fn validation(field: &str, message: String) -> Self {
+        Self::new(codes::VALIDATION, field, message)
+    }
+}
+
+/// `поле: текст` — формат, который разбирают формы (`web::FormError`).
+impl std::fmt::Display for Problem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.field.is_empty() { f.write_str(&self.message) } else { write!(f, "{}: {}", self.field, self.message) }
+    }
+}
+
+impl From<Problem> for AppError {
+    fn from(p: Problem) -> Self {
+        AppError::Invalid(p)
+    }
+}
+
 #[derive(Debug)]
 pub enum AppError {
     NotFound(String),
     Validation(String),
+    /// Неверные входные данные с кодом и полем (422). Новые ошибки — так, а не `Validation(String)`.
+    Invalid(Problem),
     Conflict(String),
     /// Нет прав (например, роль VIEWER пытается писать).
     Forbidden(String),
@@ -32,6 +81,7 @@ impl std::fmt::Display for AppError {
             | AppError::Forbidden(m)
             | AppError::Unauthorized(m)
             | AppError::TooManyRequests(m) => f.write_str(m),
+            AppError::Invalid(p) => write!(f, "{p}"),
             AppError::Unavailable(e) | AppError::Internal(e) => write!(f, "{e}"),
         }
     }
@@ -46,11 +96,11 @@ impl From<anyhow::Error> for AppError {
 impl From<sqlx::Error> for AppError {
     fn from(e: sqlx::Error) -> Self {
         if let sqlx::Error::RowNotFound = e {
-            return AppError::NotFound("запись не найдена".into());
+            return AppError::NotFound(tr(None, "err.not_found", &[]));
         }
         if let sqlx::Error::Database(db) = &e {
             if db.is_unique_violation() {
-                return AppError::Conflict("запись с таким ключом уже существует".into());
+                return AppError::Conflict(tr(None, "err.duplicate", &[]));
             }
         }
         AppError::Internal(e.into())
@@ -61,7 +111,7 @@ impl AppError {
     pub fn status(&self) -> StatusCode {
         match self {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
-            AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            AppError::Validation(_) | AppError::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
@@ -74,7 +124,8 @@ impl AppError {
     pub fn code(&self) -> &'static str {
         match self {
             AppError::NotFound(_) => "NOT_FOUND",
-            AppError::Validation(_) => "VALIDATION",
+            AppError::Validation(_) => codes::VALIDATION,
+            AppError::Invalid(p) => p.code,
             AppError::Conflict(_) => "CONFLICT",
             AppError::Forbidden(_) => "FORBIDDEN",
             AppError::Unauthorized(_) => "UNAUTHORIZED",
@@ -90,11 +141,11 @@ impl AppError {
         match self {
             AppError::Unavailable(e) => {
                 eprintln!("service unavailable: {e:?}");
-                "сервис временно недоступен, попробуйте позже".to_string()
+                tr(None, "err.unavailable", &[])
             }
             AppError::Internal(e) => {
                 eprintln!("internal error: {e:?}");
-                "внутренняя ошибка сервера".to_string()
+                tr(None, "err.internal", &[])
             }
             other => other.to_string(),
         }
@@ -105,14 +156,20 @@ impl AppError {
 struct ErrorBody {
     error: &'static str,
     message: String,
+    /// Поле запроса, к которому относится ошибка (`items[2].amount`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
 }
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status();
         let error = self.code();
-        let message = self.public_message();
-        (status, Json(ErrorBody { error, message })).into_response()
+        let body = match self {
+            AppError::Invalid(p) => ErrorBody { error, message: p.message, field: Some(p.field).filter(|f| !f.is_empty()) },
+            other => ErrorBody { error, message: other.public_message(), field: None },
+        };
+        (status, Json(body)).into_response()
     }
 }
 
@@ -128,6 +185,17 @@ mod tests {
         let message = e.public_message();
         assert!(!message.contains("Rauthy") && !message.contains("rauthy:8443"), "подробности не уходят клиенту: {message}");
         assert_eq!(e.into_response().status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// Техдолг #9: ошибка с кодом — на языке запроса, поле отдельно от текста.
+    #[tokio::test]
+    async fn problem_is_translated_and_keeps_field() {
+        let p = crate::i18n::scope(crate::i18n::Lang::En, async { crate::code::code("items[2].category_code", " ") }).await.unwrap_err();
+        assert_eq!((p.code, p.field.as_str(), p.message.as_str()), (codes::VALIDATION, "items[2].category_code", "cannot be empty"));
+        assert_eq!(AppError::from(p.clone()).to_string(), "items[2].category_code: cannot be empty");
+        let th = crate::i18n::scope(crate::i18n::Lang::Th, async { AppError::Internal(anyhow::anyhow!("x")).public_message() }).await;
+        assert_eq!(th, "เซิร์ฟเวอร์ขัดข้อง");
+        assert_eq!(AppError::from(p).into_response().status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
 
     #[test]
