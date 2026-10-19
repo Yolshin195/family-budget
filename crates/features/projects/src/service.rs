@@ -505,14 +505,16 @@ impl ProjectService {
     pub async fn set_role(&self, by: Uuid, project_id: Uuid, user_id: Uuid, role: Role, meta: &RequestMeta) -> AppResult<()> {
         self.deny_guest(by).await?;
         let project = self.require_owner(by, project_id).await?;
-        let changed = Member { project_id, user_id, role };
         self.change_members(&project, |ms| {
             for m in ms.iter_mut().filter(|m| m.user_id == user_id) {
                 m.role = role;
             }
         })
         .await?;
-        self.repo.upsert_member(&changed).await?;
+        // Только смена роли существующего участника: «добавить» так никого нельзя (в т. ч. гостя демо).
+        if !self.repo.update_role(project_id, user_id, role).await? {
+            return Err(AppError::NotFound(format!("участник {user_id} не найден в проекте")));
+        }
         self.audit(audit_event(Some(by), Some(project_id), action::MEMBER_ROLE, meta, &[("member", user_id.to_string()), ("role", role.as_str().into())])).await;
         Ok(())
     }

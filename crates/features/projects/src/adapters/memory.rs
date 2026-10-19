@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use kernel::auth::Theme;
+use kernel::auth::{Role, Theme};
 use kernel::error::{AppError, AppResult};
 use kernel::i18n::Lang;
 use uuid::Uuid;
@@ -136,6 +136,15 @@ impl ProjectRepository for InMemoryProjectRepository {
         ms.retain(|m| !(m.project_id == member.project_id && m.user_id == member.user_id));
         ms.push(member.clone());
         Ok(())
+    }
+    async fn update_role(&self, project_id: Uuid, user_id: Uuid, role: Role) -> AppResult<bool> {
+        let mut ms = self.members.lock().unwrap();
+        let mut found = false;
+        for m in ms.iter_mut().filter(|m| m.project_id == project_id && m.user_id == user_id) {
+            m.role = role;
+            found = true;
+        }
+        Ok(found)
     }
     async fn remove_member(&self, project_id: Uuid, user_id: Uuid) -> AppResult<()> {
         self.members.lock().unwrap().retain(|m| !(m.project_id == project_id && m.user_id == user_id));

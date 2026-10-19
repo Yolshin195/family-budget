@@ -237,6 +237,16 @@ impl ProjectRepository for PostgresProjectRepository {
         Ok(())
     }
 
+    async fn update_role(&self, project_id: Uuid, user_id: Uuid, role: Role) -> AppResult<bool> {
+        let r = sqlx::query("UPDATE fb_project_members SET role = $3 WHERE project_id = $1 AND user_id = $2")
+            .bind(project_id)
+            .bind(user_id)
+            .bind(role.as_str())
+            .execute(&self.pool)
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     async fn remove_member(&self, project_id: Uuid, user_id: Uuid) -> AppResult<()> {
         sqlx::query("DELETE FROM fb_project_members WHERE project_id = $1 AND user_id = $2").bind(project_id).bind(user_id).execute(&self.pool).await?;
         Ok(())

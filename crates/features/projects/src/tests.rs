@@ -242,6 +242,24 @@ async fn require_2fa_is_reported_and_blocks_tokens_without_mfa() {
     assert!(e.svc.create_token(me, family, "bot", &["read".into()], 30, true, &meta()).await.is_ok());
 }
 
+/// Б2: смена роли не добавляет в проект того, кто в нём не состоит, — ни зарегистрированного
+/// пользователя, ни гостя демо.
+#[tokio::test]
+async fn set_role_does_not_add_strangers() {
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    let (anna, _, _) = signed_up(&e, "sub-anna").await;
+    let guest = e.svc.ensure_user(crate::service::GUEST_SUB, "guest@demo.local", "Guest", Lang::En).await.unwrap();
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    for stranger in [anna, guest] {
+        let err = e.svc.set_role(me, family, stranger, Role::Editor, &meta()).await.unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+    }
+    let members: Vec<Uuid> = e.svc.session(me, Some(family)).await.unwrap().unwrap().members.iter().map(|m| m.user_id).collect();
+    assert_eq!(members, vec![me], "в проекте по-прежнему только владелец");
+    assert!(e.svc.session(anna, Some(family)).await.unwrap().unwrap().project_id != family, "Анне проект не открылся");
+}
+
 #[tokio::test]
 async fn family_project_members_and_roles() {
     let e = env();
