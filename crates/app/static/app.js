@@ -243,7 +243,7 @@
   $$('form[data-tx-form]', scope).forEach(function (form) {
     if (form.dataset.bound) return;
     form.dataset.bound = '1';
-    var lines = $('[data-lines]', form), totalEl = $('[data-total]', form), curEl = $('[data-cur]', form), note = $('[data-limit-note]', form);
+    var lines = $('[data-lines]', form), totalEl = $('[data-total]', form), curEl = $('span[data-cur]', form), note = $('[data-limit-note]', form);
     var kind = function () { var r = $('[name=tx_kind]:checked', form); return r ? r.value : 'EXPENSE'; };
     var flow = $('[data-section=flow]', form), transfer = $('[data-section=transfer]', form), accLabel = $('label[for=account_code]', form);
     var refund = $('[data-refund]', form);
@@ -525,7 +525,8 @@
     $$('.dialog-foot button, .dialog-foot a', dlg).forEach(function (b) { b.toggleAttribute('disabled', state !== 'ready'); });
   }
   function catByCode(code) { return (Q.data.categories || []).filter(function (c) { return c.code === code; })[0]; }
-  function account() { return (Q.data.accounts || []).filter(function (a) { return a.code === $('#q-account').value; })[0]; }
+  // До загрузки данных (первое нажатие в Safari: префетча через requestIdleCallback там нет) счёта нет.
+  function account() { return ((Q.data && Q.data.accounts) || []).filter(function (a) { return a.code === $('#q-account').value; })[0]; }
   function setKind(kind) {
     Q.kind = kind;
     var t = kind === 'TRANSFER';
@@ -553,7 +554,7 @@
     $('#q-to-err').hidden = true;
     updateTransfer();
   }
-  function accountBy(code) { return (Q.data.accounts || []).filter(function (a) { return a.code === code; })[0]; }
+  function accountBy(code) { return ((Q.data && Q.data.accounts) || []).filter(function (a) { return a.code === code; })[0]; }
   function updateTransfer() {
     if (!Q.data || Q.kind !== 'TRANSFER') return;
     var f = account(), t = accountBy($('#q-to').value), differ = !!(f && t && f.currency !== t.currency);
