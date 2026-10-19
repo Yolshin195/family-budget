@@ -219,7 +219,7 @@ on_each_repo! {
         assert_eq!(t.total, d("1250"));
         assert_eq!((t.items.len(), t.postings.len(), t.currency.as_str()), (3, 4, "THB"));
         assert_eq!(t.created_by, u);
-        assert_eq!(balance(&svc, p, "CARD").await, d("-1250"));
+        assert_eq!(balance(svc, p, "CARD").await, d("-1250"));
         let facts = svc.lines(p, day(1), day(31)).await.unwrap();
         assert_eq!(facts.iter().map(|f| f.amount).sum::<Decimal>(), d("1250"));
     }
@@ -347,7 +347,7 @@ on_each_repo! {
         assert_eq!((t.tx_kind.as_str(), t.total, t.sent(), t.to_amount), ("TRANSFER", d("10050"), d("10000"), Some(d("3912.40"))));
         assert_eq!((t.currency.as_str(), t.to_currency.as_deref()), ("RUB", Some("THB")));
         assert_eq!(t.postings.len(), 5);
-        assert_eq!((balance(&svc, p, "TINKOFF").await, balance(&svc, p, "CARD").await), (d("9950"), d("4912.40")));
+        assert_eq!((balance(svc, p, "TINKOFF").await, balance(svc, p, "CARD").await), (d("9950"), d("4912.40")));
 
         let facts = svc.lines(p, day(1), day(31)).await.unwrap();
         assert_eq!(facts.len(), 1, "доходы и расходы не меняются — только комиссия");
@@ -356,9 +356,9 @@ on_each_repo! {
         assert_eq!(fx.iter().map(|x| (x.currency.as_str(), x.amount)).collect::<Vec<_>>(), vec![("RUB", d("10000")), ("THB", d("-3912.40"))]);
 
         let token = svc.delete_with_undo(p, t.id).await.unwrap();
-        assert_eq!((balance(&svc, p, "TINKOFF").await, balance(&svc, p, "CARD").await), (d("20000"), d("1000")));
+        assert_eq!((balance(svc, p, "TINKOFF").await, balance(svc, p, "CARD").await), (d("20000"), d("1000")));
         svc.undo_delete(p, token).await.unwrap();
-        assert_eq!((balance(&svc, p, "TINKOFF").await, balance(&svc, p, "CARD").await), (d("9950"), d("4912.40")));
+        assert_eq!((balance(svc, p, "TINKOFF").await, balance(svc, p, "CARD").await), (d("9950"), d("4912.40")));
     }
 }
 
@@ -366,14 +366,14 @@ on_each_repo! {
     async fn transfer_rules_and_type_change(svc) {
         let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
         let cash = svc.create(p, u, transfer("card", "cash", "5000", None, None)).await.unwrap();
-        assert_eq!((balance(&svc, p, "CARD").await, balance(&svc, p, "CASH").await), (d("-5000"), d("5000")));
+        assert_eq!((balance(svc, p, "CARD").await, balance(svc, p, "CASH").await), (d("-5000"), d("5000")));
         assert!(svc.create(p, u, transfer("card", "card", "1", None, None)).await.is_err(), "тот же счёт");
         assert!(svc.create(p, u, transfer("tinkoff", "card", "100", None, None)).await.is_err(), "при обмене нужна сумма зачисления");
         assert!(svc.create(p, u, transfer("card", "nope", "100", None, None)).await.is_err());
         // Тип можно сменить: перевод → расход, проводки пересобираются.
         let t = svc.update(p, cash.id, receipt(&[("food", "300")])).await.unwrap();
         assert_eq!((t.tx_kind.as_str(), t.to_account_code), ("EXPENSE", None));
-        assert_eq!((balance(&svc, p, "CARD").await, balance(&svc, p, "CASH").await), (d("-300"), d("0")));
+        assert_eq!((balance(svc, p, "CARD").await, balance(svc, p, "CASH").await), (d("-300"), d("0")));
     }
 }
 
@@ -384,7 +384,7 @@ on_each_repo! {
         svc.create(p, u, receipt(&[("food", "1000")])).await.unwrap();
         let r = svc.create(p, u, TransactionInput { refund: true, ..receipt(&[("food", "300")]) }).await.unwrap();
         assert!(r.refund);
-        assert_eq!(balance(&svc, p, "CARD").await, d("-700"));
+        assert_eq!(balance(svc, p, "CARD").await, d("-700"));
         let facts = svc.lines(p, day(1), day(31)).await.unwrap();
         assert_eq!(facts.iter().map(|f| f.amount).sum::<Decimal>(), d("700"));
         let salary = svc.create(p, u, TransactionInput { lines: vec![LineDto { category_code: "salary".into(), amount: d("5000"), note: None }], ..input("INCOME", "card") }).await.unwrap();
@@ -402,7 +402,7 @@ on_each_repo! {
         assert_eq!(svc.opening(p, "card").await.unwrap(), Some((d("12000"), day(1))));
         svc.set_opening(p, u, "CARD", d("-150"), day(2)).await.unwrap();
         assert_eq!(svc.opening(p, "CARD").await.unwrap(), Some((d("-150"), day(2))));
-        assert_eq!(balance(&svc, p, "CARD").await, d("-150"));
+        assert_eq!(balance(svc, p, "CARD").await, d("-150"));
         assert_eq!(svc.balance(p, "CARD", day(1)).await.unwrap(), Decimal::ZERO, "до даты открытия остатка нет");
         let dup = TransactionInput { amount: Some(d("1")), ..input("OPENING", "card") };
         assert!(matches!(svc.create(p, u, dup).await.unwrap_err(), AppError::Conflict(_)), "второй начальный остаток");
@@ -428,7 +428,7 @@ on_each_repo! {
         let err = svc.reconcile(p, u, "card", d("1000"), day(5), "food", desc()).await.unwrap_err();
         assert!(err.to_string().contains("дохода"), "остаток больше — нужна категория дохода: {err}");
         svc.reconcile(p, u, "card", d("1000"), day(5), "salary", desc()).await.unwrap().unwrap();
-        assert_eq!(balance(&svc, p, "CARD").await, d("1000"));
+        assert_eq!(balance(svc, p, "CARD").await, d("1000"));
     }
 }
 
@@ -548,7 +548,7 @@ on_each_repo! {
         let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
         svc.set_opening(p, u, "card", d("1000"), day(1)).await.unwrap();
         svc.set_opening(p, u, "card", d("1200"), day(1)).await.unwrap();
-        assert_eq!(balance(&svc, p, "CARD").await, d("1200"), "повторное сохранение меняет остаток, а не добавляет второй");
+        assert_eq!(balance(svc, p, "CARD").await, d("1200"), "повторное сохранение меняет остаток, а не добавляет второй");
         let mut again = input("OPENING", "card");
         again.amount = Some(d("1"));
         let err = svc.create(p, u, again).await.unwrap_err();
