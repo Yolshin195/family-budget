@@ -11,7 +11,7 @@ use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use chrono::{DateTime, Utc};
 use kernel::auth::{
-    Csrf, CurrentUser, Identity, LANG_COOKIE, MaybeUser, PROJECT_COOKIE, RequestMeta, Role, Theme, Via, cookie, credential, request_lang, same_origin, session_cookie,
+    Csrf, CurrentUser, Identity, LANG_COOKIE, MaybeUser, PROJECT_COOKIE, RequestMeta, Role, Theme, Via, cookie, request_lang, same_origin, session_cookie, session_credential,
     session_csrf, set_cookie, set_cookie_at,
 };
 use kernel::config::Config;
@@ -162,9 +162,9 @@ struct NextQuery {
     next: String,
 }
 
-/// Есть действующая сессия (или API-токен) — вход и регистрация не нужны.
+/// Есть действующая сессия — вход и регистрация не нужны.
 async fn signed_in(svc: &ProjectService, headers: &HeaderMap) -> bool {
-    match credential(svc.config(), headers) {
+    match session_credential(svc.config(), headers) {
         Some(cred) => kernel::auth::Authenticator::authenticate(svc, &cred).await.ok().flatten().is_some(),
         None => false,
     }
@@ -326,7 +326,8 @@ struct BackQuery {
 /// Переключить язык: cookie + настройка пользователя (если он вошёл).
 async fn set_lang(State(svc): Svc, headers: HeaderMap, Path(code): Path<String>, Query(q): Query<BackQuery>) -> Response {
     let lang = Lang::parse(&code).unwrap_or_default();
-    if let Some(cred) = credential(svc.config(), &headers) {
+    // Только сессия браузера: API-токен действует лишь в /api.
+    if let Some(cred) = session_credential(svc.config(), &headers) {
         if let Ok(Some(id)) = kernel::auth::Authenticator::authenticate(svc.as_ref(), &cred).await {
             let _ = svc.set_lang(id.user_id, lang).await;
         }

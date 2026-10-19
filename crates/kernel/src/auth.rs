@@ -342,6 +342,11 @@ pub fn credential(config: &Config, headers: &HeaderMap) -> Option<Credential> {
     if let Some(token) = bearer {
         return Some(Credential::ApiToken(token.to_string()));
     }
+    session_credential(config, headers)
+}
+
+/// Только cookie-сессия — для страниц браузера вне `/api`: API-токен там не действует.
+pub fn session_credential(config: &Config, headers: &HeaderMap) -> Option<Credential> {
     cookie(headers, config.session_cookie()).filter(|v| !v.is_empty()).map(Credential::Session)
 }
 
@@ -479,7 +484,8 @@ async fn identify(auth: &AuthState, req: Request) -> Result<(Identity, Request),
     Ok((identity, req))
 }
 
-/// Middleware для страниц без проекта (онбординг): только пользователь, CSRF и лимит.
+/// Middleware для страниц без проекта (онбординг, принять приглашение): только пользователь
+/// браузера, CSRF и лимит. API-токен здесь не действует — он только для `/api`.
 pub async fn require_identity(State(auth): State<AuthState>, req: Request, next: Next) -> Response {
     let (identity, mut req) = match identify(&auth, req).await {
         Ok(x) => x,
@@ -487,7 +493,7 @@ pub async fn require_identity(State(auth): State<AuthState>, req: Request, next:
     };
     let csrf = match &identity.via {
         Via::Session { id_hash } => csrf_token(&auth.config, id_hash),
-        Via::Token { .. } => String::new(),
+        Via::Token { .. } => return AppError::Forbidden("API-токен действует только для /api".into()).into_response(),
     };
     req.extensions_mut().insert(CurrentUser { id: identity.user_id });
     req.extensions_mut().insert(Csrf(csrf));
@@ -639,6 +645,52 @@ mod tests {
         let mut r = HeaderMap::new();
         r.insert(REFERER, "https://evil.example/x".parse().unwrap());
         assert!(!same_origin(&c, &r));
+    }
+
+    /// Пользователь с API-токеном (`Bearer fbt_ok`) или сессией (`fb_session=ok`).
+    struct FakeAuth;
+
+    #[async_trait]
+    impl Authenticator for FakeAuth {
+        async fn authenticate(&self, credential: &Credential) -> AppResult<Option<Identity>> {
+            let via = match credential {
+                Credential::ApiToken(t) if t == "fbt_ok" => Via::Token { token_id: Uuid::nil(), project_id: Uuid::nil(), scopes: vec!["write".into()] },
+                Credential::Session(s) if s == "ok" => Via::Session { id_hash: "h".into() },
+                _ => return Ok(None),
+            };
+            Ok(Some(Identity { user_id: Uuid::nil(), mfa: false, via }))
+        }
+    }
+
+    struct NoProjects;
+
+    #[async_trait]
+    impl Memberships for NoProjects {
+        async fn session(&self, _user_id: Uuid, _project: Option<Uuid>) -> AppResult<Option<SessionInfo>> {
+            Ok(None)
+        }
+    }
+
+    fn auth_state() -> AuthState {
+        AuthState { config: Arc::new(Config::test()), authenticator: Arc::new(FakeAuth), memberships: Arc::new(NoProjects), limiter: Arc::new(RateLimiter::new()) }
+    }
+
+    /// Б5: онбординг и «Принять приглашение» — только из браузера; API-токен действует лишь в `/api`.
+    #[tokio::test]
+    async fn api_token_is_rejected_outside_api() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+        let app = axum::Router::new()
+            .route("/onboarding", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(auth_state(), require_identity));
+        let call = |header: (&'static str, &'static str)| {
+            let app = app.clone();
+            async move { app.oneshot(Request::builder().uri("/onboarding").header(header.0, header.1).body(Body::empty()).unwrap()).await.unwrap().status() }
+        };
+        assert_eq!(call(("authorization", "Bearer fbt_ok")).await, StatusCode::FORBIDDEN);
+        assert_eq!(call(("cookie", "fb_session=ok")).await, StatusCode::OK, "сессия браузера проходит");
+        let h: HeaderMap = [(AUTHORIZATION, "Bearer fbt_ok".parse().unwrap())].into_iter().collect();
+        assert!(session_credential(&Config::test(), &h).is_none(), "страницы вне /api не берут токен из заголовка");
     }
 
     #[test]
