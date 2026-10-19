@@ -29,6 +29,18 @@ jobs:
     name: Tests
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Тесты SQL-адаптеров и миграций (техдолг #10, kernel::testing): каждый тест — в своей временной схеме.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fb_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/fb_test
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -36,6 +48,7 @@ jobs:
         with:
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Если база не поднялась, тесты на PostgreSQL падают на подключении, а не пропускаются.
       - run: cargo test --workspace --locked
 
   audit:

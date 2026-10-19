@@ -10,6 +10,8 @@
 mod assets;
 #[cfg(feature = "seed")]
 mod seed;
+#[cfg(test)]
+mod tests;
 mod wiring;
 
 use std::env;
