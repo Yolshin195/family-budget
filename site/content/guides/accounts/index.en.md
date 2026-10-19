@@ -14,7 +14,7 @@ An account is where money lives: a wallet with cash, a card, a bank account or s
 
 ## 1. Add an account
 
-Under "Directories", open "Accounts" and click "Add". Enter a "Code" — Latin letters without spaces, such as CARD_KBANK — a "Name" (translations go in "Translations"), the "Account type" — "Cash", "Card", "Bank account" or "Savings" — and the currency. In "Balance", enter what the account held "as of" a date: transactions after that date will change it.
+Under "Directories", open "Accounts" and click "Add". Enter a "Code" — Latin letters, digits and _, such as CARD_KBANK — a "Name" (translations go in "Translations"), the "Account type" — "Cash", "Card", "Bank account" or "Savings" — and the currency. In "Balance", enter what the account held "as of" a date: transactions after that date will change it.
 
 ![The "SCB card" account: a Thai name with translations, type, currency and balance](account-form.en.webp)
 

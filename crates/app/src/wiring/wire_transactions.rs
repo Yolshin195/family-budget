@@ -81,11 +81,7 @@ impl ::transactions::CategoriesLookup for CategoriesLookupAdapter {
             .await?
             .into_iter()
             .map(|(depth, c)| {
-                let names = [Some(c.name.clone()), c.name_ru.clone(), c.name_en.clone(), c.name_th.clone(), Some(c.code.clone())]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let names = kernel::search::join([Some(c.name.as_str()), c.name_ru.as_deref(), c.name_en.as_deref(), c.name_th.as_deref(), Some(c.code.as_str())].into_iter().flatten());
                 CategoryInfo { title: c.title(lang).to_string(), code: c.code, parent_code: c.parent_code, kind: c.category_kind, depth, names }
             })
             .collect())

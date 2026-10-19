@@ -9,7 +9,7 @@ use crate::domain::{CategoryNameLang, CategoryCategoryKind, NewCategory, Categor
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateCategoryDto {
-    /// Уникальный код (верхний регистр, без пробелов)
+    /// Уникальный код: латиница, цифры и `_`, до 40 знаков
     #[schema(example = "FOOD")]
     pub code: String,
     pub name: String,

@@ -4,6 +4,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use kernel::auth::{RequestMeta, Role, scope_allows};
 use kernel::i18n::Lang;
+use kernel::search::Found;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -172,7 +173,7 @@ pub struct CategoryInfo {
     pub kind: String,
     pub title: String,
     pub depth: usize,
-    /// Оригинал и переводы названия через пробел.
+    /// Оригинал, переводы названия и код через `kernel::search::SEP`.
     pub search: String,
     pub limit: Option<Decimal>,
     pub available: Option<Decimal>,
@@ -404,9 +405,9 @@ impl Name {
         kernel::i18n::pick(lang, &self.text, self.lang, self.ru.as_deref(), self.en.as_deref(), self.th.as_deref())
     }
 
-    /// Оригинал и переводы через `\u{1f}` — для поиска по названию на любом языке (`resolve`).
+    /// Оригинал и переводы через `kernel::search::SEP` — для поиска по названию на любом языке (`resolve`).
     pub fn search(&self) -> String {
-        [Some(self.text.as_str()), self.ru.as_deref(), self.en.as_deref(), self.th.as_deref()].into_iter().flatten().collect::<Vec<_>>().join("\u{1f}")
+        kernel::search::join([Some(self.text.as_str()), self.ru.as_deref(), self.en.as_deref(), self.th.as_deref()].into_iter().flatten())
     }
 }
 
@@ -538,7 +539,7 @@ pub const RECURRENCES: [&str; 5] = ["ONCE", "DAILY", "WEEKLY", "MONTHLY", "YEARL
 /// Запись справочника, на которую ссылаются по коду или названию.
 pub trait Record {
     fn code(&self) -> &str;
-    /// Названия на всех языках через `\u{1f}`.
+    /// Названия на всех языках через `kernel::search::SEP`.
     fn names(&self) -> String;
     fn archived(&self) -> bool;
 }
@@ -548,7 +549,7 @@ impl Record for Currency {
         &self.code
     }
     fn names(&self) -> String {
-        format!("{}\u{1f}{}", self.name.search(), self.symbol)
+        kernel::search::join([self.name.search().as_str(), self.symbol.as_str()])
     }
     fn archived(&self) -> bool {
         self.archived
@@ -613,13 +614,10 @@ pub fn find_record<'a, T: Record>(field: &str, query: &str, items: &'a [T]) -> R
 
 // ---------------------------------------------------------------- разбор параметров
 
-/// Код новой записи справочника: UPPER_SNAKE (буквы, цифры, `_`, первая — буква), до 40 знаков.
+/// Код новой записи справочника — правило ядра (`kernel::code::new_code`), подсказка — для ассистента.
 pub fn parse_code(field: &str, value: &str) -> Result<String, String> {
-    let code = value.trim().to_uppercase();
-    let ok = code.chars().next().is_some_and(|c| c.is_ascii_uppercase())
-        && code.len() <= 40
-        && code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-    if ok { Ok(code) } else { Err(format!("{field}: '{}' — use UPPER_SNAKE: Latin letters, digits and _, starting with a letter (e.g. KBANK, CARD_KBANK)", value.trim())) }
+    kernel::code::new_code(field, value)
+        .map_err(|_| format!("{field}: '{}' — use UPPER_SNAKE: Latin letters, digits and _, up to {} characters (e.g. KBANK, CARD_KBANK)", value.trim(), kernel::code::MAX_CODE))
 }
 
 /// Значение из списка без учёта регистра: `cash` → `CASH`.
@@ -666,27 +664,18 @@ pub fn parse_date(field: &str, value: Option<&str>, today: NaiveDate) -> Result<
     }
 }
 
-/// Найти код по коду или названию на любом языке. Ошибка — с вариантами, чтобы ассистент уточнил.
+/// Найти код по коду или названию на любом языке (`kernel::search`). Ошибка — с вариантами, чтобы ассистент уточнил.
 pub fn resolve<'a, T>(field: &str, query: &str, items: &'a [T], code: impl Fn(&T) -> &str, names: impl Fn(&T) -> String) -> Result<&'a T, String> {
     let q = query.trim();
     if q.is_empty() {
         return Err(format!("{field}: empty"));
     }
-    if let Some(x) = items.iter().find(|x| code(x).eq_ignore_ascii_case(q)) {
-        return Ok(x);
-    }
-    let low = q.to_lowercase();
-    let exact: Vec<&T> = items.iter().filter(|x| names(x).to_lowercase().split('\u{1f}').any(|n| n.trim() == low)).collect();
-    if exact.len() == 1 {
-        return Ok(exact[0]);
-    }
-    let partial: Vec<&T> = items.iter().filter(|x| names(x).to_lowercase().contains(&low)).collect();
-    match partial.len() {
-        1 => Ok(partial[0]),
-        0 => Err(format!("{field}: '{q}' not found; call get_context for valid codes")),
-        _ => Err(format!(
+    match kernel::search::find(q, items, &code, names) {
+        Found::One(x) => Ok(x),
+        Found::None => Err(format!("{field}: '{q}' not found; call get_context for valid codes")),
+        Found::Many(many) => Err(format!(
             "{field}: '{q}' is ambiguous: {}; pass the exact code",
-            partial.iter().take(8).map(|x| code(x)).collect::<Vec<_>>().join(", ")
+            many.iter().take(8).map(|x| code(x)).collect::<Vec<_>>().join(", ")
         )),
     }
 }

@@ -12,7 +12,7 @@
   <li class="card card-pad card-link{% if a.archived %} row-muted{% endif %}">
     <div class="flex items-start justify-between gap-2">
       <div class="min-w-0">
-        <h2 class="font-semibold truncate">{% if page.can_write() %}<a class="stretched" href="/accounts/{{ a.code }}/edit">{{ a.title(page.lang) }}</a>{% else %}{{ a.title(page.lang) }}{% endif %}
+        <h2 class="font-semibold truncate">{% if page.can_write() %}<a class="stretched" href="/accounts/{{ kernel::web::url_segment(a.code) }}/edit">{{ a.title(page.lang) }}</a>{% else %}{{ a.title(page.lang) }}{% endif %}
           {% call m::no_tr(page, a.missing_tr(page.lang)) %}{% endcall %}</h2>
         <p class="text-xs text-subtle font-mono mt-0.5">{{ a.code }}</p>
       </div>
@@ -26,10 +26,10 @@
     </dl>
     {% if a.archived %}<span class="badge mt-3">{{ page.t("archived") }}</span>{% else %}
     <div class="account-actions">
-      <a class="btn-ghost btn-sm" href="/transactions?account={{ a.code }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("receipt-text") }}"></use></svg>{{ page.t("statement") }}</a>
+      <a class="btn-ghost btn-sm" href="/transactions?account={{ kernel::web::url_encode(a.code) }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("receipt-text") }}"></use></svg>{{ page.t("statement") }}</a>
       {% if page.can_write() %}
-      <a class="btn-ghost btn-sm" href="/transactions/new?kind=TRANSFER&amp;account={{ a.code }}&amp;back=/accounts" data-quick="TRANSFER" data-account="{{ a.code }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("arrow-right-left") }}"></use></svg>{{ page.t("transfer") }}</a>
-      <a class="btn-ghost btn-sm" href="/transactions/reconcile?account={{ a.code }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("scale") }}"></use></svg>{{ page.t("reconcile") }}</a>
+      <a class="btn-ghost btn-sm" href="/transactions/new?kind=TRANSFER&amp;account={{ kernel::web::url_encode(a.code) }}&amp;back=/accounts" data-quick="TRANSFER" data-account="{{ a.code }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("arrow-right-left") }}"></use></svg>{{ page.t("transfer") }}</a>
+      <a class="btn-ghost btn-sm" href="/transactions/reconcile?account={{ kernel::web::url_encode(a.code) }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("scale") }}"></use></svg>{{ page.t("reconcile") }}</a>
       {% endif %}
     </div>{% endif %}
   </li>

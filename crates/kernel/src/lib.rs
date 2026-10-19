@@ -9,6 +9,7 @@ pub mod feature;
 pub mod i18n;
 pub mod pagination;
 pub mod rates;
+pub mod search;
 pub mod testing;
 pub mod throttle;
 pub mod undo;

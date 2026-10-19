@@ -290,6 +290,11 @@ pub fn dict(key: &str) -> Option<Tr> {
         // Ошибки ядра (техдолг #9): правила кодов и ссылок, ответы БД, сбои.
         "err.empty" => ("не может быть пустым", "cannot be empty", "ต้องไม่เว้นว่าง"),
         "err.no_spaces" => ("не должен содержать пробелов", "must not contain spaces", "ต้องไม่มีช่องว่าง"),
+        "err.code_chars" => (
+            "только латинские буквы, цифры и _, до {max} знаков",
+            "only Latin letters, digits and _, up to {max} characters",
+            "ใช้ได้เฉพาะอักษรละติน ตัวเลข และ _ ไม่เกิน {max} ตัว",
+        ),
         "err.ref_not_found" => ("запись '{code}' не найдена", "'{code}' not found", "ไม่พบ '{code}'"),
         "err.not_found" => ("запись не найдена", "record not found", "ไม่พบรายการ"),
         "err.duplicate" => ("запись с таким ключом уже существует", "a record with this key already exists", "มีรายการที่ใช้คีย์นี้อยู่แล้ว"),

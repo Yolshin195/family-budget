@@ -573,12 +573,23 @@ pub fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// Процентное кодирование для параметров URL.
+/// Процентное кодирование для параметров URL (`/` остаётся: `?back=/accounts`).
 pub fn url_encode(s: &str) -> String {
+    percent(s, true)
+}
+
+/// Сегмент пути (`/accounts/{code}/edit`): как [`url_encode`], но `/` тоже кодируется — код `FOOD/CAFE`,
+/// созданный до строгих правил (техдолг #7), открывается.
+pub fn url_segment(s: &str) -> String {
+    percent(s, false)
+}
+
+fn percent(s: &str, keep_slash: bool) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'/' if keep_slash => out.push('/'),
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }

@@ -182,7 +182,7 @@ pub struct CategoryInfo {
     pub kind: String,
     pub title: String,
     pub depth: usize,
-    /// Оригинал и переводы через пробел — для поиска на любом языке.
+    /// Оригинал, переводы и код через `kernel::search::SEP` — для поиска на любом языке.
     pub names: String,
 }
 

@@ -286,7 +286,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             notes,
             running: if only_account { running.get(&t.id).map(|b| money_in(lang, *b)) } else { None },
             edit_href: if t.is_opening() {
-                format!("/accounts/{}/edit", kernel::web::url_encode(&t.account_code))
+                format!("/accounts/{}/edit", kernel::web::url_segment(&t.account_code))
             } else {
                 format!("/transactions/{}/edit?back={}", t.id, kernel::web::url_encode(&page.back()))
             },
@@ -749,7 +749,7 @@ async fn edit_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id
     let t = svc.get(page.session.project_id, id).await?;
     // Начальный остаток ведётся из формы счёта.
     if t.is_opening() {
-        return Ok(see_other(&format!("/accounts/{}/edit", kernel::web::url_encode(&t.account_code))));
+        return Ok(see_other(&format!("/accounts/{}/edit", kernel::web::url_segment(&t.account_code))));
     }
     let f = TxForm::from_dto(&t);
     form_page(&svc, page, Some(&t), f, None).await

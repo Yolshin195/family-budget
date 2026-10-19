@@ -633,11 +633,18 @@
     while (p) { names.unshift(p.title); p = p.parent_code ? catByCode(p.parent_code) : null; }
     return names.join(' › ');
   }
+  // Как kernel::search::fold: без регистра и диакритики латиницы и кириллицы (Café → cafe, ё → е), пробелы схлопнуты.
+  function fold(s) {
+    return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/\s+/g, ' ');
+  }
   function renderResults() {
-    var q = search.value.trim().toLowerCase();
+    var q = fold(search.value);
     results.textContent = ''; active = -1;
     if (!q || !Q.data) { results.hidden = true; search.setAttribute('aria-expanded', 'false'); return; }
-    var found = Q.data.categories.filter(function (c) { return c.kind === Q.kind && c.search.toLowerCase().indexOf(q) >= 0; }).slice(0, 12);
+    var found = Q.data.categories.filter(function (c) {
+      if (c.folded == null) c.folded = fold(c.search);
+      return c.kind === Q.kind && c.folded.indexOf(q) >= 0;
+    }).slice(0, 12);
     if (!found.length) {
       var li = doc.createElement('li'); li.className = 'opt-path'; li.textContent = i18n.noMatch || ''; li.setAttribute('role', 'presentation'); results.appendChild(li);
     }

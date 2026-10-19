@@ -436,7 +436,7 @@ pub struct QuickCategoryDto {
     /// Название на языке интерфейса
     pub title: String,
     pub depth: usize,
-    /// Оригинал и переводы — для поиска на любом из трёх языков
+    /// Оригинал, переводы и код через `\u{1f}` — для поиска на любом из трёх языков
     pub search: String,
     /// Лимит узла за месяц (в базовой валюте), если задан
     #[schema(value_type = Option<String>)]

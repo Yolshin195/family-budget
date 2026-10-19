@@ -31,13 +31,13 @@ struct FakeLedger {
 }
 
 fn quick_info() -> QuickInfo {
-    let cat = |code: &str, parent: Option<&str>, kind: &str, title: &str, search: &str| CategoryInfo {
+    let cat = |code: &str, parent: Option<&str>, kind: &str, title: &str, names: &[&str]| CategoryInfo {
         code: code.into(),
         parent_code: parent.map(Into::into),
         kind: kind.into(),
         title: title.into(),
         depth: usize::from(parent.is_some()),
-        search: search.into(),
+        search: kernel::search::join(names.iter().copied().chain([code])),
         limit: (code == "FOOD").then(|| d("1000")),
         available: (code == "FOOD" || code == "CAFE").then(|| d("700")),
     };
@@ -49,11 +49,11 @@ fn quick_info() -> QuickInfo {
             AccountInfo { code: "WISE".into(), title: "Wise".into(), currency: "USD".into(), symbol: "$".into(), has_rate: false },
         ],
         categories: vec![
-            cat("FOOD", None, "EXPENSE", "Еда", "Еда Food อาหาร"),
-            cat("CAFE", Some("FOOD"), "EXPENSE", "Кафе", "Кафе Cafe คาเฟ่"),
-            cat("CAR", None, "EXPENSE", "Машина", "Машина Car รถ"),
-            cat("CARWASH", Some("CAR"), "EXPENSE", "Мойка", "Мойка Car wash ล้างรถ"),
-            cat("SALARY", None, "INCOME", "Зарплата", "Зарплата Salary เงินเดือน"),
+            cat("FOOD", None, "EXPENSE", "Еда", &["Еда", "Food", "อาหาร"]),
+            cat("CAFE", Some("FOOD"), "EXPENSE", "Кафе", &["Кафе", "Café", "คาเฟ่"]),
+            cat("CAR", None, "EXPENSE", "Машина", &["Машина", "Car", "รถ"]),
+            cat("CARWASH", Some("CAR"), "EXPENSE", "Мойка", &["Мойка", "Car wash", "ล้างรถ"]),
+            cat("SALARY", None, "INCOME", "Зарплата", &["Зарплата", "Salary", "เงินเดือน"]),
         ],
         frequent_expense: vec!["CAFE".into()],
         frequent_income: vec![],
@@ -669,11 +669,14 @@ async fn ambiguous_or_unknown_category_asks_for_a_code() {
     let e = env();
     e.grant(&["read", "transactions:write"]).await;
     let c = e.caller(&e.oauth()).await;
-    let err = e.svc.add_expense(&c, expense("10", "รถ")).await.unwrap_err();
+    let err = e.svc.add_expense(&c, expense("10", "ca")).await.unwrap_err();
     assert!(err.0.contains("ambiguous") && err.0.contains("CARWASH"), "{}", err.0);
     let err = e.svc.add_expense(&c, expense("10", "Salary")).await.unwrap_err();
     assert!(err.0.contains("not found"), "доходная категория для расхода не подходит: {}", err.0);
     assert!(e.ledger.txs.lock().unwrap().is_empty());
+    // Техдолг #5: точное название на другом языке — не «неоднозначно», хотя «รถ» есть и в «ล้างรถ».
+    e.svc.add_expense(&c, expense("10", "รถ")).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[0].items[0].category_code.as_deref(), Some("CAR"));
 }
 
 #[tokio::test]
@@ -741,6 +744,7 @@ async fn reading_tools_respect_rights() {
     let ctx = e.svc.get_context(&c).await.unwrap();
     assert_eq!(ctx.data["permissions"]["delete"], false);
     assert_eq!(ctx.data["accounts"][0]["balance"], "500", "суммы — строками, без потерь точности");
+    assert_eq!(ctx.data["expense_categories"][3]["names"], serde_json::json!(["Мойка", "Car wash", "ล้างรถ", "CARWASH"]), "названия списком");
 }
 
 #[tokio::test]
@@ -1203,10 +1207,13 @@ fn amounts_dates_and_lookup() {
     assert_eq!(parse_date("date", Some("yesterday"), today).unwrap(), NaiveDate::from_ymd_opt(2026, 10, 14).unwrap());
     assert_eq!(parse_date("date", None, today).unwrap(), today);
     let q = quick_info();
-    let pick = |v: &str| resolve("category", v, &q.categories, |x| &x.code, |x| format!("{}\u{1f}{}", x.title, x.search)).map(|c| c.code.clone());
+    let pick = |v: &str| resolve("category", v, &q.categories, |x| &x.code, |x| x.search.clone()).map(|c| c.code.clone());
     assert_eq!(pick("кафе").unwrap(), "CAFE");
     assert_eq!(pick("Car").unwrap(), "CAR", "точный код важнее подстроки");
-    assert!(pick("รถ").is_err(), "неоднозначно: Машина (รถ) и Мойка (ล้างรถ)");
+    assert_eq!(pick("รถ").unwrap(), "CAR", "точное тайское название важнее части «ล้างรถ» (техдолг #5)");
+    assert_eq!(pick("Car wash").unwrap(), "CARWASH", "точное название из двух слов");
+    assert_eq!(pick("CAFÉ").unwrap(), "CAFE", "без диакритики и регистра");
+    assert!(pick("ca").unwrap_err().contains("ambiguous"));
     let _ = Utc::now();
 }
 

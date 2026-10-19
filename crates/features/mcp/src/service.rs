@@ -394,7 +394,7 @@ impl McpService {
         let balances = self.deps.ledger.balances(caller.project_id, today).await?;
         let balance = |code: &str| balances.iter().find(|b| b.0 == code).map(|b| b.1).unwrap_or_default();
         let cat = |c: &CategoryInfo| {
-            json!({"code": c.code, "title": c.title, "names": c.search, "parent": c.parent_code, "depth": c.depth, "month_limit": c.limit, "month_available": c.available})
+            json!({"code": c.code, "title": c.title, "names": c.search.split(kernel::search::SEP).collect::<Vec<_>>(), "parent": c.parent_code, "depth": c.depth, "month_limit": c.limit, "month_available": c.available})
         };
         let mut data = base;
         data["default_account"] = json!(q.default_account);
@@ -436,7 +436,7 @@ impl McpService {
         let filter = TxFilter { from: Some(from), to: Some(to), account_code, kind };
         let category_set: Option<HashSet<String>> = match a.category.as_deref() {
             Some(c) => {
-                let root = resolve("category", c, &q.categories, |x| &x.code, |x| format!("{}\u{1f}{}", x.title, x.search))?.code.clone();
+                let root = resolve("category", c, &q.categories, |x| &x.code, |x| x.search.clone())?.code.clone();
                 Some(subtree(&q.categories, &root))
             }
             None => None,
@@ -1528,7 +1528,7 @@ fn blank_draft(kind: &str, date: NaiveDate, account_code: String, lang: Lang) ->
 /// Код категории вида `kind` (EXPENSE / INCOME) по коду или названию на любом языке.
 fn category_code(q: &QuickInfo, kind: &str, field: &str, value: &str) -> Result<String, ToolError> {
     let cats: Vec<&CategoryInfo> = q.categories.iter().filter(|c| c.kind == kind).collect();
-    Ok(resolve(field, value, &cats, |x| &x.code, |x| format!("{}\u{1f}{}", x.title, x.search))?.code.clone())
+    Ok(resolve(field, value, &cats, |x| &x.code, |x| x.search.clone())?.code.clone())
 }
 
 /// Коды категории и всех её потомков.

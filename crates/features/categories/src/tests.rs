@@ -70,6 +70,25 @@ async fn create_and_get_normalizes_code() {
     assert_eq!(svc.get(user, "food").await.unwrap().id, created.id);
 }
 
+/// Техдолг #7: новый код — латиница, цифры и `_`; запись со старым кодом `FOOD/CAFE` по-прежнему открывается и
+/// архивируется, а ссылка на неё кодирует `/`.
+#[tokio::test]
+async fn new_codes_are_url_safe_and_old_ones_still_work() {
+    let repo = Arc::new(InMemoryCategoryRepository::default());
+    let svc = CategoryService::new(repo.clone(), deps());
+    let user = Uuid::new_v4();
+    for bad in ["FOOD/CAFE", "ЕДА", "a?b"] {
+        assert!(matches!(svc.create(user, create_dto(bad)).await.unwrap_err(), AppError::Validation(_)), "{bad}");
+    }
+    let mut old = crate::domain::Category::create(user, create_dto("FOOD").into_domain().unwrap()).unwrap();
+    old.code = "FOOD/CAFE".into();
+    crate::ports::CategoryRepository::insert(repo.as_ref(), &old).await.unwrap();
+    assert_eq!(svc.get(user, "food/cafe").await.unwrap().id, old.id);
+    svc.update(user, "FOOD/CAFE", update_dto("Кафе")).await.unwrap();
+    svc.archive(user, "FOOD/CAFE").await.unwrap();
+    assert_eq!(kernel::web::url_segment("FOOD/CAFE"), "FOOD%2FCAFE");
+}
+
 #[tokio::test]
 async fn duplicate_code_is_conflict() {
     let svc = service();

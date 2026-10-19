@@ -74,7 +74,7 @@ impl CategoriesLookup for FakeCategories {
             kind: kind.into(),
             title: code.into(),
             depth,
-            names: names.into(),
+            names: kernel::search::join(names.split(' ')),
         };
         Ok(vec![
             c("FOOD", None, "EXPENSE", 0, "Еда Food อาหาร"),

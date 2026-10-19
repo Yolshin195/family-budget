@@ -108,7 +108,7 @@
               <span class="{% if r.depth == 0 %}font-medium{% else %}font-normal{% endif %}">{{ r.title }}</span>
               {% if !r.no_rate.is_empty() %}<span class="badge badge-warn" title="{{ page.t("no_rate_hint") }}">{{ page.t("no_rate") }}: {{ r.no_rate }}</span>{% endif %}
               {% if r.children_over %}<span class="badge badge-warn" title="{{ page.t("children_over") }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("triangle-alert") }}"></use></svg><span class="sr-only">{{ page.t("children_over") }}</span></span>{% endif %}
-              {% if page.can_write() %}<a class="row-add" href="/transactions/new?category={{ r.code }}&amp;back={{ page.back() }}" data-quick="EXPENSE" data-category="{{ r.code }}" aria-label="{{ page.t("add_here") }}: {{ r.title }}" title="{{ page.t("add_here") }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg></a>{% endif %}
+              {% if page.can_write() %}<a class="row-add" href="/transactions/new?category={{ kernel::web::url_encode(r.code) }}&amp;back={{ page.back() }}" data-quick="EXPENSE" data-category="{{ r.code }}" aria-label="{{ page.t("add_here") }}: {{ r.title }}" title="{{ page.t("add_here") }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg></a>{% endif %}
             </div></th>
             <td class="num text-muted">{{ r.limit }}</td>
             <td class="num">{{ r.fact }}</td>

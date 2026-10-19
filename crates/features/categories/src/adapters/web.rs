@@ -180,7 +180,7 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
 async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
     match svc.archive(page.session.project_id, &code).await {
         Ok(()) => {
-            let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/categories/{}/restore", kernel::web::url_encode(&code)));
+            let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/categories/{}/restore", kernel::web::url_segment(&code)));
             Ok(see_other_flash(&page.config, "/categories", flash))
         }
         Err(AppError::Validation(m)) => {

@@ -9,7 +9,7 @@ use crate::domain::{AccountNameLang, AccountAccountKind, NewAccount, Account, Ac
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateAccountDto {
-    /// Уникальный код (верхний регистр, без пробелов)
+    /// Уникальный код: латиница, цифры и `_`, до 40 знаков
     #[schema(example = "CARD_KBANK")]
     pub code: String,
     pub name: String,
