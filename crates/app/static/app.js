@@ -346,11 +346,13 @@
         row.hidden = false; filterCats(); total(); $('select', row).focus();
       });
     }
-    // Место (шаг 5): счёт и пустые категории видимых позиций — из места; без JS это сделает сервер.
+    // Место (шаг 5): пустые категории видимых позиций — из места (без JS их заполнит сервер); счёт — только у новой
+    // операции, пока его не выбрали вручную: счёт записанной операции место не меняет.
+    var accTouched = false;
     function applyPlace(sel) {
       var o = sel.selectedOptions[0], acc = $('[name=account_code]', form);
       if (!o || !o.value) return;
-      if (o.dataset.account && acc && $('option[value="' + CSS.escape(o.dataset.account) + '"]', acc)) acc.value = o.dataset.account;
+      if (form.hasAttribute('data-new') && !accTouched && o.dataset.account && acc && $('option[value="' + CSS.escape(o.dataset.account) + '"]', acc)) acc.value = o.dataset.account;
       if (o.dataset.category) visible().forEach(function (row) {
         var c = $('[name=item_category]', row), op = c && $('option[value="' + CSS.escape(o.dataset.category) + '"]', c);
         if (c && !c.value && op && !op.disabled) c.value = o.dataset.category;
@@ -359,6 +361,7 @@
     form.addEventListener('input', function () { total(); syncTransfer(); });
     form.addEventListener('change', function (e) {
       if (e.target.name === 'tx_kind') syncKind();
+      if (e.target.name === 'account_code') accTouched = true;
       if (e.target.matches && e.target.matches('[data-place]')) applyPlace(e.target);
       filterCats(); total(); warn(); syncTransfer();
     });
@@ -703,6 +706,13 @@
   }
   // `keepAccount` — «Сохранить и ещё» и смена типа: счёт уже выбран, место подставляет только категорию.
   function applyPlace(p, keepAccount) {
+    // Другое место: то, что подставило прежнее (с пометкой «из места»), снимается.
+    if (p && Q.place && p.code !== Q.place.code) {
+      if (!$('#q-cat-from').hidden) { Q.category = ''; renderChips(); }
+      var def = Q.data && Q.data.default_account;
+      if (!$('#q-acc-from').hidden && def && accountBy(def)) { $('#q-account').value = def; updateCurrency(); }
+      markFrom('#q-cat-from', false); markFrom('#q-acc-from', false); updateLimit();
+    }
     Q.place = p || null; showPlace();
     if (!p) { markFrom('#q-cat-from', false); markFrom('#q-acc-from', false); return; }
     var c = p.category && catByCode(p.category);

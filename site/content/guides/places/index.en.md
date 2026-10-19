@@ -42,7 +42,7 @@ Pick a place and a tag with a cross appears above the frequent categories, while
 
 ## 4. The place in full details and in the list
 
-The full transaction form has a "Place" field. Pick one and the account and empty item categories are filled in from it; without JavaScript the server does the same when you save. "Transactions" shows the place on every expense, and when there's no description it takes the title's spot.
+The full transaction form has a "Place" field. Pick one and empty item categories are filled in from it (without JavaScript — when you save), and for a new transaction the account too. A place never changes the account of a transaction that's already saved. "Transactions" shows the place on every expense, and when there's no description it takes the title's spot.
 
 ## 5. Edit, archive, record through Claude
 

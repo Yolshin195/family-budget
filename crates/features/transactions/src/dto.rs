@@ -157,6 +157,8 @@ pub struct TransactionInput {
     pub occurred_on: NaiveDate,
     #[schema(example = "EXPENSE")]
     pub tx_kind: String,
+    /// Счёт (у перевода — счёт списания); можно не передавать, если у места есть счёт по умолчанию
+    #[serde(default)]
     #[schema(example = "CARD_KBANK")]
     pub account_code: String,
     #[serde(default)]

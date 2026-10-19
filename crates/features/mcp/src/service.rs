@@ -748,6 +748,8 @@ impl McpService {
             if let Some(p) = a.place.as_deref() {
                 draft.place_code = match p.trim() {
                     "" => None,
+                    // Своё место операция сохраняет и после архива (в `q.places` только активные).
+                    p if old.place_code.as_deref().is_some_and(|c| c.eq_ignore_ascii_case(p)) => old.place_code.clone(),
                     p => Some(place_of(&q, p)?.code.clone()),
                 };
             }

@@ -1303,6 +1303,11 @@ async fn place_fills_category_and_account() {
     let transfer = e.ledger.txs.lock().unwrap()[2].id.to_string();
     let err = e.svc.update_transaction(&c, UpdateTransactionArgs { id: transfer, place: Some("SEVEN_ELEVEN".into()), ..Default::default() }).await.unwrap_err();
     assert!(err.0.contains("no place"), "{}", err.0);
+    // Архивное место, которое уже стоит у операции, можно передать снова.
+    e.ledger.txs.lock().unwrap()[1].place_code = Some("OLD".into());
+    let second = e.ledger.txs.lock().unwrap()[1].id.to_string();
+    e.svc.update_transaction(&c, UpdateTransactionArgs { id: second, place: Some("old".into()), description: Some("Рынок".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[1].place_code.as_deref(), Some("OLD"));
     let ctx = e.svc.get_context(&c).await.unwrap();
     assert_eq!((ctx.data["frequent_places"][0]["code"].as_str(), ctx.data["places_total"].as_u64()), (Some("SEVEN_ELEVEN"), Some(2)));
     assert_eq!(ctx.data["permissions"]["write_places"], false);

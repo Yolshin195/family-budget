@@ -131,7 +131,7 @@ impl PlacesLookup for FakePlaces {
             default_account_code: acc.map(Into::into),
             archived,
         };
-        Ok(vec![p("SEVEN_ELEVEN", Some("FOOD"), Some("CASH"), false), p("OLD", None, None, true)])
+        Ok(vec![p("SEVEN_ELEVEN", Some("FOOD"), Some("CASH"), false), p("OLD", None, None, true), p("PAYDAY", Some("SALARY"), Some("NOPE"), false)])
     }
 }
 
@@ -796,6 +796,11 @@ on_each_repo! {
             let e = svc.create(p, u, TransactionInput { place_code: Some(bad.into()), ..receipt(&[("food", "10")]) }).await.unwrap_err();
             assert_eq!(problem(e), (kernel::error::codes::NOT_FOUND, "place_code".to_string()), "{bad}: нет или в архиве");
         }
+        // Подставляется только подходящее: доходная категория места не попадает в расход, неактивный счёт — в операцию.
+        let wrong = TransactionInput { place_code: Some("PAYDAY".into()), items: vec![ItemInput { amount: Some(d("5")), ..Default::default() }], ..input("EXPENSE", "card") };
+        assert_eq!(problem(svc.create(p, u, wrong).await.unwrap_err()).1, "items[1].category_code", "«выберите категорию», а не «не тот тип»");
+        let no_acc = TransactionInput { place_code: Some("PAYDAY".into()), ..items(vec![ItemInput { category_code: Some("food".into()), amount: Some(d("5")), ..Default::default() }]) };
+        assert_eq!(problem(svc.create(p, u, TransactionInput { account_code: String::new(), ..no_acc }).await.unwrap_err()).1, "account_code");
         // Правка без места убирает его; позиции с `id` категорию от места не получают.
         let mut edit = TransactionInput { items: vec![ItemInput { id: Some(t.items[0].id), ..Default::default() }], ..input("EXPENSE", "cash") };
         edit.place_code = None;

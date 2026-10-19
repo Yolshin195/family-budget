@@ -4,7 +4,7 @@
 {% block heading %}{% if !f.plan_id.is_empty() %}{{ page.t("paid_plan") }}{% else if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
 {% block content %}
 {% if let Some(e) = self.general_error() %}<div class="alert alert-error mb-4" role="alert"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("circle-alert") }}"></use></svg><span>{{ e }}</span></div>{% endif %}
-<form method="post" class="card card-pad form max-w-3xl" id="tx" data-tx-form data-limit-warn>
+<form method="post" class="card card-pad form max-w-3xl" id="tx" data-tx-form data-limit-warn{% if id.is_none() %} data-new{% endif %}>
   <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
   <input type="hidden" name="plan_id" value="{{ f.plan_id }}">
   <input type="hidden" name="plan_date" value="{{ f.plan_date }}">

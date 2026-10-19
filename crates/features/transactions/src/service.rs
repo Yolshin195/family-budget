@@ -128,14 +128,18 @@ impl TransactionService {
             .into_iter()
             .find(|p| p.code == code && (!p.archived || before == Some(code.as_str())))
             .ok_or_else(|| Problem::new(codes::NOT_FOUND, "place_code", tr("err.place_not_found", &[("code", &code)])))?;
+        // Подставляется только то, что можно выбрать: активный счёт и активная категория типа операции.
         if input.account_code.trim().is_empty()
             && let Some(account) = place.default_account_code
+            && self.deps.accounts.exists(project_id, &account).await?
         {
             input.account_code = account;
         }
         if let Some(category) = place.default_category_code {
+            let kind = input.tx_kind.trim().to_uppercase();
+            let usable = self.deps.categories.kind_of(project_id, &category).await?.is_some_and(|c| !c.archived && c.kind == kind);
             let empty = |x: &ItemInput| x.id.is_none() && x.category_code.as_deref().is_none_or(|c| c.trim().is_empty());
-            for x in input.items.iter_mut().filter(|x| empty(x)) {
+            for x in input.items.iter_mut().filter(|x| usable && empty(x)) {
                 x.category_code = Some(category.clone());
             }
         }
