@@ -373,7 +373,6 @@ pub mod action {
     pub const SESSION_REVOKED: &str = "session_revoked";
     pub const PROJECT_CREATED: &str = "project_created";
     pub const PROJECT_DELETED: &str = "project_deleted";
-    pub const MEMBER_ADDED: &str = "member_added";
     pub const MEMBER_ROLE: &str = "member_role_changed";
     pub const MEMBER_REMOVED: &str = "member_removed";
     pub const MEMBER_JOINED: &str = "member_joined";

@@ -62,7 +62,6 @@ pub fn pages(service: Arc<ProjectService>) -> Router {
         .route("/{id}/rename", post(rename))
         .route("/{id}/require-2fa", post(require_2fa))
         .route("/{id}/delete", post(delete_project))
-        .route("/{id}/members", post(add_member))
         .route("/{id}/members/{user}/role", post(set_role))
         .route("/{id}/members/{user}/remove", post(remove_member))
         .route("/{id}/make-family", post(make_family))
@@ -867,17 +866,11 @@ async fn delete_project(State(svc): Svc, Extension(page): Extension<PageCtx>, Ex
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct MemberForm {
-    email: String,
     role: String,
 }
 
 fn parse_role(v: &str) -> Result<Role, AppError> {
     Role::parse(v).ok_or_else(|| AppError::Validation(format!("role: '{v}'")))
-}
-
-async fn add_member(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path(id): Path<Uuid>, Form(f): Form<MemberForm>) -> PageResult {
-    let r = async { svc.add_member(page.session.user_id, id, &f.email, parse_role(&f.role)?, &meta).await }.await;
-    done(&svc, page, r, Some("member_added")).await
 }
 
 async fn set_role(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path((id, user)): Path<(Uuid, Uuid)>, Form(f): Form<MemberForm>) -> PageResult {

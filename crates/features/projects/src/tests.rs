@@ -232,7 +232,7 @@ async fn require_2fa_is_reported_and_blocks_tokens_without_mfa() {
     let (me, _, _) = signed_up(&e, "sub-me").await;
     let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
     let (anna, anna_raw, _) = signed_up(&e, "sub-anna").await;
-    e.svc.add_member(me, family, "anna@demo.local", Role::Editor, &meta()).await.unwrap();
+    join(&e, me, family, anna, Role::Editor).await;
     assert!(matches!(e.svc.set_require_2fa(anna, family, true, &meta()).await.unwrap_err(), AppError::Forbidden(_)), "только владелец");
     e.svc.set_require_2fa(me, family, true, &meta()).await.unwrap();
     assert!(e.svc.session(me, Some(family)).await.unwrap().unwrap().require_2fa);
@@ -265,10 +265,8 @@ async fn family_project_members_and_roles() {
     let e = env();
     let (me, _, personal) = signed_up(&e, "sub-me").await;
     let (anna, _, _) = signed_up(&e, "sub-anna").await;
-    // в личный проект второго участника не добавить
-    assert!(matches!(e.svc.add_member(me, personal, "anna@demo.local", Role::Editor, &meta()).await.unwrap_err(), AppError::Validation(_)));
     let family = e.svc.create_project(me, "Family", ProjectKind::Family, "THB", &meta()).await.unwrap();
-    e.svc.add_member(me, family, "anna@demo.local", Role::Viewer, &meta()).await.unwrap();
+    join(&e, me, family, anna, Role::Viewer).await;
     // Anna видит семейный проект с ролью VIEWER; чужой личный проект ей не доступен
     let s = e.svc.session(anna, Some(family)).await.unwrap().unwrap();
     assert_eq!((s.project_id, s.role, s.members.len()), (family, Role::Viewer, 2));
@@ -289,7 +287,8 @@ async fn foreign_project_is_not_found() {
     let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
     for err in [
         e.svc.rename(anna, family, "x").await.unwrap_err(),
-        e.svc.add_member(anna, family, "anna@demo.local", Role::Owner, &meta()).await.unwrap_err(),
+        e.svc.create_invite(anna, family, Role::Editor, &meta()).await.unwrap_err(),
+        e.svc.set_role(anna, family, me, Role::Viewer, &meta()).await.unwrap_err(),
         e.svc.remove_member(anna, family, me, &meta()).await.unwrap_err(),
         e.svc.delete_project(anna, family, "Семья", &meta()).await.unwrap_err(),
     ] {
@@ -314,7 +313,7 @@ async fn delete_account_keeps_family_project_for_others() {
     let (me, _, my_personal) = signed_up(&e, "sub-me").await;
     let (anna, _, _) = signed_up(&e, "sub-anna").await;
     let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
-    e.svc.add_member(me, family, "anna@demo.local", Role::Editor, &meta()).await.unwrap();
+    join(&e, me, family, anna, Role::Editor).await;
     // единственный владелец семейного проекта с участниками — сначала второй владелец
     assert!(matches!(e.svc.delete_account(me, &meta()).await.unwrap_err(), AppError::Validation(_)));
     e.svc.set_role(me, family, anna, Role::Owner, &meta()).await.unwrap();
@@ -379,6 +378,13 @@ async fn invite_code(e: &Env, owner: Uuid, project: Uuid, invite: Uuid) -> Strin
     let p = e.svc.overview(owner).await.unwrap().into_iter().find(|p| p.id == project).unwrap();
     let url = p.invites.into_iter().find(|i| i.id == invite).expect("приглашение в списке").url;
     url.split_once("/join/").unwrap().1.to_string()
+}
+
+/// Участником становятся только по приглашению: владелец зовёт, `who` принимает ссылку.
+async fn join(e: &Env, owner: Uuid, project: Uuid, who: Uuid, role: Role) {
+    let invite = e.svc.create_invite(owner, project, role, &meta()).await.unwrap();
+    let code = invite_code(e, owner, project, invite).await;
+    e.svc.accept_invite(who, &code, &meta()).await.unwrap();
 }
 
 #[tokio::test]
@@ -468,7 +474,8 @@ async fn revoked_expired_or_orphaned_invites_do_not_work() {
     // пригласивший больше не владелец — его ссылки не действуют
     let orphan = e.svc.create_invite(me, family, Role::Editor, &meta()).await.unwrap();
     let orphan_code = invite_code(&e, me, family, orphan).await;
-    e.svc.add_member(me, family, "anna@demo.local", Role::Owner, &meta()).await.unwrap();
+    join(&e, me, family, anna, Role::Editor).await;
+    e.svc.set_role(me, family, anna, Role::Owner, &meta()).await.unwrap();
     e.svc.set_role(anna, family, me, Role::Editor, &meta()).await.unwrap();
     let (fb, _, _) = signed_up(&e, "sub-fb").await;
     assert!(rejected(e.svc.accept_invite(fb, &orphan_code, &meta()).await));
@@ -553,5 +560,31 @@ async fn demo_needs_origin_and_guest_session_lasts_a_day() {
     let sessions = repo.sessions.lock().unwrap().clone();
     let guest = sessions.last().unwrap();
     assert_eq!(guest.expires_at - guest.created_at, Duration::hours(24));
+}
+
+/// Б3: добавить человека в проект по email нельзя — ни зарегистрированного, ни нет (раньше ответы
+/// различались, а сам человек не давал согласия). Участником становятся только по приглашению.
+#[tokio::test]
+async fn members_cannot_be_added_by_email() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    let (anna, _, _) = signed_up(&e, "sub-anna").await;
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    let svc = Arc::new(e.svc);
+    let app = crate::adapters::web::pages(svc.clone());
+    for email in ["anna@demo.local", "nobody@demo.local"] {
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/{family}/members"))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(format!("email={email}&role=EDITOR")))
+            .unwrap();
+        assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::NOT_FOUND, "{email}");
+    }
+    assert_ne!(svc.session(anna, Some(family)).await.unwrap().unwrap().project_id, family, "Анну не добавили");
 }
 

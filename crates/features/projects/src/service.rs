@@ -488,28 +488,6 @@ impl ProjectService {
         Ok(out)
     }
 
-    /// Добавить участника по email (пользователь должен быть зарегистрирован). Только владелец.
-    pub async fn add_member(&self, by: Uuid, project_id: Uuid, email: &str, role: Role, meta: &RequestMeta) -> AppResult<()> {
-        self.deny_guest(by).await?;
-        let project = self.require_owner(by, project_id).await?;
-        let email = normalize_email(email).map_err(AppError::Validation)?;
-        let user = self
-            .repo
-            .user_by_email(&email)
-            .await?
-            .filter(|u| !u.rauthy_sub.starts_with("demo:guest"))
-            .ok_or_else(|| AppError::Validation(format!("email: пользователь '{email}' ещё не входил в приложение — пусть войдёт один раз")))?;
-        let new = Member { project_id, user_id: user.id, role };
-        self.change_members(&project, |ms| {
-            ms.retain(|m| m.user_id != user.id);
-            ms.push(new.clone());
-        })
-        .await?;
-        self.repo.upsert_member(&new).await?;
-        self.audit(audit_event(Some(by), Some(project_id), action::MEMBER_ADDED, meta, &[("member", user.id.to_string()), ("role", role.as_str().into())])).await;
-        Ok(())
-    }
-
     pub async fn set_role(&self, by: Uuid, project_id: Uuid, user_id: Uuid, role: Role, meta: &RequestMeta) -> AppResult<()> {
         self.deny_guest(by).await?;
         let project = self.require_owner(by, project_id).await?;
@@ -559,7 +537,7 @@ impl ProjectService {
 
     /// Код для ссылки: id приглашения и HMAC-подпись секретом приложения. В БД кода нет — копия базы
     /// не даёт рабочих ссылок, а владелец может показать ссылку повторно.
-    fn invite_code(&self, id: Uuid) -> String {
+    pub fn invite_code(&self, id: Uuid) -> String {
         let id = id.simple().to_string();
         let sig = self.config.signer.sign("invite", &id);
         format!("{id}.{}", &sig[..INVITE_SIG_LEN])

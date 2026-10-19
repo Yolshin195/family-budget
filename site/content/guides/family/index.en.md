@@ -22,7 +22,7 @@ Open "Projects & members" at the bottom of the menu. There are two ways. "Make i
 
 On the family project's card, in "Invite your family", choose a role and click "Create invite". A link and a QR code appear, along with "Share", "Copy", Telegram and WhatsApp. The person opens the link, signs in or signs up and clicks "Join" — and the budget opens right away.
 
-An invite is valid for 7 days and for one person only. Sent it to the wrong person? Click "Revoke invite". Someone who has already signed in to the app can be added without a link: open "Add by email", enter the address, choose a role and click "Invite".
+An invite is valid for 7 days and for one person only. Sent it to the wrong person? Click "Revoke invite". There is no other way to add someone: only a person who opened the link and agreed becomes a member.
 
 ## 3. Member roles
 
