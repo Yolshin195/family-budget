@@ -10,7 +10,7 @@ use sqlx::{PgPool, Postgres, Transaction as SqlTx};
 use uuid::Uuid;
 
 use crate::domain::{Description, Posting, RefKind, Transaction, TxKind, system};
-use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository};
+use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
 const COLUMNS: &str = "id, project_id, occurred_on, tx_kind, description, description_lang, \
                        description_ru, description_en, description_th, created_by, plan_id, plan_date";
@@ -122,6 +122,18 @@ impl Row {
     }
 }
 
+/// Нарушение уникального индекса шапки → какой ключ занят (план или начальный остаток).
+fn unique(e: sqlx::Error) -> AppError {
+    if let sqlx::Error::Database(db) = &e {
+        match db.constraint() {
+            Some("fb_transactions_plan_uniq") => return AppError::Conflict(taken::PLAN.into()),
+            Some("fb_transactions_opening_uniq") => return AppError::Conflict(taken::OPENING.into()),
+            _ => {}
+        }
+    }
+    e.into()
+}
+
 fn bad_value(column: &str, value: &str) -> AppError {
     AppError::Internal(anyhow::anyhow!("{column}: неизвестное значение '{value}'"))
 }
@@ -166,8 +178,8 @@ impl TransactionRepository for PostgresTransactionRepository {
         let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO fb_transactions (id, project_id, occurred_on, tx_kind, description, description_lang, \
-             description_ru, description_en, description_th, created_by, plan_id, plan_date) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+             description_ru, description_en, description_th, created_by, plan_id, plan_date, opening_account) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(item.id)
         .bind(item.project_id)
@@ -181,8 +193,10 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(item.created_by)
         .bind(item.plan.map(|p| p.0))
         .bind(item.plan.map(|p| p.1))
+        .bind(item.opening_account())
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(unique)?;
         write_postings(&mut tx, item).await?;
         tx.commit().await?;
         Ok(())
@@ -192,8 +206,8 @@ impl TransactionRepository for PostgresTransactionRepository {
         let mut tx = self.pool.begin().await?;
         let res = sqlx::query(
             "UPDATE fb_transactions SET occurred_on = $3, tx_kind = $4, description = $5, description_lang = $6, \
-             description_ru = $7, description_en = $8, description_th = $9, plan_id = $10, plan_date = $11 \
-             WHERE project_id = $1 AND id = $2",
+             description_ru = $7, description_en = $8, description_th = $9, plan_id = $10, plan_date = $11, \
+             opening_account = $12 WHERE project_id = $1 AND id = $2",
         )
         .bind(item.project_id)
         .bind(item.id)
@@ -206,8 +220,10 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(&item.description.th)
         .bind(item.plan.map(|p| p.0))
         .bind(item.plan.map(|p| p.1))
+        .bind(item.opening_account())
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(unique)?;
         if res.rows_affected() == 0 {
             return Err(AppError::NotFound(item.id.to_string()));
         }
@@ -260,8 +276,8 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn exchange(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<ExchangeLine>> {
-        let rows: Vec<(NaiveDate, String, Decimal, Uuid)> = sqlx::query_as(
-            "SELECT t.occurred_on, p.currency_code, p.amount, t.created_by \
+        let rows: Vec<(Uuid, NaiveDate, String, Decimal, Uuid)> = sqlx::query_as(
+            "SELECT t.id, t.occurred_on, p.currency_code, p.amount, t.created_by \
              FROM fb_transactions t JOIN fb_postings p ON p.transaction_id = t.id \
              WHERE t.project_id = $1 AND t.occurred_on BETWEEN $2 AND $3 AND p.ref_kind = 'SYSTEM' AND p.ref_code = $4 \
              ORDER BY t.occurred_on, t.id, p.position",
@@ -272,7 +288,10 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(system::EXCHANGE)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(|(occurred_on, currency, amount, created_by)| ExchangeLine { occurred_on, currency, amount, created_by }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(transaction_id, occurred_on, currency, amount, created_by)| ExchangeLine { transaction_id, occurred_on, currency, amount, created_by })
+            .collect())
     }
 
     async fn payments(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<Payment>> {
@@ -307,6 +326,30 @@ impl TransactionRepository for PostgresTransactionRepository {
         )
         .bind(project_id)
         .bind(account_code)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(yes)
+    }
+
+    async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
+        let (yes,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM fb_postings p JOIN fb_transactions t ON t.id = p.transaction_id \
+             WHERE t.project_id = $1 AND p.ref_kind = 'CATEGORY' AND p.ref_code = $2)",
+        )
+        .bind(project_id)
+        .bind(code)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(yes)
+    }
+
+    async fn uses_currency(&self, project_id: Uuid, currency: &str) -> AppResult<bool> {
+        let (yes,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM fb_postings p JOIN fb_transactions t ON t.id = p.transaction_id \
+             WHERE t.project_id = $1 AND p.currency_code = $2)",
+        )
+        .bind(project_id)
+        .bind(currency)
         .fetch_one(&self.pool)
         .await?;
         Ok(yes)

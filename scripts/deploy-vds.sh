@@ -311,6 +311,7 @@ CONTACT_EMAIL=${ADMIN_EMAIL}
 # Приложение за Caddy: IP клиента — из X-Forwarded-For.
 TRUST_PROXY=1
 RATE_LIMIT_PER_MIN=600
+PUBLIC_RATE_LIMIT_PER_MIN=120
 
 # ---------------------------------------------------------------- PostgreSQL
 # Только hex: пароли подставляются в DATABASE_URL, спецсимволы его сломают.

@@ -11,9 +11,18 @@ use crate::dto::{CreateCategoryDto, ListQuery, UpdateCategoryDto};
 use crate::service::CategoryService;
 
 
-fn deps() -> super::ports::Deps {
-    super::ports::Deps {
+/// Категория `PINPAN` уже в операциях, остальные — нет.
+struct FakeUsage;
+
+#[async_trait::async_trait]
+impl crate::ports::CategoryUsage for FakeUsage {
+    async fn in_use(&self, _p: Uuid, code: &str) -> kernel::error::AppResult<bool> {
+        Ok(code == "PINPAN")
     }
+}
+
+fn deps() -> super::ports::Deps {
+    super::ports::Deps { usage: Arc::new(FakeUsage) }
 }
 
 fn service() -> CategoryService {
@@ -204,4 +213,19 @@ fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
+}
+
+/// Ц2: у PINPAN есть операции — тип «расход» не меняется на «доход» (старые суммы ушли бы в дерево
+/// доходов); у неиспользованной категории тип меняется, как раньше.
+#[tokio::test]
+async fn kind_change_with_postings_is_rejected() {
+    let svc = service();
+    let p = Uuid::new_v4();
+    svc.create(p, create_dto("PINPAN")).await.unwrap();
+    svc.create(p, create_dto("GIFTS")).await.unwrap();
+    let income = |name: &str| UpdateCategoryDto { category_kind: "INCOME".into(), ..update_dto(name) };
+    let err = svc.update(p, "PINPAN", income("Pinpan")).await.unwrap_err();
+    assert!(matches!(err, AppError::Validation(m) if m.starts_with("category_kind")), "тип категории с операциями сменился");
+    assert_eq!(svc.update(p, "PINPAN", update_dto("Pinpan")).await.unwrap().name, "Pinpan", "без смены типа правка проходит");
+    assert_eq!(svc.update(p, "GIFTS", income("Подарки")).await.unwrap().category_kind, "INCOME");
 }

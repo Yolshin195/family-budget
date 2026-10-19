@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::adapters::postgres::fact;
 use crate::domain::{RefKind, Transaction, TxKind, check_balanced, system};
-use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository};
+use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
 #[derive(Default)]
 pub struct InMemoryTransactionRepository {
@@ -27,6 +27,20 @@ fn matches(r: &Transaction, project_id: Uuid, f: &Filter) -> bool {
         && f.untranslated.is_none_or(|l| r.description.localized().is_some_and(|d| d.missing(l)))
 }
 
+/// То же, что уникальные индексы шапки в БД: оплата вхождения плана и начальный остаток счёта — по одному.
+fn check_unique(rows: &[Transaction], item: &Transaction) -> AppResult<()> {
+    let others = rows.iter().filter(|r| r.project_id == item.project_id && r.id != item.id);
+    for r in others {
+        if item.plan.is_some() && r.plan == item.plan {
+            return Err(AppError::Conflict(taken::PLAN.into()));
+        }
+        if item.opening_account().is_some() && r.opening_account() == item.opening_account() {
+            return Err(AppError::Conflict(taken::OPENING.into()));
+        }
+    }
+    Ok(())
+}
+
 /// То же, что отложенный триггер БД: несбалансированная транзакция не сохраняется.
 fn balanced(item: &Transaction) -> AppResult<()> {
     check_balanced(&item.postings).map_err(|m| AppError::Internal(anyhow::anyhow!(m)))
@@ -37,9 +51,7 @@ impl TransactionRepository for InMemoryTransactionRepository {
     async fn insert(&self, item: &Transaction) -> AppResult<()> {
         balanced(item)?;
         let mut rows = self.rows.lock().unwrap();
-        if item.plan.is_some() && rows.iter().any(|r| r.project_id == item.project_id && r.plan == item.plan) {
-            return Err(AppError::Conflict("plan".into()));
-        }
+        check_unique(&rows, item)?;
         rows.push(item.clone());
         Ok(())
     }
@@ -47,9 +59,7 @@ impl TransactionRepository for InMemoryTransactionRepository {
     async fn update(&self, item: &Transaction) -> AppResult<()> {
         balanced(item)?;
         let mut rows = self.rows.lock().unwrap();
-        if item.plan.is_some() && rows.iter().any(|r| r.project_id == item.project_id && r.plan == item.plan && r.id != item.id) {
-            return Err(AppError::Conflict("plan".into()));
-        }
+        check_unique(&rows, item)?;
         let row = rows.iter_mut().find(|r| r.project_id == item.project_id && r.id == item.id);
         *row.ok_or_else(|| AppError::NotFound(item.id.to_string()))? = item.clone();
         Ok(())
@@ -101,7 +111,7 @@ impl TransactionRepository for InMemoryTransactionRepository {
                 r.postings
                     .iter()
                     .filter(|p| p.ref_kind == RefKind::System && p.ref_code == system::EXCHANGE)
-                    .map(move |p| ExchangeLine { occurred_on: r.occurred_on, currency: p.currency.clone(), amount: p.amount, created_by: r.created_by })
+                    .map(move |p| ExchangeLine { transaction_id: r.id, occurred_on: r.occurred_on, currency: p.currency.clone(), amount: p.amount, created_by: r.created_by })
             })
             .collect())
     }
@@ -143,6 +153,16 @@ impl TransactionRepository for InMemoryTransactionRepository {
 
     async fn has_postings(&self, project_id: Uuid, account_code: &str) -> AppResult<bool> {
         Ok(self.rows.lock().unwrap().iter().any(|r| r.project_id == project_id && r.accounts().any(|a| a == account_code)))
+    }
+
+    async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
+        let rows = self.rows.lock().unwrap();
+        Ok(rows.iter().filter(|r| r.project_id == project_id).flat_map(|r| &r.postings).any(|p| p.ref_kind == RefKind::Category && p.ref_code == code))
+    }
+
+    async fn uses_currency(&self, project_id: Uuid, currency: &str) -> AppResult<bool> {
+        let rows = self.rows.lock().unwrap();
+        Ok(rows.iter().filter(|r| r.project_id == project_id).flat_map(|r| &r.postings).any(|p| p.currency == currency))
     }
 
     async fn find_opening(&self, project_id: Uuid, account_code: &str) -> AppResult<Option<Transaction>> {

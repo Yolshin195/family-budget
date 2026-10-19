@@ -52,13 +52,33 @@ impl PlanningService {
         Ok(plans.into_iter().map(Into::into).collect())
     }
 
-    /// Изменение влияет на будущие нерешённые вхождения: оплаты живут в транзакциях, пропуски — по дате.
+    /// Правка плана. Сумма, счёт, категория, название меняются на месте — это касается только нерешённых
+    /// вхождений: оплаты живут в транзакциях, пропуски — по дате. Смена правила дат, когда у плана уже есть
+    /// прошедшие вхождения (этап 0, Ц4), не переписывает историю: план закрывается, а серию продолжает
+    /// новый план. Возвращает план, который действует дальше (у продолжения — новый id).
     pub async fn update(&self, project_id: Uuid, id: Uuid, input: PlanInput) -> AppResult<PlanDto> {
-        let mut plan = self.load(project_id, id).await?;
+        self.update_on(project_id, id, input, chrono::Local::now().date_naive()).await
+    }
+
+    /// [`Self::update`] с явным «сегодня».
+    pub async fn update_on(&self, project_id: Uuid, id: Uuid, input: PlanInput, today: NaiveDate) -> AppResult<PlanDto> {
+        let before = self.load(project_id, id).await?;
+        let mut plan = before.clone();
         plan.change(input.into_domain().map_err(AppError::Validation)?).map_err(AppError::Validation)?;
         self.check_refs(project_id, &plan).await?;
-        self.repo.update(&plan).await?;
-        Ok(plan.into())
+        if plan.same_dates(&before) || !before.has_dates_before(today) {
+            self.repo.update(&plan).await?;
+            return Ok(plan.into());
+        }
+        // Оплаченное или пропущенное заранее (с сегодняшнего дня) тоже остаётся у прежнего плана.
+        let (_, far) = all_dates();
+        let paid = self.deps.payments.paid(project_id, today, far).await?.into_iter().filter(|p| p.plan_id == id).map(|p| p.plan_date);
+        let skipped = self.repo.skips(project_id, today, far).await?.into_iter().filter(|(p, _)| *p == id).map(|(_, d)| d);
+        let yesterday = today.pred_opt().unwrap_or(today);
+        let last = paid.chain(skipped).max().map_or(yesterday, |d| d.max(yesterday));
+        let (old, next) = before.split(plan, last).map_err(AppError::Validation)?;
+        self.repo.continue_series(&old, &next).await?;
+        Ok(next.into())
     }
 
     /// Удаление плана; оплаченные им транзакции остаются (ссылка plan_id просто перестаёт резолвиться).
@@ -151,6 +171,22 @@ impl PlanningService {
             .into_iter()
             .find(|o| o.plan.id == plan_id)
             .ok_or_else(|| AppError::NotFound(format!("вхождение {plan_id} / {date} не найдено")))
+    }
+
+    /// Публичный контракт для операций: тип плана и пропущено ли его вхождение `date`.
+    /// `None` — плана нет в проекте или дата не из его правила (в т. ч. после `end_on`).
+    pub async fn occurrence_kind(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<(String, bool)>> {
+        let Some(plan) = self.repo.find(project_id, plan_id).await? else { return Ok(None) };
+        if !plan.occurs_on(date) {
+            return Ok(None);
+        }
+        let skipped = self.repo.skips(project_id, date, date).await?.iter().any(|(p, _)| *p == plan_id);
+        Ok(Some((plan.tx_kind, skipped)))
+    }
+
+    /// Публичный контракт для категорий: есть ли планы на категорию (тогда её тип не меняется).
+    pub async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
+        Ok(self.repo.list(project_id).await?.iter().any(|p| p.category_code.as_deref() == Some(code)))
     }
 
     /// Пропустить вхождение (без транзакции).

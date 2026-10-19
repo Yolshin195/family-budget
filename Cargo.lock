@@ -1605,6 +1605,7 @@ dependencies = [
  "sha2 0.10.9",
  "sqlx",
  "tokio",
+ "tower",
  "utoipa",
  "uuid",
 ]
@@ -2111,6 +2112,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
+ "tower",
  "utoipa",
  "uuid",
 ]

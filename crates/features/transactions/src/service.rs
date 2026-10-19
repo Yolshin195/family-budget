@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::domain::{Body, Description, Line, RefKind, Transaction, TransactionData, TxKind};
 use crate::dto::{ListQuery, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, TransactionDto, TransactionInput, TranslationInput};
-use crate::ports::{CategoryInfo, Deps, ExchangeLine, FactLine, Filter, Payment, TransactionRepository};
+use crate::ports::{CategoryInfo, Deps, ExchangeLine, FactLine, Filter, Payment, TransactionRepository, taken};
 
 /// Частых категорий в форме быстрого расхода.
 pub const FREQUENT: usize = 6;
@@ -51,8 +51,9 @@ impl TransactionService {
         let accounts = self.deps.accounts.currencies(project_id).await?;
         let item = Transaction::create(project_id, created_by, data, &accounts).map_err(AppError::Validation)?;
         self.check_refs(project_id, &item, None).await?;
+        self.check_plan(&item, None).await?;
         self.check_opening(&item).await?;
-        self.repo.insert(&item).await.map_err(plan_conflict)?;
+        self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
         Ok(item.into())
     }
 
@@ -85,8 +86,9 @@ impl TransactionService {
         let accounts = self.deps.accounts.currencies(project_id).await?;
         item.change(data, &accounts).map_err(AppError::Validation)?;
         self.check_refs(project_id, &item, Some(&before)).await?;
+        self.check_plan(&item, Some(&before)).await?;
         self.check_opening(&item).await?;
-        self.repo.update(&item).await.map_err(plan_conflict)?;
+        self.repo.update(&item).await.map_err(|e| conflict(e, &item))?;
         Ok(item.into())
     }
 
@@ -116,7 +118,7 @@ impl TransactionService {
     /// «Отменить»: вернуть операцию с тем же id и проводками.
     pub async fn undo_delete(&self, project_id: Uuid, token: Uuid) -> AppResult<TransactionDto> {
         let item = self.undo.take(project_id, token).ok_or_else(|| AppError::NotFound("отменить уже нельзя".into()))?;
-        self.repo.insert(&item).await.map_err(plan_conflict)?;
+        self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
         Ok(item.into())
     }
 
@@ -150,7 +152,7 @@ impl TransactionService {
             return Ok(());
         }
         let accounts = self.deps.accounts.currencies(project_id).await?;
-        let body = Body::Opening { account: code, amount };
+        let body = Body::Opening { account: code.clone(), amount };
         match existing {
             Some(mut t) => {
                 let data = TransactionData { occurred_on: date, description: t.description.clone(), plan: None, body };
@@ -158,9 +160,18 @@ impl TransactionService {
                 self.repo.update(&t).await
             }
             None => {
-                let data = TransactionData { occurred_on: date, description: Description::default(), plan: None, body };
+                let data = TransactionData { occurred_on: date, description: Description::default(), plan: None, body: body.clone() };
                 let t = Transaction::create(project_id, user_id, data, &accounts).map_err(opening_error)?;
-                self.repo.insert(&t).await
+                match self.repo.insert(&t).await {
+                    // Повторное нажатие «Сохранить»: остаток успел записать параллельный запрос — обновляем его.
+                    Err(AppError::Conflict(m)) if m == taken::OPENING => {
+                        let mut t = self.repo.find_opening(project_id, &code).await?.ok_or_else(|| AppError::Conflict(m))?;
+                        let data = TransactionData { occurred_on: date, description: t.description.clone(), plan: None, body };
+                        t.change(data, &accounts).map_err(opening_error)?;
+                        self.repo.update(&t).await
+                    }
+                    other => other,
+                }
             }
         }
     }
@@ -177,6 +188,16 @@ impl TransactionService {
     /// Есть ли по счёту проводки (тогда его валюту менять нельзя).
     pub async fn has_postings(&self, project_id: Uuid, account_code: &str) -> AppResult<bool> {
         self.repo.has_postings(project_id, account_code).await
+    }
+
+    /// Есть ли проводки на категорию (для категорий: тогда тип не меняется).
+    pub async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
+        self.repo.uses_category(project_id, code).await
+    }
+
+    /// Есть ли проводки в валюте (для валют: тогда точность не уменьшается).
+    pub async fn uses_currency(&self, project_id: Uuid, currency: &str) -> AppResult<bool> {
+        self.repo.uses_currency(project_id, currency).await
     }
 
     /// «Сверить остаток»: разница между остатком из банка и остатком по проводкам вносится расходом
@@ -221,12 +242,8 @@ impl TransactionService {
         let cats = self.deps.categories.infos(project_id, lang).await?;
         let limits = self.deps.budget.limits(project_id, base_currency, date, lang).await?;
         let rates = self.deps.budget.rates(project_id, base_currency, date).await?;
-        let rate = |cur: &str| {
-            if cur == base_currency {
-                return Decimal::ONE;
-            }
-            rates.iter().find(|r| r.0 == cur).map(|r| r.1).unwrap_or(Decimal::ONE)
-        };
+        // Без курса — пусто, а не 1 (этап 0, Ц3): форма и MCP предупредят «нет курса».
+        let rate = |cur: &str| if cur == base_currency { Some(Decimal::ONE) } else { rates.iter().find(|r| r.0 == cur).map(|r| r.1) };
         let active = |code: &str| accounts.iter().any(|a| a.code == code);
         let default_account = expense
             .last_account
@@ -314,6 +331,26 @@ impl TransactionService {
         self.repo.find(project_id, id).await?.ok_or_else(|| not_found(id))
     }
 
+    /// Оплата вхождения плана (этап 0, Ц7): план есть в проекте, дата — из его правила, тип операции —
+    /// как у плана, вхождение не пропущено. Вторую оплату того же вхождения не даёт уникальный индекс.
+    /// Если операция и раньше оплачивала это вхождение, проверка не повторяется.
+    async fn check_plan(&self, item: &Transaction, before: Option<&Transaction>) -> AppResult<()> {
+        let Some((plan_id, date)) = item.plan else { return Ok(()) };
+        if before.is_some_and(|b| b.plan == item.plan) {
+            return Ok(());
+        }
+        let Some(occ) = self.deps.plans.occurrence(item.project_id, plan_id, date).await? else {
+            return Err(AppError::Validation(format!("plan_date: у плана {plan_id} нет платежа на {date}")));
+        };
+        if occ.kind != item.tx_kind.as_str() {
+            return Err(AppError::Validation(format!("plan_id: плановая операция — {}, а эта — {}", occ.kind, item.tx_kind.as_str())));
+        }
+        if occ.skipped {
+            return Err(AppError::Validation(format!("plan_date: платёж {date} пропущен — сначала верните его в календаре")));
+        }
+        Ok(())
+    }
+
     /// У счёта один начальный остаток: он ведётся из формы счёта.
     async fn check_opening(&self, item: &Transaction) -> AppResult<()> {
         if item.tx_kind != TxKind::Opening {
@@ -372,9 +409,13 @@ fn opening_error(m: String) -> AppError {
     AppError::Validation(m.replacen("amount:", "opening_balance:", 1))
 }
 
-/// Уникальный индекс по (plan_id, plan_date): это вхождение уже оплачено.
-fn plan_conflict(e: AppError) -> AppError {
+/// Занятый уникальный ключ: вхождение плана уже оплачено или у счёта уже есть начальный остаток.
+fn conflict(e: AppError, item: &Transaction) -> AppError {
     match e {
+        AppError::Conflict(m) if m == taken::OPENING => AppError::Conflict(format!(
+            "у счёта {} уже есть начальный остаток — измените его в форме счёта",
+            item.opening_account().unwrap_or_default()
+        )),
         AppError::Conflict(_) => AppError::Conflict("это вхождение плана уже оплачено другой транзакцией".into()),
         other => other,
     }

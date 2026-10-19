@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use kernel::auth::Theme;
+use kernel::auth::{Role, Theme};
 use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use uuid::Uuid;
@@ -41,6 +41,8 @@ pub trait ProjectRepository: Send + Sync {
     /// Участники проекта с пользователями.
     async fn members(&self, project_id: Uuid) -> AppResult<Vec<(Member, User)>>;
     async fn upsert_member(&self, member: &Member) -> AppResult<()>;
+    /// Сменить роль участника; `false` — такого участника в проекте нет (никого не добавляет).
+    async fn update_role(&self, project_id: Uuid, user_id: Uuid, role: Role) -> AppResult<bool>;
     async fn remove_member(&self, project_id: Uuid, user_id: Uuid) -> AppResult<()>;
     async fn insert_invite(&self, invite: &Invite) -> AppResult<()>;
     async fn invite(&self, id: Uuid) -> AppResult<Option<Invite>>;

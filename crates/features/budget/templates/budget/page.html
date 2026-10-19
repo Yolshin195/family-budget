@@ -106,6 +106,7 @@
             <th scope="row" class="indent-{{ r.depth }}"><div class="tree-cell">
               {% if r.has_children %}<button type="button" class="tree-toggle" data-toggle aria-expanded="{% if r.depth >= 1 %}false{% else %}true{% endif %}" aria-label="{{ r.title }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></button>{% else %}<span class="tree-spacer" aria-hidden="true"></span>{% endif %}
               <span class="{% if r.depth == 0 %}font-medium{% else %}font-normal{% endif %}">{{ r.title }}</span>
+              {% if !r.no_rate.is_empty() %}<span class="badge badge-warn" title="{{ page.t("no_rate_hint") }}">{{ page.t("no_rate") }}: {{ r.no_rate }}</span>{% endif %}
               {% if r.children_over %}<span class="badge badge-warn" title="{{ page.t("children_over") }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("triangle-alert") }}"></use></svg><span class="sr-only">{{ page.t("children_over") }}</span></span>{% endif %}
               {% if page.can_write() %}<a class="row-add" href="/transactions/new?category={{ r.code }}&amp;back={{ page.back() }}" data-quick="EXPENSE" data-category="{{ r.code }}" aria-label="{{ page.t("add_here") }}: {{ r.title }}" title="{{ page.t("add_here") }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg></a>{% endif %}
             </div></th>
@@ -138,7 +139,7 @@
         <tbody>
         {% for r in incomes %}{% if !r.is_zero || r.depth == 0 %}
           <tr{% if r.is_zero %} class="row-muted"{% endif %}>
-            <th scope="row" class="indent-{{ r.depth }} {% if r.depth == 0 %}font-medium{% else %}font-normal{% endif %}">{{ r.title }}</th>
+            <th scope="row" class="indent-{{ r.depth }} {% if r.depth == 0 %}font-medium{% else %}font-normal{% endif %}">{{ r.title }}{% if !r.no_rate.is_empty() %} <span class="badge badge-warn" title="{{ page.t("no_rate_hint") }}">{{ page.t("no_rate") }}: {{ r.no_rate }}</span>{% endif %}</th>
             <td class="num text-info">{{ r.planned }}</td><td class="num">{{ r.fact }}</td><td class="num font-medium text-income">{{ r.forecast }}</td>
           </tr>
         {% endif %}{% endfor %}
@@ -158,8 +159,8 @@
         <li><a href="{{ u.href }}" class="upcoming-item">
           <span class="tabular-nums text-xs w-11 shrink-0{% if u.overdue %} text-danger font-medium{% else %} text-subtle{% endif %}">{{ u.date }}</span>
           <span class="grow truncate">{{ u.title }}</span>
-          {% if u.is_transfer %}<span class="amount text-muted" title="{{ page.t("transfer") }}"><svg class="icon icon-sm inline" aria-hidden="true"><use href="{{ page.icon("arrow-right-left") }}"></use></svg> {{ u.amount }}<span class="cur">{{ page.cur(base) }}</span></span>
-          {% else %}<span class="amount{% if !u.is_expense %} text-income{% endif %}">{% if u.is_expense %}−{% else %}+{% endif %}{{ u.amount }}<span class="cur">{{ page.cur(base) }}</span></span>{% endif %}</a></li>
+          {% if u.is_transfer %}<span class="amount text-muted" title="{{ page.t("transfer") }}"><svg class="icon icon-sm inline" aria-hidden="true"><use href="{{ page.icon("arrow-right-left") }}"></use></svg> {{ u.amount }}<span class="cur">{{ u.cur }}</span></span>
+          {% else %}<span class="amount{% if !u.is_expense %} text-income{% endif %}">{% if u.is_expense %}−{% else %}+{% endif %}{{ u.amount }}<span class="cur">{{ u.cur }}</span></span>{% endif %}</a></li>
       {% endfor %}
     </ul>
     {% endif %}

@@ -76,21 +76,6 @@
         </div>
       </details>
       {% endfor %}
-
-      <details class="disclosure mt-3">
-        <summary><svg class="icon" aria-hidden="true"><use href="{{ page.icon("user-plus") }}"></use></svg>{{ page.t("add_by_email") }}</summary>
-        <form method="post" action="/projects/{{ p.id }}/members" class="mt-3">
-          <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
-          <div class="flex flex-wrap gap-2 items-end">
-            <div class="field grow min-w-48 !mb-0"><label class="label" for="inv-{{ p.id }}">{{ page.t("email") }}</label>
-              <input class="input" id="inv-{{ p.id }}" type="email" name="email" required autocomplete="off" aria-describedby="inv-hint-{{ p.id }}"></div>
-            <div class="field !mb-0"><label class="label" for="inv-role-{{ p.id }}">{{ page.t("role") }}</label>
-              <select class="input" id="inv-role-{{ p.id }}" name="role">{% for r in roles %}{% if *r != "OWNER" %}<option value="{{ r }}">{{ page.t(r) }}</option>{% endif %}{% endfor %}</select></div>
-            <button class="btn-secondary">{{ page.t("add_member") }}</button>
-          </div>
-          <p class="hint mt-1" id="inv-hint-{{ p.id }}">{{ page.t("add_member_hint") }}</p>
-        </form>
-      </details>
     </section>
     {% else if p.role.as_str() == "OWNER" %}
     <section class="mt-5" aria-labelledby="fam-{{ p.id }}">

@@ -74,6 +74,17 @@ pub struct CurrencyChanges {
     pub minor_units: i32,
 }
 
+/// Знаков после запятой — не больше 4: суммы хранятся в NUMERIC(18,4).
+pub const MAX_MINOR_UNITS: i32 = 4;
+
+fn minor_units(v: i32) -> Result<i32, String> {
+    if (0..=MAX_MINOR_UNITS).contains(&v) {
+        Ok(v)
+    } else {
+        Err(format!("minor_units: целое от 0 до {MAX_MINOR_UNITS}"))
+    }
+}
+
 impl Currency {
     pub fn create(project_id: Uuid, new: NewCurrency) -> Result<Self, String> {
         Ok(Self {
@@ -87,7 +98,7 @@ impl Currency {
             name_en: kernel::i18n::clean(new.name_en.clone()),
             name_th: kernel::i18n::clean(new.name_th.clone()),
             symbol: require_text("symbol", &new.symbol)?,
-            minor_units: new.minor_units,
+            minor_units: minor_units(new.minor_units)?,
         })
     }
 
@@ -99,7 +110,7 @@ impl Currency {
         self.name_en = kernel::i18n::clean(changes.name_en.clone());
         self.name_th = kernel::i18n::clean(changes.name_th.clone());
         self.symbol = require_text("symbol", &changes.symbol)?;
-        self.minor_units = changes.minor_units;
+        self.minor_units = minor_units(changes.minor_units)?;
         Ok(())
     }
 }

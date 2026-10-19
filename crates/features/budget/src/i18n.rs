@@ -20,7 +20,17 @@ pub fn dict(key: &str) -> Option<Tr> {
         "expected" => ("Ожидается", "Expected", "คาดไว้"),
         "upcoming" => ("Ещё предстоит по планам", "Still planned", "ยังรอตามแผน"),
         "nothing_planned" => ("Все плановые операции периода решены", "All planned items of the period are settled", "รายการตามแผนของงวดนี้ครบแล้ว"),
-        "missing_rates" => ("Нет курса к базовой валюте — суммы посчитаны 1:1:", "No rate to base currency — counted 1:1:", "ไม่มีอัตราแลกเปลี่ยน — คิด 1:1:"),
+        "missing_rates" => (
+            "Нет курса к базовой валюте — эти суммы не вошли в итоги:",
+            "No rate to the base currency — these amounts are left out of the totals:",
+            "ไม่มีอัตราแลกเปลี่ยนเป็นสกุลหลัก — ยอดเหล่านี้ไม่รวมในยอดรวม:",
+        ),
+        "no_rate" => ("нет курса", "no rate", "ไม่มีอัตรา"),
+        "no_rate_hint" => (
+            "Сумма в валюте без курса: не вошла в факт и итоги — добавьте курс",
+            "Amount in a currency without a rate: left out of actuals and totals — add a rate",
+            "ยอดในสกุลที่ไม่มีอัตราแลกเปลี่ยน ไม่รวมในยอดจริงและยอดรวม — เพิ่มอัตรา",
+        ),
         "children_over" => ("Сумма лимитов подкатегорий больше лимита категории", "Subcategory limits exceed this category's limit", "วงเงินหมวดย่อยรวมเกินวงเงินหมวดนี้"),
         "inherited" => ("ограничено лимитом родителя", "limited by parent's limit", "จำกัดโดยวงเงินหมวดหลัก"),
         "all_members" => ("Все участники", "All members", "สมาชิกทั้งหมด"),

@@ -12,7 +12,7 @@ use crate::domain::{Name, Plan, Recurrence};
 use crate::ports::PlanRepository;
 
 const COLUMNS: &str = "id, project_id, name, name_lang, name_ru, name_en, name_th, tx_kind, account_code, category_code, \
-                       amount, recurrence, interval_n, start_on, end_on, active, created_by, to_account_code";
+                       amount, recurrence, interval_n, start_on, end_on, active, created_by, to_account_code, series_id, effective_from";
 
 pub struct PostgresPlanRepository {
     pool: PgPool,
@@ -44,6 +44,8 @@ struct Row {
     end_on: Option<NaiveDate>,
     active: bool,
     created_by: Uuid,
+    series_id: Uuid,
+    effective_from: Option<NaiveDate>,
 }
 
 impl TryFrom<Row> for Plan {
@@ -72,45 +74,16 @@ impl TryFrom<Row> for Plan {
             end_on: r.end_on,
             active: r.active,
             created_by: r.created_by,
+            series_id: r.series_id,
+            effective_from: r.effective_from,
         })
     }
 }
 
-#[async_trait]
-impl PlanRepository for PostgresPlanRepository {
-    async fn insert(&self, p: &Plan) -> AppResult<()> {
-        sqlx::query(&format!("INSERT INTO fb_plans ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)"))
-            .bind(p.id)
-            .bind(p.project_id)
-            .bind(&p.name.text)
-            .bind(p.name.lang.upper())
-            .bind(&p.name.ru)
-            .bind(&p.name.en)
-            .bind(&p.name.th)
-            .bind(&p.tx_kind)
-            .bind(&p.account_code)
-            .bind(&p.category_code)
-            .bind(p.amount)
-            .bind(p.recurrence.as_str())
-            .bind(p.interval as i32)
-            .bind(p.start_on)
-            .bind(p.end_on)
-            .bind(p.active)
-            .bind(p.created_by)
-            .bind(&p.to_account_code)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn update(&self, p: &Plan) -> AppResult<()> {
-        let res = sqlx::query(
-            "UPDATE fb_plans SET name=$3, name_lang=$4, name_ru=$5, name_en=$6, name_th=$7, tx_kind=$8, account_code=$9, \
-             category_code=$10, amount=$11, recurrence=$12, interval_n=$13, start_on=$14, end_on=$15, active=$16, \
-             to_account_code=$17 WHERE project_id=$1 AND id=$2",
-        )
-        .bind(p.project_id)
+async fn insert<'e>(db: impl sqlx::PgExecutor<'e>, p: &Plan) -> AppResult<()> {
+    sqlx::query(&format!("INSERT INTO fb_plans ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)"))
         .bind(p.id)
+        .bind(p.project_id)
         .bind(&p.name.text)
         .bind(p.name.lang.upper())
         .bind(&p.name.ru)
@@ -125,12 +98,62 @@ impl PlanRepository for PostgresPlanRepository {
         .bind(p.start_on)
         .bind(p.end_on)
         .bind(p.active)
+        .bind(p.created_by)
         .bind(&p.to_account_code)
-        .execute(&self.pool)
+        .bind(p.series_id)
+        .bind(p.effective_from)
+        .execute(db)
         .await?;
-        if res.rows_affected() == 0 {
-            return Err(AppError::NotFound(p.id.to_string()));
-        }
+    Ok(())
+}
+
+async fn update<'e>(db: impl sqlx::PgExecutor<'e>, p: &Plan) -> AppResult<()> {
+    let res = sqlx::query(
+        "UPDATE fb_plans SET name=$3, name_lang=$4, name_ru=$5, name_en=$6, name_th=$7, tx_kind=$8, account_code=$9, \
+         category_code=$10, amount=$11, recurrence=$12, interval_n=$13, start_on=$14, end_on=$15, active=$16, \
+         to_account_code=$17, effective_from=$18 WHERE project_id=$1 AND id=$2",
+    )
+    .bind(p.project_id)
+    .bind(p.id)
+    .bind(&p.name.text)
+    .bind(p.name.lang.upper())
+    .bind(&p.name.ru)
+    .bind(&p.name.en)
+    .bind(&p.name.th)
+    .bind(&p.tx_kind)
+    .bind(&p.account_code)
+    .bind(&p.category_code)
+    .bind(p.amount)
+    .bind(p.recurrence.as_str())
+    .bind(p.interval as i32)
+    .bind(p.start_on)
+    .bind(p.end_on)
+    .bind(p.active)
+    .bind(&p.to_account_code)
+    .bind(p.effective_from)
+    .execute(db)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(AppError::NotFound(p.id.to_string()));
+    }
+    Ok(())
+}
+
+#[async_trait]
+impl PlanRepository for PostgresPlanRepository {
+    async fn insert(&self, p: &Plan) -> AppResult<()> {
+        insert(&self.pool, p).await
+    }
+
+    async fn update(&self, p: &Plan) -> AppResult<()> {
+        update(&self.pool, p).await
+    }
+
+    async fn continue_series(&self, old: &Plan, next: &Plan) -> AppResult<()> {
+        let mut tx = self.pool.begin().await?;
+        update(&mut *tx, old).await?;
+        insert(&mut *tx, next).await?;
+        tx.commit().await?;
         Ok(())
     }
 

@@ -11,9 +11,24 @@ use crate::dto::{CreateCurrencyDto, ListQuery, UpdateCurrencyDto};
 use crate::service::CurrencyService;
 
 
-fn deps() -> super::ports::Deps {
-    super::ports::Deps {
+/// Базовая валюта — THB; в RUB есть проводки и счёт `CARD_TBANK`.
+struct FakeUsage;
+
+#[async_trait::async_trait]
+impl crate::ports::CurrencyUsage for FakeUsage {
+    async fn has_postings(&self, _p: Uuid, currency: &str) -> kernel::error::AppResult<bool> {
+        Ok(currency == "RUB")
     }
+    async fn active_accounts(&self, _p: Uuid, currency: &str) -> kernel::error::AppResult<Vec<String>> {
+        Ok(if currency == "RUB" { vec!["CARD_TBANK".into()] } else { Vec::new() })
+    }
+    async fn base_currency(&self, _p: Uuid) -> kernel::error::AppResult<Option<String>> {
+        Ok(Some("THB".into()))
+    }
+}
+
+fn deps() -> super::ports::Deps {
+    super::ports::Deps { usage: Arc::new(FakeUsage) }
 }
 
 fn service() -> CurrencyService {
@@ -143,15 +158,15 @@ async fn foreign_project_gets_not_found() {
 async fn archive_can_be_undone_and_project_purged() {
     let svc = service();
     let (mine, other) = (Uuid::new_v4(), Uuid::new_v4());
-    svc.create(mine, create_dto("THB")).await.unwrap();
-    svc.create(other, create_dto("THB")).await.unwrap();
-    svc.archive(mine, "THB").await.unwrap();
-    assert!(!svc.exists(mine, "THB").await.unwrap());
-    svc.restore(mine, "THB").await.unwrap();
-    assert!(svc.exists(mine, "THB").await.unwrap(), "«Отменить» возвращает запись");
+    svc.create(mine, create_dto("USD")).await.unwrap();
+    svc.create(other, create_dto("USD")).await.unwrap();
+    svc.archive(mine, "USD").await.unwrap();
+    assert!(!svc.exists(mine, "USD").await.unwrap());
+    svc.restore(mine, "USD").await.unwrap();
+    assert!(svc.exists(mine, "USD").await.unwrap(), "«Отменить» возвращает запись");
     assert_eq!(svc.purge_project(mine).await.unwrap(), 1);
-    assert!(!svc.exists(mine, "THB").await.unwrap());
-    assert!(svc.exists(other, "THB").await.unwrap(), "чужой проект не задет");
+    assert!(!svc.exists(mine, "USD").await.unwrap());
+    assert!(svc.exists(other, "USD").await.unwrap(), "чужой проект не задет");
 }
 
 #[test]
@@ -159,4 +174,37 @@ fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
+}
+
+/// Ц8: знаков после запятой — от 0 до 4 (колонки NUMERIC(18,4)); меньше знаков нельзя, если в валюте
+/// уже есть суммы; больше — можно.
+#[tokio::test]
+async fn minor_units_are_bounded() {
+    let svc = service();
+    let p = Uuid::new_v4();
+    let is = |e: AppError| matches!(e, AppError::Validation(m) if m.starts_with("minor_units"));
+    assert!(is(svc.create(p, CreateCurrencyDto { minor_units: 7, ..create_dto("XXX") }).await.unwrap_err()), "7 знаков");
+    assert!(is(svc.create(p, CreateCurrencyDto { minor_units: -1, ..create_dto("YYY") }).await.unwrap_err()), "−1 знак");
+    svc.create(p, CreateCurrencyDto { minor_units: 2, ..create_dto("RUB") }).await.unwrap();
+    svc.create(p, CreateCurrencyDto { minor_units: 2, ..create_dto("USD") }).await.unwrap();
+    let minor = |n: i32| UpdateCurrencyDto { minor_units: n, ..update_dto("Рубль") };
+    assert!(is(svc.update(p, "RUB", minor(0)).await.unwrap_err()), "в RUB есть суммы с копейками");
+    assert_eq!(svc.update(p, "RUB", minor(3)).await.unwrap().minor_units, 3, "больше знаков — можно");
+    assert_eq!(svc.update(p, "USD", minor(0)).await.unwrap().minor_units, 0, "сумм в USD нет — можно и меньше");
+}
+
+/// Ц8: базовую валюту и валюту активных счетов не архивировать — ни кнопкой, ни через `archived` в PUT.
+#[tokio::test]
+async fn currency_in_use_is_not_archived() {
+    let svc = service();
+    let p = Uuid::new_v4();
+    for code in ["THB", "RUB", "USD"] {
+        svc.create(p, create_dto(code)).await.unwrap();
+    }
+    let conflict = |e: AppError, what: &str| matches!(e, AppError::Conflict(m) if m.contains(what));
+    assert!(conflict(svc.archive(p, "THB").await.unwrap_err(), "базовая"));
+    assert!(conflict(svc.archive(p, "RUB").await.unwrap_err(), "CARD_TBANK"));
+    assert!(conflict(svc.update(p, "RUB", UpdateCurrencyDto { archived: true, ..update_dto("Рубль") }).await.unwrap_err(), "CARD_TBANK"));
+    svc.archive(p, "USD").await.unwrap();
+    assert!(svc.get(p, "USD").await.unwrap().archived);
 }

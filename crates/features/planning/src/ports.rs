@@ -16,6 +16,8 @@ use crate::domain::Plan;
 pub trait PlanRepository: Send + Sync {
     async fn insert(&self, plan: &Plan) -> AppResult<()>;
     async fn update(&self, plan: &Plan) -> AppResult<()>;
+    /// Закрыть план `old` и записать продолжение серии `next` — вместе (смена правила дат, этап 0, Ц4).
+    async fn continue_series(&self, old: &Plan, next: &Plan) -> AppResult<()>;
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Plan>>;
     async fn list(&self, project_id: Uuid) -> AppResult<Vec<Plan>>;
     /// `true`, если план был удалён (пропуски удаляются вместе с ним).

@@ -1,5 +1,5 @@
-//! Связка фичи `transactions` с поставщиками: счета (+ символы валют), категории, бюджет.
-//! Бюджет сам читает транзакции, поэтому его сервис подключается позже — через `OnceLock`.
+//! Связка фичи `transactions` с поставщиками: счета (+ символы валют), категории, бюджет, планы.
+//! Бюджет и планы сами читают транзакции, поэтому их сервисы подключаются позже — через `OnceLock`.
 
 use std::sync::{Arc, OnceLock};
 
@@ -9,7 +9,7 @@ use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use kernel::web::Choice;
 use rust_decimal::Decimal;
-use transactions::{AccountCurrency, AccountInfo, CategoryInfo, CategoryLimit};
+use transactions::{AccountCurrency, AccountInfo, CategoryInfo, CategoryLimit, PlanOccurrence};
 use uuid::Uuid;
 
 pub struct AccountsLookupAdapter(pub Arc<::accounts::Service>, pub Arc<::currencies::Service>);
@@ -127,6 +127,34 @@ impl ::transactions::BudgetView for BudgetViewAdapter {
         match self.0.get() {
             Some(b) => b.rates(project_id, base, date).await,
             None => Ok(Vec::new()),
+        }
+    }
+}
+
+/// Планы из фичи `planning` (подключается после сборки планирования).
+#[derive(Clone, Default)]
+pub struct PlansLookupAdapter(pub Arc<OnceLock<Arc<dyn PlansSource>>>);
+
+/// То, что адаптеру нужно от планирования (без него планов нет — оплату плана не принять).
+#[async_trait]
+pub trait PlansSource: Send + Sync {
+    async fn occurrence(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<PlanOccurrence>>;
+}
+
+#[cfg(feature = "planning")]
+#[async_trait]
+impl PlansSource for ::planning::Service {
+    async fn occurrence(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<PlanOccurrence>> {
+        Ok(self.occurrence_kind(project_id, plan_id, date).await?.map(|(kind, skipped)| PlanOccurrence { kind, skipped }))
+    }
+}
+
+#[async_trait]
+impl ::transactions::PlansLookup for PlansLookupAdapter {
+    async fn occurrence(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<PlanOccurrence>> {
+        match self.0.get() {
+            Some(p) => p.occurrence(project_id, plan_id, date).await,
+            None => Ok(None),
         }
     }
 }

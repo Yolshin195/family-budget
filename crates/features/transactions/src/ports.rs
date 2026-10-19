@@ -12,6 +12,14 @@ use uuid::Uuid;
 
 use crate::domain::{AccountCurrency, Transaction, TxKind};
 
+/// Чем занят уникальный ключ, если хранилище вернуло `Conflict`.
+pub mod taken {
+    /// Вхождение плана уже оплачено другой транзакцией.
+    pub const PLAN: &str = "plan";
+    /// У счёта уже есть начальный остаток.
+    pub const OPENING: &str = "opening";
+}
+
 /// Фильтр списка: период по `occurred_on` (включительно) + необязательные условия.
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
@@ -43,6 +51,8 @@ pub struct FactLine {
 /// Проводка на системный счёт «Обмен валют» — для курсовой разницы.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExchangeLine {
+    /// Обе стороны обмена — проводки одной транзакции.
+    pub transaction_id: Uuid,
     pub occurred_on: NaiveDate,
     pub currency: String,
     pub amount: Decimal,
@@ -63,9 +73,9 @@ pub struct Payment {
 
 #[async_trait]
 pub trait TransactionRepository: Send + Sync {
-    /// Шапка + проводки в одной SQL-транзакции.
+    /// Шапка + проводки в одной SQL-транзакции. Занятый ключ — `Conflict` с одним из [`taken`].
     async fn insert(&self, item: &Transaction) -> AppResult<()>;
-    /// Шапка + замена набора проводок в одной SQL-транзакции.
+    /// Шапка + замена набора проводок в одной SQL-транзакции. Занятый ключ — как у `insert`.
     async fn update(&self, item: &Transaction) -> AppResult<()>;
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Transaction>>;
     /// Новые сначала.
@@ -85,6 +95,10 @@ pub trait TransactionRepository: Send + Sync {
     async fn has_postings(&self, project_id: Uuid, account_code: &str) -> AppResult<bool>;
     /// Транзакция начального остатка счёта.
     async fn find_opening(&self, project_id: Uuid, account_code: &str) -> AppResult<Option<Transaction>>;
+    /// Есть ли проводки на категорию (тогда её тип не меняется).
+    async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool>;
+    /// Есть ли проводки в валюте (тогда её точность не уменьшается).
+    async fn uses_currency(&self, project_id: Uuid, currency: &str) -> AppResult<bool>;
     /// Для быстрого расхода: последний счёт пользователя в расходах и доходах и его частые категории
     /// (по числу проводок с `since`, чаще — первые) для транзакций типа `kind`.
     async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate) -> AppResult<QuickStats>;
@@ -108,6 +122,23 @@ pub struct Deps {
     pub categories: Arc<dyn CategoriesLookup>,
     /// Остатки лимитов и курсы для предупреждения в форме (из фичи `budget`).
     pub budget: Arc<dyn BudgetView>,
+    /// Планы, вхождения которых оплачивают операции (из фичи `planning`).
+    pub plans: Arc<dyn PlansLookup>,
+}
+
+/// Вхождение плана, которое оплачивает операция.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanOccurrence {
+    /// Тип плана: EXPENSE / INCOME / TRANSFER.
+    pub kind: String,
+    /// Вхождение пропущено — оплатить его можно, только вернув в календаре.
+    pub skipped: bool,
+}
+
+#[async_trait]
+pub trait PlansLookup: Send + Sync {
+    /// Вхождение плана проекта на дату. `None` — такого плана нет или дата не из его правила.
+    async fn occurrence(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<PlanOccurrence>>;
 }
 
 /// Лимит категории в периоде (суммы в базовой валюте проекта).

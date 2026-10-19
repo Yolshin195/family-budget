@@ -44,8 +44,9 @@ fn quick_info() -> QuickInfo {
     QuickInfo {
         default_account: Some("CASH".into()),
         accounts: vec![
-            AccountInfo { code: "CASH".into(), title: "Наличные".into(), currency: "THB".into(), symbol: "฿".into() },
-            AccountInfo { code: "CARD".into(), title: "Карта".into(), currency: "THB".into(), symbol: "฿".into() },
+            AccountInfo { code: "CASH".into(), title: "Наличные".into(), currency: "THB".into(), symbol: "฿".into(), has_rate: true },
+            AccountInfo { code: "CARD".into(), title: "Карта".into(), currency: "THB".into(), symbol: "฿".into(), has_rate: true },
+            AccountInfo { code: "WISE".into(), title: "Wise".into(), currency: "USD".into(), symbol: "$".into(), has_rate: false },
         ],
         categories: vec![
             cat("FOOD", None, "EXPENSE", "Еда", "Еда Food อาหาร"),
@@ -70,7 +71,7 @@ fn tx_of(id: Uuid, user: Uuid, d: &TxDraft) -> Tx {
         refund: d.refund,
         lines: d.lines.clone(),
         total,
-        currency: "THB".into(),
+        currency: if d.account_code == "WISE" { "USD" } else { "THB" }.into(),
         to_amount: d.to_amount,
         to_currency: d.to_account_code.as_ref().map(|_| "THB".into()),
         fee_category_code: d.fee_category_code.clone(),
@@ -347,7 +348,7 @@ impl Accounts for Arc<FakeAccounts> {
     }
 }
 
-/// Личные токены: `fbt_<user>_<project>_<scope,...>`.
+/// Личные токены: `fbt_<user>_<project>_<scope,...>`; с хвостом `_nomfa` — выпущен из сессии без 2FA.
 struct FakeAuthenticator;
 
 #[async_trait]
@@ -355,10 +356,14 @@ impl Authenticator for FakeAuthenticator {
     async fn authenticate(&self, credential: &Credential) -> AppResult<Option<Identity>> {
         let Credential::ApiToken(raw) = credential else { return Ok(None) };
         let parts: Vec<&str> = raw.trim_start_matches("fbt_").split('_').collect();
-        let [user, project, scopes] = parts[..] else { return Ok(None) };
+        let (user, project, scopes, mfa) = match parts[..] {
+            [user, project, scopes] => (user, project, scopes, true),
+            [user, project, scopes, "nomfa"] => (user, project, scopes, false),
+            _ => return Ok(None),
+        };
         Ok(Some(Identity {
             user_id: Uuid::parse_str(user).unwrap(),
-            mfa: true,
+            mfa,
             via: AuthVia::Token { token_id: Uuid::new_v4(), project_id: Uuid::parse_str(project).unwrap(), scopes: scopes.split(',').map(String::from).collect() },
         }))
     }
@@ -459,6 +464,18 @@ fn expense(amount: &str, category: &str) -> AddFlowArgs {
 }
 
 // ---------------------------------------------------------------- вход
+
+/// Б1: токен, выпущенный до «Требовать 2FA» из сессии без второго фактора, больше не открывает проект.
+#[tokio::test]
+async fn token_without_mfa_stops_working_when_project_requires_2fa() {
+    let e = env();
+    let without = format!("fbt_{}_{}_read_nomfa", e.user, e.project);
+    let with = format!("fbt_{}_{}_read", e.user, e.project);
+    assert!(matches!(e.svc.authenticate(Some(&without), RequestMeta::default()).await.unwrap(), Auth::Ok(_)), "2FA не требуется — работает");
+    e.set_role(Role::Owner, true);
+    assert!(matches!(e.svc.authenticate(Some(&without), RequestMeta::default()).await.unwrap(), Auth::Invalid));
+    assert!(matches!(e.svc.authenticate(Some(&with), RequestMeta::default()).await.unwrap(), Auth::Ok(_)), "токен из сессии с 2FA");
+}
 
 #[tokio::test]
 async fn missing_and_foreign_tokens_are_rejected() {
@@ -745,7 +762,7 @@ async fn viewer_cannot_write_directories() {
             assert!(!e.svc.visible(&c, t), "{t} не виден VIEWER");
         }
         assert!(e.svc.add_currency(&c, AddCurrencyArgs { code: "GBP".into(), name: "Фунт".into(), symbol: "£".into(), ..Default::default() }).await.is_err());
-        assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: "100".into(), ..Default::default() }).await.is_err());
+        assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("100".into()), ..Default::default() }).await.is_err());
         assert!(e.svc.list_limits(&c).await.is_ok(), "просмотр остаётся");
     }
     assert_eq!(e.dirs.currencies.lock().unwrap().len(), 3);
@@ -763,7 +780,7 @@ async fn personal_write_token_can_do_everything() {
     e.svc.add_account(&c, AddAccountArgs { opening_balance: Some("500".into()), ..add_account("KBANK", "THB") }).await.unwrap();
     e.svc.add_category(&c, AddCategoryArgs { code: "PETS".into(), name: "Питомцы".into(), kind: Some("expense".into()), ..Default::default() }).await.unwrap();
     e.svc.set_rate(&c, SetRateArgs { currency: "GBP".into(), rate: Some("45".into()), ..Default::default() }).await.unwrap();
-    e.svc.set_limit(&c, SetLimitArgs { category: "PETS".into(), amount: "3000".into(), ..Default::default() }).await.unwrap();
+    e.svc.set_limit(&c, SetLimitArgs { category: "PETS".into(), amount: Some("3000".into()), ..Default::default() }).await.unwrap();
     let plan = AddPlanArgs { name: "Корм".into(), kind: "expense".into(), account: "KBANK".into(), category: Some("PETS".into()), amount: "900".into(), recurrence: "monthly".into(), ..Default::default() };
     e.svc.add_plan(&c, plan).await.unwrap();
     assert_eq!(e.dirs.currencies.lock().unwrap().last().unwrap().code, "GBP", "код — в верхнем регистре");
@@ -841,7 +858,7 @@ async fn references_by_name_in_ru_en_th() {
     // Валюта — по-английски, лимит — по-русски.
     e.svc.set_rate(&c, SetRateArgs { currency: "us dollar".into(), rate: Some("36.5".into()), ..Default::default() }).await.unwrap();
     assert_eq!(e.rates.rates.lock().unwrap()[0].currency, "USD");
-    e.svc.set_limit(&c, SetLimitArgs { category: "кафе".into(), amount: "3000".into(), ..Default::default() }).await.unwrap();
+    e.svc.set_limit(&c, SetLimitArgs { category: "кафе".into(), amount: Some("3000".into()), ..Default::default() }).await.unwrap();
     assert_eq!(e.limits.limits.lock().unwrap()[0].category_code, "CAFE");
     // Доходную категорию в расходный план не подставить.
     let bad = AddPlanArgs { name: "x".into(), kind: "expense".into(), account: "CARD".into(), category: Some("Salary".into()), amount: "1".into(), recurrence: "once".into(), ..Default::default() };
@@ -919,24 +936,46 @@ async fn limit_is_upserted_by_category_period_and_valid_from() {
     let e = env();
     e.grant(&["read", "limits:write"]).await;
     let c = e.caller(&e.oauth()).await;
-    let out = e.svc.set_limit(&c, SetLimitArgs { category: "Food".into(), amount: "12000".into(), ..Default::default() }).await.unwrap();
+    let out = e.svc.set_limit(&c, SetLimitArgs { category: "Food".into(), amount: Some("12000".into()), ..Default::default() }).await.unwrap();
     let month_start = period_start("MONTH", today());
     assert_eq!(e.limits.limits.lock().unwrap()[0].valid_from, month_start, "по умолчанию — с начала текущего месяца");
     assert!(out.summary.contains("12000 THB per month"), "{}", out.summary);
-    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: "15000".into(), period: Some("month".into()), valid_from: Some(month_start.to_string()) }).await.unwrap();
+    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("15000".into()), period: Some("month".into()), valid_from: Some(month_start.to_string()), remove: None }).await.unwrap();
     assert!(out.summary.contains("Replaced 12000"), "{}", out.summary);
     assert_eq!(e.limits.limits.lock().unwrap().len(), 1);
-    assert_eq!(e.limits.limits.lock().unwrap()[0].amount, d("15000"));
+    assert_eq!(e.limits.limits.lock().unwrap()[0].amount, Some(d("15000")));
     // Недельный лимит с явной даты — новое правило; более позднее правило упомянуто в итоге.
-    e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: "3000".into(), period: Some("week".into()), valid_from: Some("2099-01-05".into()) }).await.unwrap();
-    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: "16000".into(), period: None, valid_from: Some(month_start.to_string()) }).await.unwrap();
+    e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("3000".into()), period: Some("week".into()), valid_from: Some("2099-01-05".into()), remove: None }).await.unwrap();
+    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("16000".into()), period: None, valid_from: Some(month_start.to_string()), remove: None }).await.unwrap();
     assert!(out.summary.contains("later rule from 2099-01-05"), "{}", out.summary);
     assert_eq!(e.limits.limits.lock().unwrap().len(), 2);
     let list = e.svc.list_limits(&c).await.unwrap();
     let rows = list.data["limits"].as_array().unwrap().clone();
     assert_eq!(rows.iter().filter(|r| r["current"] == true).count(), 1, "действует одно правило категории");
     assert_eq!(rows.iter().find(|r| r["current"] == true).unwrap()["amount"], "16000");
-    assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: "100".into(), period: Some("day".into()), valid_from: None }).await.is_err());
+    assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("100".into()), period: Some("day".into()), valid_from: None, remove: None }).await.is_err());
+}
+
+/// Ц5: 0 — настоящий нулевой лимит; remove: true — «лимит снят» с даты, без суммы; одно из двух обязательно.
+#[tokio::test]
+async fn zero_limit_and_removed_limit() {
+    let e = env();
+    e.grant(&["read", "limits:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("0".into()), period: Some("week".into()), ..Default::default() }).await.unwrap();
+    assert!(out.summary.contains("no spending allowed"), "{}", out.summary);
+    // 07.01.2099 — среда: снятие в периоде действующего (недельного) правила — с понедельника 05.01.
+    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), remove: Some(true), valid_from: Some("2099-01-07".into()), ..Default::default() }).await.unwrap();
+    assert!(out.summary.contains("removed from 2099-01-05"), "{}", out.summary);
+    let removed = e.limits.limits.lock().unwrap().iter().find(|l| l.amount.is_none()).cloned().unwrap();
+    assert_eq!(removed.period, "WEEK");
+    assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("1".into()), remove: Some(true), ..Default::default() }).await.is_err());
+    assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), ..Default::default() }).await.is_err(), "ни суммы, ни снятия");
+    assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("-1".into()), ..Default::default() }).await.is_err());
+    let list = e.svc.list_limits(&c).await.unwrap();
+    let rows = list.data["limits"].as_array().unwrap().clone();
+    assert!(rows.iter().any(|r| r["removed"] == true && r["amount"].is_null()));
+    assert!(rows.iter().any(|r| r["current"] == true && r["amount"] == "0"), "нулевой лимит действует сегодня");
 }
 
 #[test]
@@ -1110,4 +1149,17 @@ fn amounts_dates_and_lookup() {
     assert_eq!(pick("Car").unwrap(), "CAR", "точный код важнее подстроки");
     assert!(pick("รถ").is_err(), "неоднозначно: Машина (รถ) и Мойка (ล้างรถ)");
     let _ = Utc::now();
+}
+
+/// Ц3: у счёта в USD нет курса — расход записан, но Claude предупреждает: в бюджет сумма не войдёт.
+#[tokio::test]
+async fn expense_without_rate_is_flagged() {
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let out = e.svc.add_expense(&c, AddFlowArgs { account: Some("WISE".into()), ..expense("10", "cafe") }).await.unwrap();
+    assert!(out.summary.contains("no exchange rate USD → THB"), "{}", out.summary);
+    assert_eq!(out.data["no_rate"], "USD");
+    let ok = e.svc.add_expense(&c, expense("10", "cafe")).await.unwrap();
+    assert!(!ok.summary.contains("no exchange rate") && ok.data.get("no_rate").is_none());
 }

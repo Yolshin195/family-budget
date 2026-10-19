@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::adapters::memory::InMemoryTransactionRepository;
 use crate::dto::{LineDto, ListQuery, TransactionInput, TranslationInput};
 use crate::domain::{AccountCurrency, Description};
-use crate::ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, Deps};
+use crate::ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, Deps, PlanOccurrence, PlansLookup};
 use crate::service::TransactionService;
 
 struct FakeAccounts;
@@ -92,11 +92,29 @@ impl BudgetView for FakeBudget {
     }
 }
 
+/// План «Аренда» (расход) платится 5-го числа; платёж 12.10 пропущен. Других планов нет.
+const RENT: Uuid = Uuid::from_u128(5);
+
+struct FakePlans;
+
+#[async_trait::async_trait]
+impl PlansLookup for FakePlans {
+    async fn occurrence(&self, _p: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<PlanOccurrence>> {
+        use chrono::Datelike;
+        Ok(match (plan_id == RENT, date.day()) {
+            (true, 5) => Some(PlanOccurrence { kind: "EXPENSE".into(), skipped: false }),
+            (true, 12) => Some(PlanOccurrence { kind: "EXPENSE".into(), skipped: true }),
+            _ => None,
+        })
+    }
+}
+
+fn deps() -> Deps {
+    Deps { accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), budget: Arc::new(FakeBudget), plans: Arc::new(FakePlans) }
+}
+
 fn service() -> TransactionService {
-    TransactionService::new(
-        Arc::new(InMemoryTransactionRepository::default()),
-        Deps { accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), budget: Arc::new(FakeBudget) },
-    )
+    TransactionService::new(Arc::new(InMemoryTransactionRepository::default()), deps())
 }
 
 fn d(s: &str) -> Decimal {
@@ -183,7 +201,7 @@ async fn unknown_account_is_validation_error() {
 #[tokio::test]
 async fn plan_occurrence_is_paid_once_and_freed_on_delete() {
     let svc = service();
-    let (p, u, plan) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let (p, u, plan) = (Uuid::new_v4(), Uuid::new_v4(), RENT);
     let mut input = receipt(&[("home", "15000")]);
     input.plan_id = Some(plan);
     input.plan_date = Some(day(5));
@@ -241,7 +259,7 @@ async fn quick_defaults_follow_user_habits() {
     assert_eq!(q.frequent_income, vec!["SALARY"]);
     let cafe = q.categories.iter().find(|c| c.code == "CAFE").unwrap();
     assert_eq!((cafe.available, cafe.search.contains("Cafe")), (Some(d("500")), true));
-    assert_eq!(q.accounts.iter().find(|a| a.code == "WISE").unwrap().rate_to_base, d("33.25"));
+    assert_eq!(q.accounts.iter().find(|a| a.code == "WISE").unwrap().rate_to_base, Some(d("33.25")));
     // через 30 дней привычки «остывают»
     let later = svc.quick_defaults(p, me, "THB", Lang::Ru, day(3) + chrono::Days::new(40)).await.unwrap();
     assert_eq!(later.frequent_expense, vec!["FOOD", "HOME"]);
@@ -416,4 +434,87 @@ fn templates_are_translated() {
     ];
     let absent: Vec<&str> = dynamic.into_iter().filter(|k| crate::i18n::dict(k).is_none()).collect();
     assert!(absent.is_empty(), "нет перевода для ключей: {absent:?}");
+}
+
+/// Ц7: оплатить можно только настоящее вхождение плана: план есть, дата из правила, тип совпадает,
+/// платёж не пропущен и ещё не оплачен.
+#[tokio::test]
+async fn unknown_plan_occurrence_is_rejected() {
+    let svc = service();
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    let pay = |plan: Uuid, date: u32, kind: &str| {
+        let mut input = TransactionInput { lines: vec![LineDto { category_code: if kind == "INCOME" { "salary" } else { "home" }.into(), amount: d("1539.87"), note: None }], ..input(kind, "card") };
+        input.plan_id = Some(plan);
+        input.plan_date = Some(day(date));
+        input
+    };
+    let err = |e: AppError, field: &str| matches!(e, AppError::Validation(m) if m.starts_with(field));
+    assert!(err(svc.create(p, u, pay(Uuid::new_v4(), 5, "EXPENSE")).await.unwrap_err(), "plan_date"), "нет такого плана");
+    assert!(err(svc.create(p, u, pay(RENT, 17, "EXPENSE")).await.unwrap_err(), "plan_date"), "17-е — не дата правила (платили 17-го, а план на 5-е)");
+    assert!(err(svc.create(p, u, pay(RENT, 5, "INCOME")).await.unwrap_err(), "plan_id"), "план — расход, операция — доход");
+    assert!(err(svc.create(p, u, pay(RENT, 12, "EXPENSE")).await.unwrap_err(), "plan_date"), "платёж пропущен");
+    let t = svc.create(p, u, pay(RENT, 5, "EXPENSE")).await.unwrap();
+    assert!(matches!(svc.create(p, u, pay(RENT, 5, "EXPENSE")).await.unwrap_err(), AppError::Conflict(_)), "уже оплачено");
+    // Правка оплаты (сумма) с тем же вхождением — без повторной проверки и без конфликта с самой собой.
+    let mut fix = pay(RENT, 5, "EXPENSE");
+    fix.lines[0].amount = d("1600");
+    assert_eq!(svc.update(p, t.id, fix).await.unwrap().total, d("1600"));
+}
+
+/// Ц10: у счёта один начальный остаток — это держит уникальный индекс БД, а не только проверка в сервисе.
+/// Двойной клик «Сохранить» в форме счёта больше не удваивает остаток. Нужен `TEST_DATABASE_URL`, без него
+/// тест пропускается; всё выполняется во временной схеме и удаляется.
+#[tokio::test]
+async fn second_opening_is_rejected_by_db() {
+    use crate::domain::{Body, Transaction, TransactionData};
+    use crate::ports::TransactionRepository;
+    let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+        eprintln!("TEST_DATABASE_URL не задан — тест пропущен");
+        return;
+    };
+    let schema = format!("tx_opening_{}", Uuid::new_v4().simple());
+    let admin = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::raw_sql(&format!("CREATE SCHEMA {schema}")).execute(&admin).await.unwrap();
+    let opts: sqlx::postgres::PgConnectOptions = url.parse().unwrap();
+    let pool = sqlx::PgPool::connect_with(opts.options([("search_path", schema.as_str())])).await.unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let repo = Arc::new(crate::adapters::postgres::PostgresTransactionRepository::new(pool.clone()));
+    let accounts = [AccountCurrency { code: "CARD".into(), currency: "THB".into(), minor_units: 2 }];
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    // Оба запроса прошли проверку «остатка ещё нет» до того, как другой записал свой.
+    let opening = || {
+        let data = TransactionData { occurred_on: day(15), description: Description::default(), plan: None, body: Body::Opening { account: "card".into(), amount: d("1961.31") } };
+        Transaction::create(p, u, data, &accounts).unwrap()
+    };
+    repo.insert(&opening()).await.unwrap();
+    let second = repo.insert(&opening()).await;
+    // Два одновременных сохранения из формы счёта: оба успешны, остаток один — последний.
+    let svc = TransactionService::new(repo, deps());
+    let q = Uuid::new_v4();
+    let (a, b) = tokio::join!(svc.set_opening(q, u, "card", d("500"), day(15)), svc.set_opening(q, u, "card", d("500"), day(15)));
+    let count = |project: Uuid| {
+        sqlx::query_as::<_, (i64,)>("SELECT count(*) FROM fb_transactions WHERE tx_kind = 'OPENING' AND project_id = $1").bind(project).fetch_one(&pool)
+    };
+    let (n, m) = (count(p).await.unwrap().0, count(q).await.unwrap().0);
+    let balance = svc.balance(q, "CARD", day(31)).await;
+    pool.close().await;
+    sqlx::raw_sql(&format!("DROP SCHEMA {schema} CASCADE")).execute(&admin).await.unwrap();
+    assert!(matches!(second, Err(AppError::Conflict(_))), "второй начальный остаток принят: {second:?}");
+    assert_eq!(n, 1, "два начальных остатка у одного счёта — остаток удвоен");
+    assert!(a.is_ok() && b.is_ok(), "{a:?} {b:?}");
+    assert_eq!((m, balance.unwrap()), (1, d("500")));
+}
+
+/// Ц10 на in-memory адаптере: он повторяет уникальность БД, и сервис отвечает понятной ошибкой.
+#[tokio::test]
+async fn opening_is_one_per_account() {
+    let svc = service();
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    svc.set_opening(p, u, "card", d("1000"), day(1)).await.unwrap();
+    svc.set_opening(p, u, "card", d("1200"), day(1)).await.unwrap();
+    assert_eq!(balance(&svc, p, "CARD").await, d("1200"), "повторное сохранение меняет остаток, а не добавляет второй");
+    let mut again = input("OPENING", "card");
+    again.amount = Some(d("1"));
+    let err = svc.create(p, u, again).await.unwrap_err();
+    assert!(matches!(err, AppError::Conflict(m) if m.contains("CARD")), "второй остаток через API");
 }

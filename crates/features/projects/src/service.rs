@@ -15,9 +15,9 @@ use kernel::i18n::Lang;
 use uuid::Uuid;
 
 use crate::domain::{
-    ApiToken, AuditEvent, Invite, InviteState, MAX_ACTIVE_INVITES, Member, PendingLogin, Project, ProjectKind, SessionRecord, TOKEN_TERMS, User, action,
-    check_members, family_name, is_default_personal_name, normalize_currency, normalize_email, normalize_name, normalize_scopes, personal_name, safe_next,
-    split_invite_code,
+    ApiToken, AuditEvent, GUEST_SESSION_MAX, Invite, InviteState, MAX_ACTIVE_INVITES, Member, PendingLogin, Project, ProjectKind, SESSION_MAX, SessionRecord,
+    TOKEN_TERMS, User, action, check_members, family_name, is_default_personal_name, normalize_currency, normalize_email, normalize_name, normalize_scopes,
+    personal_name, safe_next, split_invite_code,
 };
 use crate::ports::{AccessRepository, Deps, ProjectRepository};
 
@@ -195,15 +195,22 @@ impl ProjectService {
                 u
             }
         };
-        let raw = self.open_session(user.id, login.mfa(), meta).await?;
+        let raw = self.open_session(user.id, login.mfa(), meta, SESSION_MAX).await?;
         self.audit(audit_event(Some(user.id), None, action::LOGIN, meta, &[("method", "rauthy".into()), ("mfa", login.mfa().to_string())])).await;
         let onboarding = self.repo.projects_of(user.id).await?.is_empty();
         Ok(LoginResult { raw_session: raw, user_id: user.id, onboarding, next: pending.next.clone() })
     }
 
-    async fn open_session(&self, user_id: Uuid, mfa: bool, meta: &RequestMeta) -> AppResult<String> {
+    /// Вход не удался: пользователь видит общий текст, подробности (ответ Rauthy, ошибка проверки
+    /// токена) — только в журнале безопасности.
+    pub async fn login_failed(&self, meta: &RequestMeta, details: &[(&str, &str)]) {
+        let details: Vec<(&str, String)> = details.iter().map(|(k, v)| (*k, v.chars().take(300).collect())).collect();
+        self.audit(audit_event(None, None, action::LOGIN_FAILED, meta, &details)).await;
+    }
+
+    async fn open_session(&self, user_id: Uuid, mfa: bool, meta: &RequestMeta, max: Duration) -> AppResult<String> {
         let raw = random_token(32);
-        let rec = SessionRecord::new(sha256_hex(&raw), user_id, mfa, meta.ip.clone(), meta.user_agent.clone(), Utc::now());
+        let rec = SessionRecord::new(sha256_hex(&raw), user_id, mfa, meta.ip.clone(), meta.user_agent.clone(), Utc::now()).lasting(max);
         self.access.insert_session(&rec).await?;
         Ok(raw)
     }
@@ -215,7 +222,7 @@ impl ProjectService {
         }
         let email = normalize_email(email).map_err(AppError::Validation)?;
         let user = self.repo.user_by_email(&email).await?.ok_or_else(|| AppError::Validation(format!("email: пользователь '{email}' не найден")))?;
-        let raw = self.open_session(user.id, false, meta).await?;
+        let raw = self.open_session(user.id, false, meta, SESSION_MAX).await?;
         self.audit(audit_event(Some(user.id), None, action::LOGIN, meta, &[("method", "dev".into())])).await;
         Ok(raw)
     }
@@ -227,7 +234,8 @@ impl ProjectService {
         }
         let guest = self.repo.user_by_sub(GUEST_SUB).await?.ok_or_else(|| AppError::NotFound("демо-проект ещё не готов".into()))?;
         let project = self.repo.projects_of(guest.id).await?.into_iter().next().ok_or_else(|| AppError::NotFound("демо-проект ещё не готов".into()))?;
-        let raw = self.open_session(guest.id, false, meta).await?;
+        // Гость не регистрировался: сессия живёт сутки, а не 30 дней.
+        let raw = self.open_session(guest.id, false, meta, GUEST_SESSION_MAX).await?;
         Ok((raw, project.0.id))
     }
 
@@ -309,6 +317,7 @@ impl ProjectService {
             last_used_at: None,
             revoked_at: None,
             created_at: now,
+            mfa: session_mfa,
         };
         self.access.insert_token(&token).await?;
         self.audit(audit_event(Some(user_id), Some(project_id), action::TOKEN_CREATED, meta, &[("name", token.name.clone()), ("scopes", token.scopes.join(" "))])).await;
@@ -415,6 +424,11 @@ impl ProjectService {
         Ok(project.id)
     }
 
+    /// Публичный контракт для других фич: базовая валюта проекта (её нельзя архивировать).
+    pub async fn base_currency(&self, project_id: Uuid) -> AppResult<Option<String>> {
+        Ok(self.repo.project(project_id).await?.map(|p| p.base_currency))
+    }
+
     pub async fn rename(&self, user_id: Uuid, project_id: Uuid, name: &str) -> AppResult<()> {
         self.deny_guest(user_id).await?;
         self.require_owner(user_id, project_id).await?;
@@ -479,39 +493,19 @@ impl ProjectService {
         Ok(out)
     }
 
-    /// Добавить участника по email (пользователь должен быть зарегистрирован). Только владелец.
-    pub async fn add_member(&self, by: Uuid, project_id: Uuid, email: &str, role: Role, meta: &RequestMeta) -> AppResult<()> {
-        self.deny_guest(by).await?;
-        let project = self.require_owner(by, project_id).await?;
-        let email = normalize_email(email).map_err(AppError::Validation)?;
-        let user = self
-            .repo
-            .user_by_email(&email)
-            .await?
-            .filter(|u| !u.rauthy_sub.starts_with("demo:guest"))
-            .ok_or_else(|| AppError::Validation(format!("email: пользователь '{email}' ещё не входил в приложение — пусть войдёт один раз")))?;
-        let new = Member { project_id, user_id: user.id, role };
-        self.change_members(&project, |ms| {
-            ms.retain(|m| m.user_id != user.id);
-            ms.push(new.clone());
-        })
-        .await?;
-        self.repo.upsert_member(&new).await?;
-        self.audit(audit_event(Some(by), Some(project_id), action::MEMBER_ADDED, meta, &[("member", user.id.to_string()), ("role", role.as_str().into())])).await;
-        Ok(())
-    }
-
     pub async fn set_role(&self, by: Uuid, project_id: Uuid, user_id: Uuid, role: Role, meta: &RequestMeta) -> AppResult<()> {
         self.deny_guest(by).await?;
         let project = self.require_owner(by, project_id).await?;
-        let changed = Member { project_id, user_id, role };
         self.change_members(&project, |ms| {
             for m in ms.iter_mut().filter(|m| m.user_id == user_id) {
                 m.role = role;
             }
         })
         .await?;
-        self.repo.upsert_member(&changed).await?;
+        // Только смена роли существующего участника: «добавить» так никого нельзя (в т. ч. гостя демо).
+        if !self.repo.update_role(project_id, user_id, role).await? {
+            return Err(AppError::NotFound(format!("участник {user_id} не найден в проекте")));
+        }
         self.audit(audit_event(Some(by), Some(project_id), action::MEMBER_ROLE, meta, &[("member", user_id.to_string()), ("role", role.as_str().into())])).await;
         Ok(())
     }
@@ -548,7 +542,7 @@ impl ProjectService {
 
     /// Код для ссылки: id приглашения и HMAC-подпись секретом приложения. В БД кода нет — копия базы
     /// не даёт рабочих ссылок, а владелец может показать ссылку повторно.
-    fn invite_code(&self, id: Uuid) -> String {
+    pub fn invite_code(&self, id: Uuid) -> String {
         let id = id.simple().to_string();
         let sig = self.config.signer.sign("invite", &id);
         format!("{id}.{}", &sig[..INVITE_SIG_LEN])
@@ -820,8 +814,9 @@ impl Authenticator for ProjectService {
                 if t.last_used_at.is_none_or(|at| now - at >= Duration::minutes(1)) {
                     self.access.touch_token(t.id, now).await?;
                 }
-                // Токен на проект с 2FA выпускается только из сессии со вторым фактором.
-                Ok(Some(Identity { user_id: t.user_id, mfa: true, via: Via::Token { token_id: t.id, project_id: t.project_id, scopes: t.scopes } }))
+                // Второй фактор — тот, что был у сессии при выпуске: если проект позже потребовал 2FA,
+                // токен без него перестаёт открывать данные (как и такая сессия).
+                Ok(Some(Identity { user_id: t.user_id, mfa: t.mfa, via: Via::Token { token_id: t.id, project_id: t.project_id, scopes: t.scopes } }))
             }
         }
     }

@@ -98,7 +98,9 @@ async fn create_family(s: &Services, me: Uuid, anna: Uuid, guest: bool) -> AppRe
     let meta = RequestMeta::default();
     let p = &s.projects;
     let family = p.create_project(me, FAMILY, projects::ProjectKind::Family, "THB", &meta).await?;
-    p.add_member(me, family, ANNA.1, Role::Editor, &meta).await?;
+    // Анна входит в семью так же, как настоящие участники, — по приглашению.
+    let invite = p.create_invite(me, family, Role::Editor, &meta).await?;
+    p.accept_invite(anna, &p.invite_code(invite), &meta).await?;
     if guest {
         let g = p.ensure_user(GUEST.0, GUEST.1, GUEST.2, Lang::En).await?;
         // Гость — только наблюдатель; личного проекта у него нет.
@@ -255,7 +257,7 @@ async fn plan(s: &Services, p: Uuid, by: Uuid, lang: Lang, names: (&str, &str, &
 
 async fn limit(s: &Services, p: Uuid, cat: &str, period: &str, amount: &str, from: NaiveDate) -> AppResult<()> {
     s.limits
-        .create(p, limits::dto::LimitInput { valid_from: from, category_code: cat.into(), limit_period: period.into(), amount: dec(amount) })
+        .create(p, limits::dto::LimitInput { valid_from: from, category_code: cat.into(), limit_period: period.into(), amount: Some(dec(amount)), removed: false })
         .await
         .map(|_| ())
 }

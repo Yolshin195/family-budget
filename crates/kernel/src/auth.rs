@@ -188,9 +188,11 @@ pub struct RequestMeta {
 
 impl RequestMeta {
     pub fn from_request(headers: &HeaderMap, peer: Option<SocketAddr>, trust_proxy: bool) -> Self {
+        // Правый адрес — тот, что дописал наш прокси; левые клиент может прислать сам.
         let forwarded = trust_proxy
-            .then(|| headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.split(',').next()).map(|v| v.trim().to_string()))
-            .flatten();
+            .then(|| headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.rsplit(',').next()).map(|v| v.trim().to_string()))
+            .flatten()
+            .filter(|v| !v.is_empty());
         RequestMeta {
             ip: forwarded.or_else(|| peer.map(|p| p.ip().to_string())),
             user_agent: headers.get(USER_AGENT).and_then(|v| v.to_str().ok()).map(|v| v.chars().take(300).collect()),
@@ -342,6 +344,11 @@ pub fn credential(config: &Config, headers: &HeaderMap) -> Option<Credential> {
     if let Some(token) = bearer {
         return Some(Credential::ApiToken(token.to_string()));
     }
+    session_credential(config, headers)
+}
+
+/// Только cookie-сессия — для страниц браузера вне `/api`: API-токен там не действует.
+pub fn session_credential(config: &Config, headers: &HeaderMap) -> Option<Credential> {
     cookie(headers, config.session_cookie()).filter(|v| !v.is_empty()).map(Credential::Session)
 }
 
@@ -421,6 +428,13 @@ pub fn same_origin(config: &Config, headers: &HeaderMap) -> bool {
     }
 }
 
+/// Строгая проверка для POST без сессии и CSRF-токена (`/demo`): `Origin` или `Referer` обязателен
+/// и должен быть нашим сайтом.
+pub fn same_origin_strict(config: &Config, headers: &HeaderMap) -> bool {
+    let present = headers.contains_key(ORIGIN) || headers.contains_key(REFERER);
+    present && same_origin(config, headers)
+}
+
 /// CSRF-проверка меняющего запроса по cookie-сессии. Тело формы буферизуется (≤ 64 КБ) и
 /// возвращается в запрос нетронутым.
 async fn check_csrf(config: &Config, id_hash: &str, req: Request) -> Result<Request, Response> {
@@ -479,7 +493,8 @@ async fn identify(auth: &AuthState, req: Request) -> Result<(Identity, Request),
     Ok((identity, req))
 }
 
-/// Middleware для страниц без проекта (онбординг): только пользователь, CSRF и лимит.
+/// Middleware для страниц без проекта (онбординг, принять приглашение): только пользователь
+/// браузера, CSRF и лимит. API-токен здесь не действует — он только для `/api`.
 pub async fn require_identity(State(auth): State<AuthState>, req: Request, next: Next) -> Response {
     let (identity, mut req) = match identify(&auth, req).await {
         Ok(x) => x,
@@ -487,7 +502,7 @@ pub async fn require_identity(State(auth): State<AuthState>, req: Request, next:
     };
     let csrf = match &identity.via {
         Via::Session { id_hash } => csrf_token(&auth.config, id_hash),
-        Via::Token { .. } => String::new(),
+        Via::Token { .. } => return AppError::Forbidden("API-токен действует только для /api".into()).into_response(),
     };
     req.extensions_mut().insert(CurrentUser { id: identity.user_id });
     req.extensions_mut().insert(Csrf(csrf));
@@ -588,6 +603,24 @@ pub async fn maybe_user(State(auth): State<AuthState>, mut req: Request, next: N
     next.run(req).await
 }
 
+/// Публичные адреса без лимита по IP: статика, проверка живости и MCP (у него свой лимит на
+/// вызывающего; запросы claude.ai приходят с общих адресов).
+const IP_LIMIT_EXEMPT: [&str; 4] = ["/static/", "/health", "/mcp", "/.well-known/"];
+
+/// Middleware для публичных страниц (лендинг, вход, `/demo`, приглашения): лимит запросов в минуту
+/// на IP — до сессии лимита на пользователя ещё нет. Нужен [`RequestMeta`] (`attach_meta` снаружи).
+pub async fn limit_by_ip(State(auth): State<AuthState>, req: Request, next: Next) -> Response {
+    let path = req.uri().path();
+    let exempt = IP_LIMIT_EXEMPT.iter().any(|p| path.starts_with(p));
+    let ip = req.extensions().get::<RequestMeta>().and_then(|m| m.ip.clone());
+    if let (false, Some(ip)) = (exempt, ip)
+        && !auth.limiter.allow(&format!("ip:{ip}"), auth.config.public_rate_limit)
+    {
+        return AppError::TooManyRequests("слишком много запросов, повторите через минуту".into()).into_response();
+    }
+    next.run(req).await
+}
+
 /// Middleware (внешний): кладёт в запрос [`RequestMeta`] — IP и браузер для журнала и устройств.
 pub async fn attach_meta(State(config): State<Arc<Config>>, mut req: Request, next: Next) -> Response {
     let meta = RequestMeta::from_request(req.headers(), peer(&req), config.trust_proxy);
@@ -639,6 +672,105 @@ mod tests {
         let mut r = HeaderMap::new();
         r.insert(REFERER, "https://evil.example/x".parse().unwrap());
         assert!(!same_origin(&c, &r));
+    }
+
+    /// Пользователь с API-токеном (`Bearer fbt_ok`) или сессией (`fb_session=ok`).
+    struct FakeAuth;
+
+    #[async_trait]
+    impl Authenticator for FakeAuth {
+        async fn authenticate(&self, credential: &Credential) -> AppResult<Option<Identity>> {
+            let via = match credential {
+                Credential::ApiToken(t) if t == "fbt_ok" => Via::Token { token_id: Uuid::nil(), project_id: Uuid::nil(), scopes: vec!["write".into()] },
+                Credential::Session(s) if s == "ok" => Via::Session { id_hash: "h".into() },
+                _ => return Ok(None),
+            };
+            Ok(Some(Identity { user_id: Uuid::nil(), mfa: false, via }))
+        }
+    }
+
+    struct NoProjects;
+
+    #[async_trait]
+    impl Memberships for NoProjects {
+        async fn session(&self, _user_id: Uuid, _project: Option<Uuid>) -> AppResult<Option<SessionInfo>> {
+            Ok(None)
+        }
+    }
+
+    fn auth_state() -> AuthState {
+        AuthState { config: Arc::new(Config::test()), authenticator: Arc::new(FakeAuth), memberships: Arc::new(NoProjects), limiter: Arc::new(RateLimiter::new()) }
+    }
+
+    /// Б5: онбординг и «Принять приглашение» — только из браузера; API-токен действует лишь в `/api`.
+    #[tokio::test]
+    async fn api_token_is_rejected_outside_api() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+        let app = axum::Router::new()
+            .route("/onboarding", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(auth_state(), require_identity));
+        let call = |header: (&'static str, &'static str)| {
+            let app = app.clone();
+            async move { app.oneshot(Request::builder().uri("/onboarding").header(header.0, header.1).body(Body::empty()).unwrap()).await.unwrap().status() }
+        };
+        assert_eq!(call(("authorization", "Bearer fbt_ok")).await, StatusCode::FORBIDDEN);
+        assert_eq!(call(("cookie", "fb_session=ok")).await, StatusCode::OK, "сессия браузера проходит");
+        let h: HeaderMap = [(AUTHORIZATION, "Bearer fbt_ok".parse().unwrap())].into_iter().collect();
+        assert!(session_credential(&Config::test(), &h).is_none(), "страницы вне /api не берут токен из заголовка");
+    }
+
+    /// Б4: `/demo` без `Origin` и `Referer` не принимается (у него нет ни сессии, ни CSRF-токена).
+    #[test]
+    fn strict_origin_requires_header() {
+        let c = Config::test();
+        let mut h = HeaderMap::new();
+        assert!(same_origin(&c, &h) && !same_origin_strict(&c, &h), "без заголовков — отказ");
+        h.insert(ORIGIN, "http://localhost:8080".parse().unwrap());
+        assert!(same_origin_strict(&c, &h));
+        h.insert(ORIGIN, "https://evil.example".parse().unwrap());
+        assert!(!same_origin_strict(&c, &h));
+        let mut r = HeaderMap::new();
+        r.insert(REFERER, "http://localhost:8080/".parse().unwrap());
+        assert!(same_origin_strict(&c, &r));
+    }
+
+    /// Б4: IP клиента — правый адрес `X-Forwarded-For` (его дописал наш прокси), а не левый.
+    #[test]
+    fn client_ip_is_rightmost_forwarded() {
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "6.6.6.6, 203.0.113.7".parse().unwrap());
+        assert_eq!(RequestMeta::from_request(&h, None, true).ip.as_deref(), Some("203.0.113.7"));
+        assert_eq!(RequestMeta::from_request(&h, None, false).ip, None, "без прокси заголовок не читается");
+    }
+
+    /// Б4: публичные страницы ограничены по IP; статика и MCP — нет.
+    #[tokio::test]
+    async fn public_pages_are_limited_by_ip() {
+        use axum::routing::get;
+        use tower::ServiceExt;
+        let mut config = Config::test();
+        config.public_rate_limit = 2;
+        let state = AuthState { config: Arc::new(config), ..auth_state() };
+        let app = axum::Router::new()
+            .route("/demo", get(|| async { "ok" }))
+            .route("/static/app.css", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(state, limit_by_ip));
+        let call = |uri: &'static str, ip: &'static str| {
+            let app = app.clone();
+            async move {
+                let mut req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+                req.extensions_mut().insert(RequestMeta { ip: Some(ip.into()), user_agent: None });
+                app.oneshot(req).await.unwrap().status()
+            }
+        };
+        assert_eq!(call("/demo", "1.1.1.1").await, StatusCode::OK);
+        assert_eq!(call("/demo", "1.1.1.1").await, StatusCode::OK);
+        assert_eq!(call("/demo", "1.1.1.1").await, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(call("/demo", "2.2.2.2").await, StatusCode::OK, "другой адрес");
+        for _ in 0..5 {
+            assert_eq!(call("/static/app.css", "1.1.1.1").await, StatusCode::OK, "статика без лимита");
+        }
     }
 
     #[test]

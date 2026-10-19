@@ -41,7 +41,8 @@ fn input(n: u32) -> LimitInput {
         valid_from: day(n),
         category_code: "REF1".to_string(),
         limit_period: "WEEK".to_string(),
-        amount: rust_decimal::Decimal::new(1050, 2),
+        amount: Some(rust_decimal::Decimal::new(1050, 2)),
+        removed: false,
     }
 }
 
@@ -131,4 +132,20 @@ async fn foreign_project_undo_and_purge() {
     svc.create(other, input(3)).await.unwrap();
     assert_eq!(svc.purge_project(mine).await.unwrap(), 1);
     assert_eq!(svc.all(other).await.unwrap().len(), 1);
+}
+
+/// Ц5: «Снять лимит» — правило без суммы; сумма и снятие вместе не задаются, без суммы лимит не создать.
+#[tokio::test]
+async fn removed_limit_has_no_amount() {
+    let svc = service();
+    let p = Uuid::new_v4();
+    let removed = svc.create(p, LimitInput { amount: None, removed: true, ..input(2) }).await.unwrap();
+    assert!(removed.removed && removed.amount.is_none());
+    assert_eq!(removed.effective_from, chrono::NaiveDate::from_ymd_opt(2025, 12, 29).unwrap(), "неделя 02.01.2026 — с понедельника 29.12");
+    let both = svc.create(p, LimitInput { removed: true, ..input(3) }).await.unwrap_err();
+    assert!(matches!(both, AppError::Validation(m) if m.starts_with("amount:")));
+    let none = svc.create(p, LimitInput { amount: None, ..input(4) }).await.unwrap_err();
+    assert!(matches!(none, AppError::Validation(m) if m.starts_with("amount:")));
+    let zero = svc.create(p, LimitInput { amount: Some(rust_decimal::Decimal::ZERO), ..input(5) }).await.unwrap();
+    assert_eq!((zero.amount, zero.removed), (Some(rust_decimal::Decimal::ZERO), false), "0 — нулевой лимит, а не снятие");
 }

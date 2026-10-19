@@ -30,6 +30,11 @@ impl PlanRepository for InMemoryPlanRepository {
         Ok(())
     }
 
+    async fn continue_series(&self, old: &Plan, next: &Plan) -> AppResult<()> {
+        self.update(old).await?;
+        self.insert(next).await
+    }
+
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Plan>> {
         Ok(self.plans.lock().unwrap().iter().find(|p| p.project_id == project_id && p.id == id).cloned())
     }

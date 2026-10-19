@@ -108,7 +108,7 @@ title = "Create a budget"
 text = "Sign up with your email — your personal budget is created automatically."
 [[extra.how.steps]]
 title = "Invite your family"
-text = "Send a link via Telegram or WhatsApp, show a QR code or add members by email."
+text = "Send a link via Telegram or WhatsApp, or show a QR code."
 [[extra.how.steps]]
 title = "Add expenses"
 text = "Yourself in 5 seconds or through Claude — and see what's left for the month in every category."

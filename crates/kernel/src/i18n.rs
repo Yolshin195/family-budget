@@ -191,6 +191,11 @@ pub fn dict(key: &str) -> Option<Tr> {
         "quick.to" => ("Куда", "To", "ไปยังบัญชี"),
         "quick.received" => ("Зачислено", "Credited", "เข้าบัญชี"),
         "quick.choose_to" => ("Выберите другой счёт зачисления", "Choose another account to credit", "เลือกบัญชีปลายทางอื่น"),
+        "quick.no_rate" => (
+            "Нет курса {cur} к базовой валюте — сумма не войдёт в бюджет, пока не добавите курс",
+            "No {cur} rate to the base currency — the amount won't count in the budget until you add a rate",
+            "ไม่มีอัตรา {cur} เทียบสกุลหลัก — ยอดนี้จะไม่รวมในงบประมาณจนกว่าจะเพิ่มอัตรา",
+        ),
         "quick.received_required" => ("Сколько пришло в валюте счёта?", "How much arrived, in the account's currency?", "เข้าบัญชีเท่าไรในสกุลเงินของบัญชี?"),
         "quick.rate" => ("Курс", "Rate", "อัตรา"),
         "quick.rate_ref" => ("по справочнику", "reference", "ตามข้อมูลอ้างอิง"),

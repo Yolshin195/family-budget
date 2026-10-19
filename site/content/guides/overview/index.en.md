@@ -40,4 +40,4 @@ Below the spending is the "Income" table: planned, actual and total by income ca
 
 ## 5. If the numbers look odd
 
-An amber warning "No rate to base currency — counted 1:1" means one of your accounts' currencies has no exchange rate. Add it via the "Exchange rates" link in the warning — see [Currencies and exchange rates](@/guides/currencies-and-rates/index.en.md). An empty "Limit" column means no limits yet: the "Set limits" button above the table takes you to [Spending limits](@/guides/limits/index.en.md).
+An amber warning "No rate to the base currency — these amounts are left out of the totals" means one of your accounts' currencies has no exchange rate: such amounts show on categories with a "no rate" tag and count in neither actuals nor totals. Add it via the "Exchange rates" link in the warning — see [Currencies and exchange rates](@/guides/currencies-and-rates/index.en.md). An empty "Limit" column means no limits yet: the "Set limits" button above the table takes you to [Spending limits](@/guides/limits/index.en.md).

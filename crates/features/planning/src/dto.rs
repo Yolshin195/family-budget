@@ -77,6 +77,10 @@ pub struct PlanDto {
     pub end_on: Option<NaiveDate>,
     pub active: bool,
     pub created_by: Uuid,
+    /// Серия планов: продолжения после смены правила дат (у первого плана — его id).
+    pub series_id: Uuid,
+    /// Даты правила раньше этой план не даёт — они в прежнем плане серии.
+    pub effective_from: Option<NaiveDate>,
 }
 
 /// Вхождение плана на конкретную дату.
@@ -151,6 +155,8 @@ impl From<Plan> for PlanDto {
             end_on: p.end_on,
             active: p.active,
             created_by: p.created_by,
+            series_id: p.series_id,
+            effective_from: p.effective_from,
         }
     }
 }

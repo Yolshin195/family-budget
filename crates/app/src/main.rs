@@ -31,7 +31,7 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa_swagger_ui::SwaggerUi;
 
-use kernel::auth::{AuthState, MAX_BODY, attach_meta, maybe_user, require_identity, require_user};
+use kernel::auth::{AuthState, MAX_BODY, attach_meta, limit_by_ip, maybe_user, require_identity, require_user};
 use kernel::config::Config;
 use kernel::context::AppContext;
 use kernel::throttle::RateLimiter;
@@ -175,11 +175,13 @@ async fn main() -> anyhow::Result<()> {
         .merge(feats.account)
         .layer(middleware::from_fn_with_state(auth.clone(), require_identity))
         .layer(middleware::from_fn(no_index));
+    // Публичное: лендинг, вход, демо, приглашения, MCP. Лимит по IP — до сессии (статика и MCP — без него).
     let public = Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/static/{file}", get(static_file))
         .merge(feats.public)
-        .layer(middleware::from_fn_with_state(auth, maybe_user));
+        .layer(middleware::from_fn_with_state(auth.clone(), maybe_user))
+        .layer(middleware::from_fn_with_state(auth, limit_by_ip));
 
     let mut app = Router::new().merge(public).merge(account).merge(private);
     if config.swagger {

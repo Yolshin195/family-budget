@@ -42,4 +42,4 @@ The "Planned items" button in the "Calendar" opens a list of all plans with thei
 
 ![The list of planned items](plans.en.webp)
 
-"Edit" opens the plan's form, where you can also delete it. Deleted it by mistake? Click "Undo" in the pop-up message. Claude can mark planned payments as paid too: see [How to connect Claude to your budget](@/guides/connect-claude/index.en.md).
+"Edit" opens the plan's form, where you can also delete it. If you change the start date, repeat or interval of a plan that already had payments, past payments and skips stay in the history: the old plan is closed and the new rule applies from today. The amount, account and category can be changed as before — that only affects payments not yet settled. Deleted it by mistake? Click "Undo" in the pop-up message. Claude can mark planned payments as paid too: see [How to connect Claude to your budget](@/guides/connect-claude/index.en.md).

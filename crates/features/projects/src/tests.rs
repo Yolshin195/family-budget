@@ -213,13 +213,26 @@ async fn api_tokens_are_shown_once_scoped_and_revocable() {
     assert!(actions.contains(&"api_token_created".to_string()) && actions.contains(&"api_token_revoked".to_string()));
 }
 
+/// Б1: токен помнит, был ли второй фактор у сессии, из которой его выпустили. Включили
+/// «Требовать 2FA» — токен без него закрывается так же, как такая сессия.
+#[tokio::test]
+async fn token_keeps_mfa_of_its_session() {
+    let e = env();
+    let (me, _, personal) = signed_up(&e, "sub-me").await;
+    let (plain, _) = e.svc.create_token(me, personal, "bot", &["read".into()], 30, false, &meta()).await.unwrap();
+    let (strong, _) = e.svc.create_token(me, personal, "bot", &["read".into()], 30, true, &meta()).await.unwrap();
+    e.svc.set_require_2fa(me, personal, true, &meta()).await.unwrap();
+    assert!(!e.svc.authenticate(&Credential::ApiToken(plain)).await.unwrap().unwrap().mfa, "выпущен без 2FA");
+    assert!(e.svc.authenticate(&Credential::ApiToken(strong)).await.unwrap().unwrap().mfa);
+}
+
 #[tokio::test]
 async fn require_2fa_is_reported_and_blocks_tokens_without_mfa() {
     let e = env();
     let (me, _, _) = signed_up(&e, "sub-me").await;
     let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
     let (anna, anna_raw, _) = signed_up(&e, "sub-anna").await;
-    e.svc.add_member(me, family, "anna@demo.local", Role::Editor, &meta()).await.unwrap();
+    join(&e, me, family, anna, Role::Editor).await;
     assert!(matches!(e.svc.set_require_2fa(anna, family, true, &meta()).await.unwrap_err(), AppError::Forbidden(_)), "только владелец");
     e.svc.set_require_2fa(me, family, true, &meta()).await.unwrap();
     assert!(e.svc.session(me, Some(family)).await.unwrap().unwrap().require_2fa);
@@ -229,15 +242,31 @@ async fn require_2fa_is_reported_and_blocks_tokens_without_mfa() {
     assert!(e.svc.create_token(me, family, "bot", &["read".into()], 30, true, &meta()).await.is_ok());
 }
 
+/// Б2: смена роли не добавляет в проект того, кто в нём не состоит, — ни зарегистрированного
+/// пользователя, ни гостя демо.
+#[tokio::test]
+async fn set_role_does_not_add_strangers() {
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    let (anna, _, _) = signed_up(&e, "sub-anna").await;
+    let guest = e.svc.ensure_user(crate::service::GUEST_SUB, "guest@demo.local", "Guest", Lang::En).await.unwrap();
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    for stranger in [anna, guest] {
+        let err = e.svc.set_role(me, family, stranger, Role::Editor, &meta()).await.unwrap_err();
+        assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
+    }
+    let members: Vec<Uuid> = e.svc.session(me, Some(family)).await.unwrap().unwrap().members.iter().map(|m| m.user_id).collect();
+    assert_eq!(members, vec![me], "в проекте по-прежнему только владелец");
+    assert!(e.svc.session(anna, Some(family)).await.unwrap().unwrap().project_id != family, "Анне проект не открылся");
+}
+
 #[tokio::test]
 async fn family_project_members_and_roles() {
     let e = env();
     let (me, _, personal) = signed_up(&e, "sub-me").await;
     let (anna, _, _) = signed_up(&e, "sub-anna").await;
-    // в личный проект второго участника не добавить
-    assert!(matches!(e.svc.add_member(me, personal, "anna@demo.local", Role::Editor, &meta()).await.unwrap_err(), AppError::Validation(_)));
     let family = e.svc.create_project(me, "Family", ProjectKind::Family, "THB", &meta()).await.unwrap();
-    e.svc.add_member(me, family, "anna@demo.local", Role::Viewer, &meta()).await.unwrap();
+    join(&e, me, family, anna, Role::Viewer).await;
     // Anna видит семейный проект с ролью VIEWER; чужой личный проект ей не доступен
     let s = e.svc.session(anna, Some(family)).await.unwrap().unwrap();
     assert_eq!((s.project_id, s.role, s.members.len()), (family, Role::Viewer, 2));
@@ -258,7 +287,8 @@ async fn foreign_project_is_not_found() {
     let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
     for err in [
         e.svc.rename(anna, family, "x").await.unwrap_err(),
-        e.svc.add_member(anna, family, "anna@demo.local", Role::Owner, &meta()).await.unwrap_err(),
+        e.svc.create_invite(anna, family, Role::Editor, &meta()).await.unwrap_err(),
+        e.svc.set_role(anna, family, me, Role::Viewer, &meta()).await.unwrap_err(),
         e.svc.remove_member(anna, family, me, &meta()).await.unwrap_err(),
         e.svc.delete_project(anna, family, "Семья", &meta()).await.unwrap_err(),
     ] {
@@ -283,7 +313,7 @@ async fn delete_account_keeps_family_project_for_others() {
     let (me, _, my_personal) = signed_up(&e, "sub-me").await;
     let (anna, _, _) = signed_up(&e, "sub-anna").await;
     let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
-    e.svc.add_member(me, family, "anna@demo.local", Role::Editor, &meta()).await.unwrap();
+    join(&e, me, family, anna, Role::Editor).await;
     // единственный владелец семейного проекта с участниками — сначала второй владелец
     assert!(matches!(e.svc.delete_account(me, &meta()).await.unwrap_err(), AppError::Validation(_)));
     e.svc.set_role(me, family, anna, Role::Owner, &meta()).await.unwrap();
@@ -348,6 +378,13 @@ async fn invite_code(e: &Env, owner: Uuid, project: Uuid, invite: Uuid) -> Strin
     let p = e.svc.overview(owner).await.unwrap().into_iter().find(|p| p.id == project).unwrap();
     let url = p.invites.into_iter().find(|i| i.id == invite).expect("приглашение в списке").url;
     url.split_once("/join/").unwrap().1.to_string()
+}
+
+/// Участником становятся только по приглашению: владелец зовёт, `who` принимает ссылку.
+async fn join(e: &Env, owner: Uuid, project: Uuid, who: Uuid, role: Role) {
+    let invite = e.svc.create_invite(owner, project, role, &meta()).await.unwrap();
+    let code = invite_code(e, owner, project, invite).await;
+    e.svc.accept_invite(who, &code, &meta()).await.unwrap();
 }
 
 #[tokio::test]
@@ -437,7 +474,8 @@ async fn revoked_expired_or_orphaned_invites_do_not_work() {
     // пригласивший больше не владелец — его ссылки не действуют
     let orphan = e.svc.create_invite(me, family, Role::Editor, &meta()).await.unwrap();
     let orphan_code = invite_code(&e, me, family, orphan).await;
-    e.svc.add_member(me, family, "anna@demo.local", Role::Owner, &meta()).await.unwrap();
+    join(&e, me, family, anna, Role::Editor).await;
+    e.svc.set_role(me, family, anna, Role::Owner, &meta()).await.unwrap();
     e.svc.set_role(anna, family, me, Role::Editor, &meta()).await.unwrap();
     let (fb, _, _) = signed_up(&e, "sub-fb").await;
     assert!(rejected(e.svc.accept_invite(fb, &orphan_code, &meta()).await));
@@ -457,3 +495,96 @@ async fn demo_guest_cannot_join_by_invite() {
     assert!(matches!(e.svc.accept_invite(guest, &code, &meta()).await.unwrap_err(), AppError::Forbidden(_)));
     assert_eq!(e.svc.invite_preview(&code, None).await.unwrap().state, InviteState::Active, "приглашение не израсходовано");
 }
+
+// ---------------------------------------------------------------- страницы входа
+
+/// Б6: ошибка входа на странице — общим текстом; ответ Rauthy (`error_description`) и причина
+/// отказа — только в журнале безопасности.
+#[tokio::test]
+async fn login_error_details_go_to_journal_not_to_page() {
+    use axum::body::{Body, to_bytes};
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    let e = env();
+    let repo = e.repo.clone();
+    let app = crate::adapters::web::public(Arc::new(e.svc)).layer(axum::Extension(meta()));
+    let page = |uri: &'static str| {
+        let app = app.clone();
+        async move {
+            let resp = app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap()).await.unwrap();
+            String::from_utf8(to_bytes(resp.into_body(), 1 << 20).await.unwrap().to_vec()).unwrap()
+        }
+    };
+    let html = page("/auth/callback?error=server_error&error_description=upstream%20github%20token%20invalid").await;
+    assert!(!html.contains("upstream github") && !html.contains("server_error"), "подробности не показываются");
+    assert!(html.contains(crate::i18n::dict("login_failed_hint").unwrap().0), "общий текст ошибки");
+
+    let audit = repo.audit.lock().unwrap().clone();
+    let failed: Vec<_> = audit.iter().filter(|a| a.action == "login_failed").collect();
+    assert_eq!(failed.len(), 1);
+    assert!(failed[0].user_id.is_none());
+    assert!(failed[0].details.iter().any(|(k, v)| k == "description" && v.contains("upstream github")), "{:?}", failed[0].details);
+}
+
+/// Б4: «Посмотреть демо» — только со своего сайта (без `Origin`/`Referer` — отказ), сессия гостя
+/// живёт сутки, а не 30 дней.
+#[tokio::test]
+async fn demo_needs_origin_and_guest_session_lasts_a_day() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    e.svc.ensure_user(crate::service::GUEST_SUB, "guest@demo.local", "Guest", Lang::En).await.unwrap();
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    e.svc.add_guest(me, family).await.unwrap();
+    let repo = e.repo.clone();
+    let app = crate::adapters::web::public(Arc::new(e.svc)).layer(axum::Extension(meta()));
+    let post = |origin: Option<&'static str>| {
+        let app = app.clone();
+        async move {
+            let mut req = Request::builder().method("POST").uri("/demo");
+            if let Some(o) = origin {
+                req = req.header("origin", o);
+            }
+            app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap().status()
+        }
+    };
+    let before = repo.sessions.lock().unwrap().len();
+    assert_eq!(post(None).await, StatusCode::FORBIDDEN, "без Origin");
+    assert_eq!(post(Some("https://evil.example")).await, StatusCode::FORBIDDEN);
+    assert_eq!(repo.sessions.lock().unwrap().len(), before, "сессии не созданы");
+    assert_eq!(post(Some("http://localhost:8080")).await, StatusCode::SEE_OTHER);
+    let sessions = repo.sessions.lock().unwrap().clone();
+    let guest = sessions.last().unwrap();
+    assert_eq!(guest.expires_at - guest.created_at, Duration::hours(24));
+}
+
+/// Б3: добавить человека в проект по email нельзя — ни зарегистрированного, ни нет (раньше ответы
+/// различались, а сам человек не давал согласия). Участником становятся только по приглашению.
+#[tokio::test]
+async fn members_cannot_be_added_by_email() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    let (anna, _, _) = signed_up(&e, "sub-anna").await;
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    let svc = Arc::new(e.svc);
+    let app = crate::adapters::web::pages(svc.clone());
+    for email in ["anna@demo.local", "nobody@demo.local"] {
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/{family}/members"))
+            .header("content-type", "application/x-www-form-urlencoded")
+            .body(Body::from(format!("email={email}&role=EDITOR")))
+            .unwrap();
+        assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::NOT_FOUND, "{email}");
+    }
+    assert_ne!(svc.session(anna, Some(family)).await.unwrap().unwrap().project_id, family, "Анну не добавили");
+}
+

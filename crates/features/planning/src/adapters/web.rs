@@ -147,7 +147,7 @@ struct CalendarPage {
     income: String,
     overdue: usize,
     base: String,
-    /// Валюты без курса к базовой — их суммы посчитаны как 1:1.
+    /// Валюты без курса к базовой — их суммы не вошли в итоги месяца.
     missing_rates: String,
 }
 
@@ -168,12 +168,14 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
     let occ = svc.occurrences(page.session.project_id, grid_from, grid_to, t).await?;
     let fx = svc.to_base(page.session.project_id, &page.session.base_currency).await?;
     let mut missing = BTreeSet::new();
-    // Итоги — в базовой валюте по курсу на дату вхождения, как в «Обзоре».
+    // Итоги — в базовой валюте по курсу на дату вхождения, как в «Обзоре». Без курса сумма в итоги не
+    // входит (этап 0, Ц3): у самого платежа видна сумма в его валюте.
     let mut to_base = |cur: &str, amount: Decimal, date: NaiveDate| {
-        fx.convert(cur, amount, date).unwrap_or_else(|| {
+        let v = fx.convert(cur, amount, date);
+        if v.is_none() {
             missing.insert(cur.to_string());
-            amount
-        })
+        }
+        v
     };
 
     let (mut to_pay, mut paid, mut income, mut overdue) = (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO, 0);
@@ -183,7 +185,8 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
         let in_month = o.date >= first && o.date <= last;
         // Плановый перевод не расход и не доход: в сводке месяца только как просроченный.
         let (amount, currency) = o.shown_amount();
-        let in_base = to_base(currency, amount, o.date);
+        let converted = to_base(currency, amount, o.date);
+        let in_base = converted.unwrap_or_default();
         if in_month && o.plan.is_transfer() {
             if o.status == "OVERDUE" {
                 overdue += 1;
@@ -205,7 +208,10 @@ async fn calendar(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
             href: format!("/planning/occurrence/{}/{}?back={}", o.plan.id, o.date, url_encode(&back)),
             title: o.plan.title(lang).to_string(),
             amount: money_in(lang, amount),
-            approx: if currency == fx.base() { String::new() } else { money_in(lang, in_base) },
+            approx: match converted {
+                Some(v) if currency != fx.base() => money_in(lang, v),
+                _ => String::new(),
+            },
             currency: currency.to_string(),
             status: o.status.clone(),
             is_expense: o.plan.is_expense(),
@@ -461,6 +467,11 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): 
     let p = page.session.project_id;
     let result = async { svc.update(p, id, f.to_input()?).await }.await;
     match result {
+        // Сменили правило дат при прошедших вхождениях: план продолжен новым (этап 0, Ц4).
+        Ok(next) if next.id != id => {
+            let from = page.date(&next.effective_from.unwrap_or(next.start_on));
+            Ok(see_other_flash(&page.config, "/planning/plans", Flash::ok(tr(&page, "series_toast").replace("{date}", &from))))
+        }
         Ok(_) => Ok(see_other_flash(&page.config, "/planning/plans", Flash::ok(page.t("toast.saved")))),
         Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, Some(id), f, Some(m)).await,
         Err(e) => Err(PageError(e)),

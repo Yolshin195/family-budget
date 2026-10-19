@@ -11,8 +11,8 @@ use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use chrono::{DateTime, Utc};
 use kernel::auth::{
-    Csrf, CurrentUser, Identity, LANG_COOKIE, MaybeUser, PROJECT_COOKIE, RequestMeta, Role, Theme, Via, cookie, credential, request_lang, same_origin, session_cookie,
-    session_csrf, set_cookie, set_cookie_at,
+    Csrf, CurrentUser, Identity, LANG_COOKIE, MaybeUser, PROJECT_COOKIE, RequestMeta, Role, Theme, Via, cookie, request_lang, same_origin, same_origin_strict,
+    session_cookie, session_credential, session_csrf, set_cookie, set_cookie_at,
 };
 use kernel::config::Config;
 use kernel::crypto::ct_eq;
@@ -62,7 +62,6 @@ pub fn pages(service: Arc<ProjectService>) -> Router {
         .route("/{id}/rename", post(rename))
         .route("/{id}/require-2fa", post(require_2fa))
         .route("/{id}/delete", post(delete_project))
-        .route("/{id}/members", post(add_member))
         .route("/{id}/members/{user}/role", post(set_role))
         .route("/{id}/members/{user}/remove", post(remove_member))
         .route("/{id}/make-family", post(make_family))
@@ -162,9 +161,9 @@ struct NextQuery {
     next: String,
 }
 
-/// Есть действующая сессия (или API-токен) — вход и регистрация не нужны.
+/// Есть действующая сессия — вход и регистрация не нужны.
 async fn signed_in(svc: &ProjectService, headers: &HeaderMap) -> bool {
-    match credential(svc.config(), headers) {
+    match session_credential(svc.config(), headers) {
         Some(cred) => kernel::auth::Authenticator::authenticate(svc, &cred).await.ok().flatten().is_some(),
         None => false,
     }
@@ -221,8 +220,10 @@ async fn callback(State(svc): Svc, headers: HeaderMap, Extension(meta): Extensio
         }
         Ok(r)
     };
+    // Пользователю — общий текст: ответ Rauthy и подробности проверки уходят в журнал.
     if !q.error.is_empty() {
-        return fail(format!("{}: {}", q.error, q.error_description));
+        svc.login_failed(&meta, &[("error", &q.error), ("description", &q.error_description)]).await;
+        return fail(t(lang, "login_failed_hint"));
     }
     let Some(pending) = open_pending(cfg, &headers) else {
         return fail(t(lang, "login_failed_hint"));
@@ -246,7 +247,10 @@ async fn callback(State(svc): Svc, headers: HeaderMap, Extension(meta): Extensio
             )
                 .into_response())
         }
-        Err(AppError::Validation(m) | AppError::Forbidden(m)) => fail(m),
+        Err(AppError::Validation(m) | AppError::Forbidden(m)) => {
+            svc.login_failed(&meta, &[("reason", &m)]).await;
+            fail(t(lang, "login_failed_hint"))
+        }
         Err(e) => Err(PageError(e)),
     }
 }
@@ -303,10 +307,11 @@ async fn dev_login(State(svc): Svc, headers: HeaderMap, Extension(meta): Extensi
     }
 }
 
-/// «Посмотреть демо»: вход гостем в демо-проект с ролью VIEWER, без регистрации.
+/// «Посмотреть демо»: вход гостем в демо-проект с ролью VIEWER, без регистрации. Ни сессии, ни
+/// CSRF-токена тут нет, поэтому `Origin` (или `Referer`) обязателен.
 async fn demo(State(svc): Svc, headers: HeaderMap, Extension(meta): Extension<RequestMeta>) -> PageResult {
     let cfg = svc.config();
-    if !same_origin(cfg, &headers) {
+    if !same_origin_strict(cfg, &headers) {
         return Err(PageError(AppError::Forbidden("CSRF: запрос с чужого сайта".into())));
     }
     let (raw, project) = svc.guest_login(&meta).await?;
@@ -326,7 +331,8 @@ struct BackQuery {
 /// Переключить язык: cookie + настройка пользователя (если он вошёл).
 async fn set_lang(State(svc): Svc, headers: HeaderMap, Path(code): Path<String>, Query(q): Query<BackQuery>) -> Response {
     let lang = Lang::parse(&code).unwrap_or_default();
-    if let Some(cred) = credential(svc.config(), &headers) {
+    // Только сессия браузера: API-токен действует лишь в /api.
+    if let Some(cred) = session_credential(svc.config(), &headers) {
         if let Ok(Some(id)) = kernel::auth::Authenticator::authenticate(svc.as_ref(), &cred).await {
             let _ = svc.set_lang(id.user_id, lang).await;
         }
@@ -860,17 +866,11 @@ async fn delete_project(State(svc): Svc, Extension(page): Extension<PageCtx>, Ex
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct MemberForm {
-    email: String,
     role: String,
 }
 
 fn parse_role(v: &str) -> Result<Role, AppError> {
     Role::parse(v).ok_or_else(|| AppError::Validation(format!("role: '{v}'")))
-}
-
-async fn add_member(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path(id): Path<Uuid>, Form(f): Form<MemberForm>) -> PageResult {
-    let r = async { svc.add_member(page.session.user_id, id, &f.email, parse_role(&f.role)?, &meta).await }.await;
-    done(&svc, page, r, Some("member_added")).await
 }
 
 async fn set_role(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path((id, user)): Path<(Uuid, Uuid)>, Form(f): Form<MemberForm>) -> PageResult {

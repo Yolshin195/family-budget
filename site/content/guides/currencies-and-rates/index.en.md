@@ -14,7 +14,7 @@ Every project has a base currency, chosen when the budget is created. The Overvi
 
 ## 1. Add a currency
 
-Under "Directories", open "Currencies" and click "Add". The "Code" is the three-letter ISO 4217 code: THB, RUB, USD. The "Symbol" is shown next to amounts — ฿, ₽, $. "Decimal places" is usually 2. As everywhere, the "Name" can be written in any language and given translations. The base currency is marked with a "base" badge.
+Under "Directories", open "Currencies" and click "Add". The "Code" is the three-letter ISO 4217 code: THB, RUB, USD. The "Symbol" is shown next to amounts — ฿, ₽, $. "Decimal places" is 0 to 4, usually 2; it can't be reduced once the currency has amounts. As everywhere, the "Name" can be written in any language and given translations. The base currency is marked with a "base" badge. It, and any currency with active accounts, can't be archived: archive the accounts first.
 
 ![The project's currencies: baht as the base, rouble and dollar](currencies.en.webp)
 
@@ -28,7 +28,7 @@ If a new rate differs from the previous one many times over, the app asks "Is th
 
 ## 3. Which rate applies
 
-Each transaction is converted at the rate on its date: the latest rate on or before that date is used. So you don't need to enter a rate every day — update it when it changes noticeably, say once a month. If a currency has no rate at all, amounts are counted 1:1, and the Overview and Calendar show an amber warning with a link to "Exchange rates".
+Each transaction is converted at the rate on its date: the latest rate on or before that date is used. So you don't need to enter a rate every day — update it when it changes noticeably, say once a month. If a currency has no rate at all, its amounts are left out of the totals — they can't be converted. The Overview shows an amber warning with a link to "Exchange rates" and a "no rate" tag on the category, and the transaction form and quick entry warn you while you type.
 
 ## 4. The exchange result
 

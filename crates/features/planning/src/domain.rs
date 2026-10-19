@@ -78,6 +78,10 @@ pub struct Plan {
     pub end_on: Option<NaiveDate>,
     pub active: bool,
     pub created_by: Uuid,
+    /// Серия: планы, которые продолжают друг друга после смены правила дат. У первого — его id.
+    pub series_id: Uuid,
+    /// Даты правила раньше этой план не даёт: их оплаты и пропуски остались у прежнего плана серии.
+    pub effective_from: Option<NaiveDate>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,8 +104,9 @@ pub const MAX_OCCURRENCES: usize = 3700;
 
 impl Plan {
     pub fn create(project_id: Uuid, created_by: Uuid, data: PlanData) -> Result<Self, String> {
+        let id = Uuid::new_v4();
         let mut p = Plan {
-            id: Uuid::new_v4(),
+            id,
             project_id,
             name: data.name.clone(),
             tx_kind: String::new(),
@@ -115,9 +120,38 @@ impl Plan {
             end_on: None,
             active: true,
             created_by,
+            series_id: id,
+            effective_from: None,
         };
         p.change(data)?;
         Ok(p)
+    }
+
+    /// То же правило дат: начало, повторение, интервал.
+    pub fn same_dates(&self, other: &Plan) -> bool {
+        (self.start_on, self.recurrence, self.interval) == (other.start_on, other.recurrence, other.interval)
+    }
+
+    /// Есть вхождения раньше `day`.
+    pub fn has_dates_before(&self, day: NaiveDate) -> bool {
+        day.pred_opt().is_some_and(|last| !self.dates(NaiveDate::MIN, last).is_empty())
+    }
+
+    /// Смена правила дат задним числом (этап 0, Ц4): `self` — план до правки, `changed` — после.
+    /// Прежний план закрывается датой `last` (вчера или последнее решённое вхождение) и хранит свои
+    /// оплаты и пропуски; продолжение серии — новый план с полями `changed`, который действует со
+    /// следующего дня. Дата начала остаётся как задал пользователь: от неё считаются даты правила.
+    pub fn split(&self, changed: Plan, last: NaiveDate) -> Result<(Plan, Plan), String> {
+        let from = last.succ_opt().ok_or("start_on: дата за пределами календаря")?;
+        let next = Plan { id: Uuid::new_v4(), series_id: self.series_id, effective_from: Some(from), ..changed };
+        if next.dates(from, NaiveDate::MAX).is_empty() {
+            return Err(format!(
+                "start_on: у нового правила нет дат после {last}, а прошлые вхождения уже в истории — для разового платежа создайте новый план"
+            ));
+        }
+        let mut old = self.clone();
+        old.end_on = Some(self.end_on.map_or(last, |e| e.min(last)));
+        Ok((old, next))
     }
 
     pub fn change(&mut self, d: PlanData) -> Result<(), String> {
@@ -182,6 +216,7 @@ impl Plan {
 
     /// Даты вхождений в периоде [from, to] (без учёта `active`).
     pub fn dates(&self, from: NaiveDate, to: NaiveDate) -> Vec<NaiveDate> {
+        let from = self.effective_from.map_or(from, |e| e.max(from));
         let to = self.end_on.map_or(to, |e| e.min(to));
         if to < from || to < self.start_on {
             return Vec::new();
@@ -274,8 +309,7 @@ impl ToBase {
         if currency == self.base {
             return Some(amount);
         }
-        let mine = self.rates.iter().filter(|r| r.0 == currency);
-        let rate = mine.clone().filter(|r| r.1 <= date).max_by_key(|r| r.1).or_else(|| mine.min_by_key(|r| r.1))?.2;
+        let rate = kernel::rates::rate_on(&self.rates, currency, &self.base, date)?;
         Some((amount * rate).round_dp(2))
     }
 }

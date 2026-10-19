@@ -279,9 +279,12 @@
       return s;
     }
     function warn() {
-      if (!note || kind() !== 'EXPENSE' || (refund && refund.checked)) { if (note) note.textContent = ''; return; }
+      var k = kind();
+      if (!note || (k !== 'EXPENSE' && k !== 'INCOME')) { if (note) note.textContent = ''; return; }
       loadLimits().then(function (d) {
         var acc = (d.accounts || []).filter(function (a) { return a.code === ($('[name=account_code]', form) || {}).value; })[0];
+        if (acc && acc.rate_to_base == null) { showNoRate(note, acc); return; }
+        if (k !== 'EXPENSE' || (refund && refund.checked)) { note.className = 'limit-note'; note.textContent = ''; return; }
         var rate = acc ? parseFloat(acc.rate_to_base) : 1;
         var per = {};
         $$('[data-line]', form).forEach(function (row) {
@@ -311,7 +314,7 @@
       filterCats(); total(); warn(); syncTransfer();
     });
     $$('[data-amount], [data-sent], [data-received], [data-fee]', form).forEach(function (i) { i.addEventListener('blur', function () { var v = evalAmount(i.value); if (!isNaN(v) && /[+*/]|\d-/.test(i.value)) { i.value = String(v); syncTransfer(); } }); });
-    filterCats(); total(); syncKind();
+    filterCats(); total(); syncKind(); warn();
   });
   }
 
@@ -331,6 +334,11 @@
     }
     if (available == null) return worst ? { rank: worst.rank, pct: worst.pct, title: worst.title, left: null } : null;
     return { rank: worst ? worst.rank : (available < 0 ? 2 : 0), pct: worst ? worst.pct : 0, title: worst ? worst.title : '', left: available };
+  }
+  // Нет курса валюты счёта к базовой: лимит не посчитать, а сумма не войдёт в бюджет, пока курс не добавят.
+  function showNoRate(el, acc) {
+    el.className = 'limit-note warn';
+    el.textContent = (i18n.noRate || '').replace('{cur}', acc.currency);
   }
   function showLimit(el, w, base) {
     el.className = 'limit-note';
@@ -621,9 +629,10 @@
   }
   function updateCurrency() { var a = account(); $('#q-cur').textContent = a ? a.symbol : ''; }
   function updateLimit() {
-    var el = $('#q-limit');
+    var el = $('#q-limit'), a = account();
+    if (Q.data && a && a.rate_to_base == null && Q.kind !== 'TRANSFER') { showNoRate(el, a); return; }
     if (!Q.data || Q.kind !== 'EXPENSE' || !Q.category) { el.textContent = ''; el.className = 'limit-note'; return; }
-    var v = evalAmount($('#q-amount').value), a = account();
+    var v = evalAmount($('#q-amount').value);
     var amount = (isNaN(v) ? 0 : v) * (a ? parseFloat(a.rate_to_base) : 1);
     var w = limitWarning(Q.data, Q.category, amount);
     if (w && w.left != null && isNaN(v) && w.rank === 0) { el.className = 'limit-note'; el.textContent = (i18n.available || '') + ': ' + money(w.left) + ' ' + (baseSym || Q.data.base_currency); return; }
@@ -723,7 +732,7 @@
       Q.data.default_account = payload.account_code;
       var freq = Q.kind === 'INCOME' ? Q.data.frequent_income : Q.data.frequent_expense;
       if (freq.indexOf(Q.category) < 0) { freq.unshift(Q.category); freq.length = Math.min(freq.length, 6); }
-      if (cat && Q.kind === 'EXPENSE') { cat.forecast = String(parseFloat(cat.forecast) + amount * (acc ? parseFloat(acc.rate_to_base) : 1)); }
+      if (cat && Q.kind === 'EXPENSE' && !(acc && acc.rate_to_base == null)) { cat.forecast = String(parseFloat(cat.forecast) + amount * (acc ? parseFloat(acc.rate_to_base) : 1)); }
       limitsCache = null;
       if (more) { resetForm(true); $('#q-amount').focus(); } else dlg.close();
       refreshPage();

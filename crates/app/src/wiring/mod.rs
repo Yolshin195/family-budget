@@ -2,8 +2,8 @@
 //! Блоки между маркерами @arch:* ведёт `arch.py`: каждая строка помечена `// @f:<фича>`.
 //! Связки (адаптеры портов «потребитель → поставщик») лежат в wire_<потребитель>.rs.
 //!
-//! В этом проекте строки фич projects, accounts, transactions, planning, budget, mcp написаны вручную
-//! (у этих фич нет feature.json — `upgrade` их не трогает): их порты шире, чем `exists`.
+//! В этом проекте строки фич projects, currencies, accounts, categories, transactions, planning, budget, mcp
+//! написаны вручную (у этих фич нет feature.json — `upgrade` их не трогает): их порты шире, чем `exists`.
 
 #[allow(unused_imports)]
 use std::sync::Arc;
@@ -13,6 +13,8 @@ use kernel::feature::Feature;
 
 // @arch:mods:begin
 #[cfg(feature = "projects")] pub mod wire_projects; // @f:projects
+#[cfg(feature = "currencies")] mod wire_currencies; // @f:currencies
+#[cfg(feature = "categories")] mod wire_categories; // @f:categories
 #[cfg(feature = "rates")] mod wire_rates; // @f:rates
 #[cfg(feature = "accounts")] mod wire_accounts; // @f:accounts
 #[cfg(feature = "transactions")] mod wire_transactions; // @f:transactions
@@ -41,8 +43,10 @@ pub fn features(ctx: &AppContext) -> Wired {
     let mut list: Vec<Feature> = Vec::new();
     let _ = ctx;
     // @arch:build:begin
-    #[cfg(feature = "currencies")] let currencies_api = currencies::api(ctx, currencies::Deps {}); // @f:currencies
-    #[cfg(feature = "categories")] let categories_api = categories::api(ctx, categories::Deps {}); // @f:categories
+    #[cfg(feature = "currencies")] let currency_usage = wire_currencies::UsageAdapter::default(); // @f:currencies
+    #[cfg(feature = "currencies")] let currencies_api = currencies::api(ctx, currencies::Deps { usage: Arc::new(currency_usage.clone()) }); // @f:currencies
+    #[cfg(feature = "categories")] let category_usage = wire_categories::UsageAdapter::default(); // @f:categories
+    #[cfg(feature = "categories")] let categories_api = categories::api(ctx, categories::Deps { usage: Arc::new(category_usage.clone()) }); // @f:categories
     #[cfg(feature = "projects")] let purge = wire_projects::PurgeAdapter::default(); // @f:projects
     #[cfg(feature = "projects")] let bootstrap = wire_projects::BootstrapAdapter::new(currencies_api.clone(), categories_api.clone()); // @f:projects
     #[cfg(feature = "projects")] let projects_api = projects::api(ctx, projects::Deps { bootstrap: Arc::new(bootstrap.clone()), purge: Arc::new(purge.clone()), identity: projects::identity_provider(ctx) }); // @f:projects
@@ -55,12 +59,14 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "accounts")] list.push(accounts::feature(accounts_api.clone())); // @f:accounts
     #[cfg(feature = "categories")] list.push(categories::feature(categories_api.clone())); // @f:categories
     #[cfg(feature = "transactions")] let budget_view = wire_transactions::BudgetViewAdapter::default(); // @f:transactions
-    #[cfg(feature = "transactions")] let transactions_api = transactions::api(ctx, transactions::Deps { accounts: Arc::new(wire_transactions::AccountsLookupAdapter(accounts_api.clone(), currencies_api.clone())), categories: Arc::new(wire_transactions::CategoriesLookupAdapter(categories_api.clone())), budget: Arc::new(budget_view.clone()) }); // @f:transactions
+    #[cfg(feature = "transactions")] let plans_lookup = wire_transactions::PlansLookupAdapter::default(); // @f:transactions
+    #[cfg(feature = "transactions")] let transactions_api = transactions::api(ctx, transactions::Deps { accounts: Arc::new(wire_transactions::AccountsLookupAdapter(accounts_api.clone(), currencies_api.clone())), categories: Arc::new(wire_transactions::CategoriesLookupAdapter(categories_api.clone())), budget: Arc::new(budget_view.clone()), plans: Arc::new(plans_lookup.clone()) }); // @f:transactions
     #[cfg(feature = "transactions")] let _ = ledger.0.set(transactions_api.clone()); // @f:transactions
     #[cfg(feature = "transactions")] list.push(transactions::feature(transactions_api.clone())); // @f:transactions
     #[cfg(feature = "limits")] let limits_api = limits::api(ctx, limits::Deps { categories: Arc::new(wire_limits::CategoriesLookupAdapter(categories_api.clone())) }); // @f:limits
     #[cfg(feature = "limits")] list.push(limits::feature(limits_api.clone())); // @f:limits
     #[cfg(feature = "planning")] let planning_api = planning::api(ctx, planning::Deps { payments: Arc::new(wire_planning::PaymentsAdapter(transactions_api.clone())), accounts: Arc::new(wire_planning::AccountsAdapter(accounts_api.clone())), categories: Arc::new(wire_planning::CategoriesAdapter(categories_api.clone())), rates: Arc::new(wire_planning::RatesAdapter(rates_api.clone())) }); // @f:planning
+    #[cfg(feature = "planning")] let _ = plans_lookup.0.set(planning_api.clone()); // @f:planning
     #[cfg(feature = "planning")] list.push(planning::feature(planning_api.clone())); // @f:planning
     #[cfg(feature = "budget")] let budget_api = budget::api(ctx, budget::Deps { categories: Arc::new(wire_budget::CategoriesAdapter(categories_api.clone())), facts: Arc::new(wire_budget::FactsAdapter(transactions_api.clone())), plans: Arc::new(wire_budget::PlansAdapter(planning_api.clone())), limits: Arc::new(wire_budget::LimitsAdapter(limits_api.clone())), accounts: Arc::new(wire_budget::AccountsAdapter(accounts_api.clone())), rates: Arc::new(wire_budget::RatesAdapter(rates_api.clone())) }); // @f:budget
     #[cfg(feature = "budget")] let _ = budget_view.0.set(budget_api.clone()); // @f:budget
@@ -70,6 +76,19 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "mcp")] let mcp_api = mcp::api(ctx, mcp::Deps { ledger: Arc::new(wire_mcp::LedgerAdapter(transactions_api.clone())), budget: Arc::new(wire_mcp::BudgetAdapter(budget_api.clone())), plans: Arc::new(wire_mcp::PlansAdapter(planning_api.clone())), directories: Arc::new(wire_mcp::DirectoriesAdapter { currencies: currencies_api.clone(), accounts: accounts_api.clone(), categories: categories_api.clone() }), rates: Arc::new(wire_mcp::RatesAdapter(rates_api.clone())), limits: Arc::new(wire_mcp::LimitsAdapter(limits_api.clone())), accounts: Arc::new(wire_mcp::AccountsAdapter(projects_api.clone())), authenticator: projects_api.clone(), memberships: projects_api.clone() }); // @f:mcp
     #[cfg(feature = "mcp")] list.push(mcp::feature(ctx, mcp_api.clone())); // @f:mcp
     // @arch:build:end
+    // Где используются валюты и категории (этап 0, Ц2 и Ц8): фичи, собранные после справочников.
+    #[cfg(all(feature = "currencies", feature = "transactions"))] let _ = currency_usage.transactions.set(transactions_api.clone());
+    #[cfg(all(feature = "currencies", feature = "accounts"))] let _ = currency_usage.accounts.set(accounts_api.clone());
+    #[cfg(all(feature = "currencies", feature = "projects"))] let _ = currency_usage.projects.set(projects_api.clone());
+    #[cfg(feature = "categories")]
+    {
+        #[allow(unused_mut)]
+        let mut sources: Vec<Arc<dyn wire_categories::UsageSource>> = Vec::new();
+        #[cfg(feature = "transactions")] sources.push(transactions_api.clone());
+        #[cfg(feature = "planning")] sources.push(planning_api.clone());
+        #[cfg(feature = "limits")] sources.push(limits_api.clone());
+        let _ = category_usage.0.set(sources);
+    }
     // Стартовый счёт нового проекта — когда фича `accounts` включена.
     #[cfg(all(feature = "projects", feature = "accounts"))] let _ = bootstrap.accounts.set(accounts_api.clone());
     // Очистка данных проекта: сначала операции и планы, потом справочники.

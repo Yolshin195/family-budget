@@ -156,7 +156,15 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
 
 /// Архив без «Вы уверены?»: тост с «Отменить» на 5 секунд.
 async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
-    svc.archive(page.session.project_id, &code).await?;
+    // Базовая валюта и валюта активных счетов в архив не уходят: тост с причиной.
+    match svc.archive(page.session.project_id, &code).await {
+        Ok(()) => {}
+        Err(AppError::Conflict(m)) => {
+            let text = m.split_once(": ").map(|x| x.1.to_string()).unwrap_or(m);
+            return Ok(see_other_flash(&page.config, &format!("/currencies/{}/edit", kernel::web::url_encode(&code)), Flash::error(text)));
+        }
+        Err(e) => return Err(PageError(e)),
+    }
     let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/currencies/{}/restore", kernel::web::url_encode(&code)));
     Ok(see_other_flash(&page.config, "/currencies", flash))
 }

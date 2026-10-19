@@ -274,6 +274,8 @@ pub fn safe_next(next: &str) -> String {
 pub const SESSION_IDLE: Duration = Duration::days(7);
 /// Абсолютный срок жизни сессии.
 pub const SESSION_MAX: Duration = Duration::days(30);
+/// Сессия гостя демо — сутки (столько же живёт её cookie).
+pub const GUEST_SESSION_MAX: Duration = Duration::hours(24);
 /// Как часто обновлять `last_seen_at` (чтобы не писать в БД на каждый запрос).
 pub const TOUCH_EVERY: Duration = Duration::minutes(5);
 
@@ -293,6 +295,12 @@ pub struct SessionRecord {
 impl SessionRecord {
     pub fn new(id_hash: String, user_id: Uuid, mfa: bool, ip: Option<String>, user_agent: Option<String>, now: DateTime<Utc>) -> Self {
         Self { id_hash, user_id, created_at: now, last_seen_at: now, expires_at: now + SESSION_MAX, mfa, ip, user_agent, revoked_at: None }
+    }
+
+    /// Абсолютный срок жизни короче обычного (гость демо).
+    pub fn lasting(mut self, max: Duration) -> Self {
+        self.expires_at = self.created_at + max;
+        self
     }
 
     /// Действует: не отозвана, не истекла, неактивность меньше 7 дней.
@@ -322,6 +330,8 @@ pub struct ApiToken {
     pub last_used_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// Выпущен из сессии со вторым фактором: в проекте с обязательной 2FA токен без него не действует.
+    pub mfa: bool,
 }
 
 impl ApiToken {
@@ -356,12 +366,13 @@ pub fn normalize_scopes(scopes: &[String]) -> Result<Vec<String>, String> {
 /// События журнала (свои пользователь видит в профиле). Входы и 2FA дополнительно ведёт Rauthy.
 pub mod action {
     pub const LOGIN: &str = "login";
+    /// Вход не удался (ошибка от Rauthy, неверный state, ID-токен не прошёл проверку). Без пользователя.
+    pub const LOGIN_FAILED: &str = "login_failed";
     pub const LOGOUT: &str = "logout";
     pub const LOGOUT_ALL: &str = "logout_all";
     pub const SESSION_REVOKED: &str = "session_revoked";
     pub const PROJECT_CREATED: &str = "project_created";
     pub const PROJECT_DELETED: &str = "project_deleted";
-    pub const MEMBER_ADDED: &str = "member_added";
     pub const MEMBER_ROLE: &str = "member_role_changed";
     pub const MEMBER_REMOVED: &str = "member_removed";
     pub const MEMBER_JOINED: &str = "member_joined";
