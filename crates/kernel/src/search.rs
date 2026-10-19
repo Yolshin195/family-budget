@@ -19,11 +19,18 @@ pub fn join<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
 }
 
 /// Строка для сравнения: нижний регистр, без диакритики латиницы и кириллицы (Café → cafe, ё → е),
-/// пробелы схлопнуты. Тайские знаки гласных и тона остаются — без них разные слова совпадают.
+/// пробелы схлопнуты. «й» остаётся буквой («Мой» ≠ «Мои»), тайские знаки гласных и тона — тоже: без них
+/// разные слова совпадают.
 pub fn fold(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut space = false;
     for c in s.trim().to_lowercase().nfd() {
+        // NFD раскладывает «й» на «и» + кратку — собираем обратно.
+        if c == '\u{306}' && out.ends_with('и') {
+            out.pop();
+            out.push('й');
+            continue;
+        }
         if ('\u{300}'..='\u{36f}').contains(&c) {
             continue;
         }
@@ -81,6 +88,7 @@ mod tests {
     fn fold_ignores_case_and_diacritics_but_keeps_thai() {
         assert_eq!(fold("  Café   Amazon "), "cafe amazon");
         assert_eq!(fold("Ёлка"), "елка");
+        assert_eq!(fold("ЙОГУРТ Мой"), "йогурт мой", "й — буква, а не и с диакритикой");
         assert_eq!(fold("Phở Đà Nẵng"), "pho da nang");
         assert_eq!(fold("ร้านกาแฟ"), "ร้านกาแฟ");
         assert_eq!(fold(&join(["Car wash", "ล้างรถ"])), format!("car wash{SEP}ล้างรถ"), "разделитель не пробел");

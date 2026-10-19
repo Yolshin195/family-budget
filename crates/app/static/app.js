@@ -633,9 +633,10 @@
     while (p) { names.unshift(p.title); p = p.parent_code ? catByCode(p.parent_code) : null; }
     return names.join(' › ');
   }
-  // Как kernel::search::fold: без регистра и диакритики латиницы и кириллицы (Café → cafe, ё → е), пробелы схлопнуты.
+  // Как kernel::search::fold: без регистра и диакритики латиницы и кириллицы (Café → cafe, ё → е), «й» остаётся,
+  // пробелы схлопнуты.
   function fold(s) {
-    return s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/\s+/g, ' ');
+    return s.trim().toLowerCase().normalize('NFD').replace(/\u0438\u0306/g, '\u0439').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/\s+/g, ' ');
   }
   function renderResults() {
     var q = fold(search.value);

@@ -10,9 +10,9 @@
 {% block content %}
 <div class="toolbar">
   <nav class="pager" aria-label="{{ page.t("month_nav") }}">
-    <a class="btn-icon" href="?month={{ prev }}&amp;account={{ params.account }}&amp;kind={{ params.kind }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("prev_month") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
+    <a class="btn-icon" href="?month={{ prev }}&amp;account={{ kernel::web::url_encode(params.account) }}&amp;kind={{ params.kind }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("prev_month") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
     <span class="pager-title" aria-live="polite">{{ month_title }}</span>
-    <a class="btn-icon" href="?month={{ next }}&amp;account={{ params.account }}&amp;kind={{ params.kind }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("next_month") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
+    <a class="btn-icon" href="?month={{ next }}&amp;account={{ kernel::web::url_encode(params.account) }}&amp;kind={{ params.kind }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("next_month") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
   </nav>
   <form class="filters" method="get" data-autosubmit>
     <input type="hidden" name="month" value="{{ month }}">
@@ -47,7 +47,7 @@
   {% endfor %}
 </div>
 {% if statement.is_some() && page.can_write() %}
-<p class="mb-4 -mt-2 text-sm"><a class="link" href="/transactions/reconcile?account={{ params.account }}">{{ page.t("reconcile") }}</a></p>
+<p class="mb-4 -mt-2 text-sm"><a class="link" href="/transactions/reconcile?account={{ kernel::web::url_encode(params.account) }}">{{ page.t("reconcile") }}</a></p>
 {% endif %}
 {% if truncated %}<p class="alert alert-warn mb-4" role="status">{{ page.t("feed_truncated") }}</p>{% endif %}
 {% for g in days %}
