@@ -8,7 +8,7 @@ use kernel::i18n::Lang;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::{Amount, Period, Row, compute, rate_on};
+use crate::domain::{Amount, NoRate, Period, Row, attach_no_rate, compute, rate_on};
 use crate::ports::{Deps, PlannedRec};
 
 pub struct BudgetService {
@@ -43,7 +43,7 @@ pub struct Report {
     pub fx_result: Decimal,
     /// Нерешённые вхождения планов за период (в базовой валюте), по дате.
     pub upcoming: Vec<PlannedRec>,
-    /// Валюты без курса к базовой — их суммы посчитаны как 1:1.
+    /// Валюты без курса к базовой — их суммы не вошли в итоги (у строк — `no_rate`).
     pub missing_rates: Vec<String>,
 }
 
@@ -86,17 +86,18 @@ impl BudgetService {
 
         let currency_of: HashMap<&str, &str> = accounts.iter().map(|a| (a.code.as_str(), a.currency.as_str())).collect();
         let mut missing = BTreeSet::new();
-        // Пересчёт между валютами через базовую по курсам на дату; без курса — 1:1.
-        let mut convert = |from: &str, to: &str, amount: Decimal, date: NaiveDate| -> Decimal {
+        // Пересчёт между валютами через базовую по курсам на дату. Без курса суммы нет (этап 0, Ц3):
+        // раньше она считалась 1:1 и молча портила итоги.
+        let mut convert = |from: &str, to: &str, amount: Decimal, date: NaiveDate| -> Option<Decimal> {
             if from == to {
-                return amount.round_dp(2);
+                return Some(amount.round_dp(2));
             }
             match (rate_on(&rates, from, base_currency, date), rate_on(&rates, to, base_currency, date)) {
-                (Some(a), Some(b)) if !b.is_zero() => (amount * a / b).round_dp(2),
+                (Some(a), Some(b)) if !b.is_zero() => Some((amount * a / b).round_dp(2)),
                 (a, b) => {
                     missing.extend(a.is_none().then(|| from.to_string()));
                     missing.extend(b.is_none().then(|| to.to_string()));
-                    amount
+                    None
                 }
             }
         };
@@ -105,13 +106,26 @@ impl BudgetService {
 
         let (mut exp_f, mut exp_p, mut inc_f, mut inc_p) = (Decimal::ZERO, Decimal::ZERO, Decimal::ZERO, Decimal::ZERO);
         let mut fact_amounts = Vec::new();
+        // Факт без курса не входит ни в категорию, ни в итоги — его покажет строка категории.
+        let mut no_rate = Vec::new();
         for f in facts.iter().filter(|f| mine(f.created_by)) {
-            let a = convert(&f.currency, base_currency, f.amount, f.date);
+            let Some(a) = convert(&f.currency, base_currency, f.amount, f.date) else {
+                no_rate.push(NoRate { category_code: f.category_code.clone(), currency: f.currency.clone(), amount: f.amount });
+                continue;
+            };
             if f.kind == "EXPENSE" { exp_f += a } else { inc_f += a }
             fact_amounts.push(Amount { category_code: f.category_code.clone(), amount: a });
         }
         // Обмен валют: проводки «Обмен валют» в базовой валюте. Отдали больше, чем получили, — потеря.
-        let fx_result = -exchange.iter().filter(|x| mine(x.created_by)).map(|x| convert(&x.currency, base_currency, x.amount, x.date)).sum::<Decimal>();
+        // Обмен, у которого одну сторону не пересчитать, в разницу не входит целиком: иначе половина
+        // обмена выглядела бы потерей всей суммы.
+        let mut by_tx: HashMap<Uuid, Option<Decimal>> = HashMap::new();
+        for x in exchange.iter().filter(|x| mine(x.created_by)) {
+            let a = convert(&x.currency, base_currency, x.amount, x.date);
+            let e = by_tx.entry(x.transaction_id).or_insert(Some(Decimal::ZERO));
+            *e = e.zip(a).map(|(s, a)| s + a);
+        }
+        let fx_result = -by_tx.into_values().flatten().sum::<Decimal>();
         let mut plan_amounts = Vec::new();
         let mut upcoming = Vec::new();
         // Изменение остатков счетов нерешёнными планами (в валютах счетов).
@@ -122,12 +136,19 @@ impl BudgetService {
             *pending.entry(p.account_code.clone()).or_default() += sign * p.amount;
             if let Some(to) = p.to_account_code.as_deref().filter(|_| p.kind == "TRANSFER") {
                 let to_cur = currency_of.get(to).copied().unwrap_or(base_currency);
-                *pending.entry(to.to_string()).or_default() += convert(cur, to_cur, p.amount, p.date);
+                // Без курса сколько придёт на счёт зачисления, неизвестно — прогноз его остатка не трогаем.
+                if let Some(got) = convert(cur, to_cur, p.amount, p.date) {
+                    *pending.entry(to.to_string()).or_default() += got;
+                }
             }
             if p.date < period.from {
                 continue;
             }
-            let a = convert(cur, base_currency, p.amount, p.date);
+            let Some(a) = convert(cur, base_currency, p.amount, p.date) else {
+                // В план и итоги не входит; в «Предстоящих» — в валюте счёта.
+                upcoming.push(PlannedRec { currency: Some(cur.to_string()), ..p });
+                continue;
+            };
             // Плановый перевод не меняет доходы и расходы — он только виден в «Предстоящих».
             if let Some(code) = p.category_code.clone().filter(|_| p.kind != "TRANSFER") {
                 if p.kind == "EXPENSE" { exp_p += a } else { inc_p += a }
@@ -137,11 +158,12 @@ impl BudgetService {
         }
         upcoming.sort_by_key(|p| p.date);
 
-        let rows = compute(&nodes, &fact_amounts, &plan_amounts, &limits, &period);
+        let mut rows = compute(&nodes, &fact_amounts, &plan_amounts, &limits, &period);
+        attach_no_rate(&mut rows, &no_rate);
         // Архивные категории без движения не показываем.
         let visible = |r: &Row| {
             let archived = nodes.iter().any(|n| n.code == r.code && n.archived);
-            !archived || !r.forecast.is_zero()
+            !archived || !r.forecast.is_zero() || !r.no_rate.is_empty()
         };
         let (expenses, incomes): (Vec<Row>, Vec<Row>) = rows.into_iter().filter(visible).partition(|r| r.kind == "EXPENSE");
 

@@ -395,7 +395,7 @@ impl McpService {
         };
         let mut data = base;
         data["default_account"] = json!(q.default_account);
-        data["accounts"] = q.accounts.iter().map(|a| json!({"code": a.code, "title": a.title, "currency": a.currency, "symbol": a.symbol, "balance": balance(&a.code)})).collect();
+        data["accounts"] = q.accounts.iter().map(|a| json!({"code": a.code, "title": a.title, "currency": a.currency, "symbol": a.symbol, "balance": balance(&a.code), "has_rate": a.has_rate})).collect();
         data["expense_categories"] = q.categories.iter().filter(|c| c.kind == "EXPENSE").map(cat).collect();
         data["income_categories"] = q.categories.iter().filter(|c| c.kind == "INCOME").map(cat).collect();
         data["frequent_expense_categories"] = json!(q.frequent_expense);
@@ -498,14 +498,26 @@ impl McpService {
         let lines: Vec<Value> = r
             .lines
             .iter()
-            .filter(|l| !(l.fact.is_zero() && l.planned.is_zero() && l.limit.is_none()))
+            .filter(|l| !(l.fact.is_zero() && l.planned.is_zero() && l.limit.is_none() && l.no_rate.is_empty()))
             .map(|l| {
-                json!({"code": l.code, "title": l.title, "kind": l.kind, "parent": l.parent_code, "depth": l.depth, "limit": l.limit, "fact": l.fact, "planned": l.planned, "forecast": l.forecast, "available": l.available, "level": l.level})
+                let mut v = json!({"code": l.code, "title": l.title, "kind": l.kind, "parent": l.parent_code, "depth": l.depth, "limit": l.limit, "fact": l.fact, "planned": l.planned, "forecast": l.forecast, "available": l.available, "level": l.level});
+                if !l.no_rate.is_empty() {
+                    v["no_rate"] = l.no_rate.iter().map(|(c, a)| json!({"currency": c, "amount": a})).collect();
+                }
+                v
             })
             .collect();
+        let no_rate = if r.missing_rates.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " No exchange rate for {}: those amounts are left out of all sums and totals (see no_rate per category); add a rate with set_rate.",
+                r.missing_rates.join(", ")
+            )
+        };
         Ok(ToolOutput {
             summary: format!(
-                "Budget {} – {} in {}: expenses {} (+{} planned), income {} (+{} planned). Category sums include subcategories; level warn = ≥80% of limit, over = above limit.",
+                "Budget {} – {} in {}: expenses {} (+{} planned), income {} (+{} planned). Category sums include subcategories; level warn = ≥80% of limit, over = above limit.{no_rate}",
                 r.from, r.to, r.base_currency, r.expense_fact, r.expense_planned, r.income_fact, r.income_planned
             ),
             data: json!({
@@ -587,6 +599,14 @@ impl McpService {
                 " Note: the default account {} is in {}, not the base currency {} — if the user meant another currency, move it with update_transaction (account).",
                 tx.account_code, tx.currency, caller.base_currency
             ));
+        }
+        if q.accounts.iter().any(|a| a.code == tx.account_code && !a.has_rate) {
+            // Без курса сумма не войдёт в бюджет — пусть пользователь добавит курс (этап 0, Ц3).
+            summary.push_str(&format!(
+                " Note: there is no exchange rate {} → {} — this amount is left out of the budget totals until the user adds a rate (set_rate).",
+                tx.currency, caller.base_currency
+            ));
+            data["no_rate"] = json!(tx.currency);
         }
         if kind == "EXPENSE" {
             // Остаток лимитов после записи — как в диалоге быстрого расхода.

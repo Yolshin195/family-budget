@@ -47,7 +47,7 @@ impl ::budget::FactsSource for FactsAdapter {
             .exchange(project_id, from, to)
             .await?
             .into_iter()
-            .map(|x| ExchangeRec { date: x.occurred_on, currency: x.currency, amount: x.amount, created_by: x.created_by })
+            .map(|x| ExchangeRec { transaction_id: x.transaction_id, date: x.occurred_on, currency: x.currency, amount: x.amount, created_by: x.created_by })
             .collect())
     }
 }
@@ -72,6 +72,7 @@ impl ::budget::PlansSource for PlansAdapter {
                 category_code: o.plan.category_code,
                 to_account_code: o.plan.to_account_code,
                 amount: o.plan.amount,
+                currency: None,
                 status: o.status,
             })
             .collect())

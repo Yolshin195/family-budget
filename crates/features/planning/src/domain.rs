@@ -309,8 +309,7 @@ impl ToBase {
         if currency == self.base {
             return Some(amount);
         }
-        let mine = self.rates.iter().filter(|r| r.0 == currency);
-        let rate = mine.clone().filter(|r| r.1 <= date).max_by_key(|r| r.1).or_else(|| mine.min_by_key(|r| r.1))?.2;
+        let rate = kernel::rates::rate_on(&self.rates, currency, &self.base, date)?;
         Some((amount * rate).round_dp(2))
     }
 }

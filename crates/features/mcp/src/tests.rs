@@ -44,8 +44,9 @@ fn quick_info() -> QuickInfo {
     QuickInfo {
         default_account: Some("CASH".into()),
         accounts: vec![
-            AccountInfo { code: "CASH".into(), title: "Наличные".into(), currency: "THB".into(), symbol: "฿".into() },
-            AccountInfo { code: "CARD".into(), title: "Карта".into(), currency: "THB".into(), symbol: "฿".into() },
+            AccountInfo { code: "CASH".into(), title: "Наличные".into(), currency: "THB".into(), symbol: "฿".into(), has_rate: true },
+            AccountInfo { code: "CARD".into(), title: "Карта".into(), currency: "THB".into(), symbol: "฿".into(), has_rate: true },
+            AccountInfo { code: "WISE".into(), title: "Wise".into(), currency: "USD".into(), symbol: "$".into(), has_rate: false },
         ],
         categories: vec![
             cat("FOOD", None, "EXPENSE", "Еда", "Еда Food อาหาร"),
@@ -70,7 +71,7 @@ fn tx_of(id: Uuid, user: Uuid, d: &TxDraft) -> Tx {
         refund: d.refund,
         lines: d.lines.clone(),
         total,
-        currency: "THB".into(),
+        currency: if d.account_code == "WISE" { "USD" } else { "THB" }.into(),
         to_amount: d.to_amount,
         to_currency: d.to_account_code.as_ref().map(|_| "THB".into()),
         fee_category_code: d.fee_category_code.clone(),
@@ -1148,4 +1149,17 @@ fn amounts_dates_and_lookup() {
     assert_eq!(pick("Car").unwrap(), "CAR", "точный код важнее подстроки");
     assert!(pick("รถ").is_err(), "неоднозначно: Машина (รถ) и Мойка (ล้างรถ)");
     let _ = Utc::now();
+}
+
+/// Ц3: у счёта в USD нет курса — расход записан, но Claude предупреждает: в бюджет сумма не войдёт.
+#[tokio::test]
+async fn expense_without_rate_is_flagged() {
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let out = e.svc.add_expense(&c, AddFlowArgs { account: Some("WISE".into()), ..expense("10", "cafe") }).await.unwrap();
+    assert!(out.summary.contains("no exchange rate USD → THB"), "{}", out.summary);
+    assert_eq!(out.data["no_rate"], "USD");
+    let ok = e.svc.add_expense(&c, expense("10", "cafe")).await.unwrap();
+    assert!(!ok.summary.contains("no exchange rate") && ok.data.get("no_rate").is_none());
 }

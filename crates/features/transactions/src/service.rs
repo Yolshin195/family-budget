@@ -242,12 +242,8 @@ impl TransactionService {
         let cats = self.deps.categories.infos(project_id, lang).await?;
         let limits = self.deps.budget.limits(project_id, base_currency, date, lang).await?;
         let rates = self.deps.budget.rates(project_id, base_currency, date).await?;
-        let rate = |cur: &str| {
-            if cur == base_currency {
-                return Decimal::ONE;
-            }
-            rates.iter().find(|r| r.0 == cur).map(|r| r.1).unwrap_or(Decimal::ONE)
-        };
+        // Без курса — пусто, а не 1 (этап 0, Ц3): форма и MCP предупредят «нет курса».
+        let rate = |cur: &str| if cur == base_currency { Some(Decimal::ONE) } else { rates.iter().find(|r| r.0 == cur).map(|r| r.1) };
         let active = |code: &str| accounts.iter().any(|a| a.code == code);
         let default_account = expense
             .last_account

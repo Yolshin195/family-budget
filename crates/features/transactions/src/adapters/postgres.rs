@@ -276,8 +276,8 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn exchange(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<ExchangeLine>> {
-        let rows: Vec<(NaiveDate, String, Decimal, Uuid)> = sqlx::query_as(
-            "SELECT t.occurred_on, p.currency_code, p.amount, t.created_by \
+        let rows: Vec<(Uuid, NaiveDate, String, Decimal, Uuid)> = sqlx::query_as(
+            "SELECT t.id, t.occurred_on, p.currency_code, p.amount, t.created_by \
              FROM fb_transactions t JOIN fb_postings p ON p.transaction_id = t.id \
              WHERE t.project_id = $1 AND t.occurred_on BETWEEN $2 AND $3 AND p.ref_kind = 'SYSTEM' AND p.ref_code = $4 \
              ORDER BY t.occurred_on, t.id, p.position",
@@ -288,7 +288,10 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(system::EXCHANGE)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(|(occurred_on, currency, amount, created_by)| ExchangeLine { occurred_on, currency, amount, created_by }).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(transaction_id, occurred_on, currency, amount, created_by)| ExchangeLine { transaction_id, occurred_on, currency, amount, created_by })
+            .collect())
     }
 
     async fn payments(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<Payment>> {

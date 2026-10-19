@@ -259,7 +259,7 @@ async fn quick_defaults_follow_user_habits() {
     assert_eq!(q.frequent_income, vec!["SALARY"]);
     let cafe = q.categories.iter().find(|c| c.code == "CAFE").unwrap();
     assert_eq!((cafe.available, cafe.search.contains("Cafe")), (Some(d("500")), true));
-    assert_eq!(q.accounts.iter().find(|a| a.code == "WISE").unwrap().rate_to_base, d("33.25"));
+    assert_eq!(q.accounts.iter().find(|a| a.code == "WISE").unwrap().rate_to_base, Some(d("33.25")));
     // через 30 дней привычки «остывают»
     let later = svc.quick_defaults(p, me, "THB", Lang::Ru, day(3) + chrono::Days::new(40)).await.unwrap();
     assert_eq!(later.frequent_expense, vec!["FOOD", "HOME"]);

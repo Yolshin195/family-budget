@@ -159,6 +159,8 @@ pub struct AccountInfo {
     pub title: String,
     pub currency: String,
     pub symbol: String,
+    /// Есть курс валюты счёта к базовой на дату: без него сумма не войдёт в бюджет (этап 0, Ц3).
+    pub has_rate: bool,
 }
 
 /// Категория дерева: названия на всех языках (`search`) и остаток лимита за месяц.
@@ -302,6 +304,8 @@ pub struct BudgetLine {
     pub available: Option<Decimal>,
     /// none / ok / warn (≥ 80 %) / over (> 100 %)
     pub level: String,
+    /// Суммы поддерева без курса к базовой валюте (валюта, сумма): в факт не вошли.
+    pub no_rate: Vec<(String, Decimal)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

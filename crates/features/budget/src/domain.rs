@@ -188,6 +188,34 @@ pub struct Row {
     pub level: Level,
     /// Сумма лимитов детей больше лимита узла.
     pub children_over_limit: bool,
+    /// Суммы поддерева без курса к базовой валюте (валюта, сумма): в факт и итоги не входят.
+    pub no_rate: Vec<(String, Decimal)>,
+}
+
+/// Сумма без курса к базовой валюте (этап 0, Ц3): её нельзя пересчитать, поэтому она не входит ни в
+/// факт, ни в итоги, а показывается в строке своей категории (и её предков) отдельно.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NoRate {
+    pub category_code: String,
+    pub currency: String,
+    pub amount: Decimal,
+}
+
+/// Разложить суммы без курса по строкам: у строки — суммы её поддерева по валютам.
+pub fn attach_no_rate(rows: &mut [Row], items: &[NoRate]) {
+    let index: HashMap<String, usize> = rows.iter().enumerate().map(|(i, r)| (r.code.clone(), i)).collect();
+    let parent: Vec<Option<usize>> = rows.iter().map(|r| r.parent_code.as_ref().and_then(|p| index.get(p).copied())).collect();
+    for item in items {
+        let mut at = index.get(&item.category_code).copied();
+        while let Some(i) = at {
+            let list = &mut rows[i].no_rate;
+            match list.iter_mut().find(|x| x.0 == item.currency) {
+                Some(x) => x.1 += item.amount,
+                None => list.push((item.currency.clone(), item.amount)),
+            }
+            at = parent[i];
+        }
+    }
 }
 
 /// Посчитать строки бюджета. `facts` и `planned` — уже в базовой валюте и уже отфильтрованы по периоду.
@@ -263,6 +291,7 @@ pub fn compute(nodes: &[Node], facts: &[Amount], planned: &[Amount], limits: &[L
             percent,
             level,
             children_over_limit: limit[i].is_some_and(|l| child_limits[i] > l),
+            no_rate: Vec::new(),
         });
     }
     rows
@@ -396,14 +425,8 @@ pub fn sort_tree(rows: Vec<Row>, key: SortKey, dir: Dir) -> Vec<Row> {
     order.into_iter().filter_map(|i| slots[i].take()).collect()
 }
 
-/// Курс валюты на дату: последний известный не позже даты, иначе самый ранний (для будущих дат — последний).
-pub fn rate_on(rates: &[(String, NaiveDate, Decimal)], currency: &str, base: &str, date: NaiveDate) -> Option<Decimal> {
-    if currency == base {
-        return Some(Decimal::ONE);
-    }
-    let mine = rates.iter().filter(|r| r.0 == currency);
-    mine.clone().filter(|r| r.1 <= date).max_by_key(|r| r.1).or_else(|| mine.min_by_key(|r| r.1)).map(|r| r.2)
-}
+/// Курс валюты на дату — общее правило из kernel (последний не позже даты, иначе самый ранний).
+pub use kernel::rates::rate_on;
 
 #[cfg(test)]
 mod tests {

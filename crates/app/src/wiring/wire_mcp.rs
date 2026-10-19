@@ -76,7 +76,7 @@ impl ::mcp::Ledger for LedgerAdapter {
         let q = self.0.quick_defaults(project_id, user_id, base_currency, lang, date).await?;
         Ok(QuickInfo {
             default_account: q.default_account,
-            accounts: q.accounts.into_iter().map(|a| ::mcp::AccountInfo { code: a.code, title: a.title, currency: a.currency, symbol: a.symbol }).collect(),
+            accounts: q.accounts.into_iter().map(|a| ::mcp::AccountInfo { has_rate: a.rate_to_base.is_some(), code: a.code, title: a.title, currency: a.currency, symbol: a.symbol }).collect(),
             categories: q
                 .categories
                 .into_iter()
@@ -135,6 +135,7 @@ impl ::mcp::Budget for BudgetAdapter {
                 forecast: x.forecast,
                 available: x.available,
                 level: x.level.code().into(),
+                no_rate: x.no_rate,
             })
             .collect();
         Ok(BudgetReport {

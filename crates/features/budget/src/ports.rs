@@ -27,6 +27,8 @@ pub struct FactRec {
 /// Проводка на системный счёт «Обмен валют» (со знаком, в своей валюте).
 #[derive(Debug, Clone)]
 pub struct ExchangeRec {
+    /// Обе стороны обмена — проводки одной транзакции.
+    pub transaction_id: Uuid,
     pub date: NaiveDate,
     pub currency: String,
     pub amount: Decimal,
@@ -46,6 +48,8 @@ pub struct PlannedRec {
     /// Счёт зачисления перевода.
     pub to_account_code: Option<String>,
     pub amount: Decimal,
+    /// Валюта `amount`, если сумму не пересчитать в базовую (нет курса); `None` — сумма в базовой.
+    pub currency: Option<String>,
     pub title: String,
     /// EXPECTED / OVERDUE
     pub status: String,

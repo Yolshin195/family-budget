@@ -111,7 +111,7 @@ impl TransactionRepository for InMemoryTransactionRepository {
                 r.postings
                     .iter()
                     .filter(|p| p.ref_kind == RefKind::System && p.ref_code == system::EXCHANGE)
-                    .map(move |p| ExchangeLine { occurred_on: r.occurred_on, currency: p.currency.clone(), amount: p.amount, created_by: r.created_by })
+                    .map(move |p| ExchangeLine { transaction_id: r.id, occurred_on: r.occurred_on, currency: p.currency.clone(), amount: p.amount, created_by: r.created_by })
             })
             .collect())
     }

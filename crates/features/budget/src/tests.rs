@@ -60,7 +60,7 @@ impl FactsSource for Fake {
             return Ok(vec![]);
         }
         // Обмен 3 400 ฿ → 100 $: по справочнику 100 $ = 3 300 ฿, потеряно 100 ฿.
-        let x = |cur: &str, a: &str| ExchangeRec { date: d(10, 3), currency: cur.into(), amount: dec(a), created_by: self.me };
+        let x = |cur: &str, a: &str| ExchangeRec { transaction_id: Uuid::nil(), date: d(10, 3), currency: cur.into(), amount: dec(a), created_by: self.me };
         Ok(vec![x("THB", "3400"), x("USD", "-100")])
     }
 }
@@ -79,6 +79,7 @@ impl PlansSource for Fake {
             category_code: cat.map(Into::into),
             to_account_code: (kind == "TRANSFER").then(|| "USD_CARD".into()),
             amount: dec(amount),
+            currency: None,
             title: "x".into(),
             status: "EXPECTED".into(),
         };
@@ -177,7 +178,8 @@ async fn month_limits_and_rates_for_quick_expense() {
     assert_eq!(svc.rates_on(P, "THB", d(10, 9)).await.unwrap(), vec![("USD".to_string(), dec("33"))]);
 }
 
-/// Ц3: курса USD нет — 10 $ не должны войти в расходы как 10 ฿.
+/// Ц3: курса USD нет — 10 $ не входят в расходы как 10 ฿, а видны в строке «Еда» отдельно; прогноз остатка
+/// USD-карты не растёт на плановый перевод, сумму которого не пересчитать.
 struct NoRates;
 
 #[async_trait::async_trait]
@@ -188,11 +190,15 @@ impl RatesSource for NoRates {
 }
 
 #[tokio::test]
-#[ignore = "Ц3: исправление ждёт утверждения разбора (docs/stage-0.md)"]
 async fn amount_without_rate_is_not_summed() {
     let f = Arc::new(Fake { me: Uuid::new_v4(), partner: Uuid::new_v4() });
     let svc = BudgetService::new(Deps { categories: f.clone(), facts: f.clone(), plans: f.clone(), limits: f.clone(), accounts: f.clone(), rates: Arc::new(NoRates) });
     let r = svc.report(P, "THB", Period::containing(View::Month, d(10, 9)), Lang::Ru, None, d(10, 9)).await.unwrap();
     assert_eq!(r.missing_rates, vec!["USD".to_string()]);
     assert_eq!(r.expense_fact, dec("300"), "10 $ без курса сложены с батами 1:1");
+    let food = r.expenses.iter().find(|x| x.code == "FOOD").unwrap();
+    assert_eq!((food.fact, food.no_rate.clone()), (dec("300"), vec![("USD".to_string(), dec("10"))]));
+    assert!(r.expenses.iter().find(|x| x.code == "CAFE").unwrap().no_rate.is_empty(), "10 $ — на «Еде», не на «Кафе»");
+    assert_eq!(r.fx_result, Decimal::ZERO, "обмен без курса не даёт курсовой разницы");
+    assert_eq!(r.accounts[1].forecast, dec("90"), "сколько долларов придёт по плановому переводу — неизвестно");
 }

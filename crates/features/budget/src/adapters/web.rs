@@ -70,6 +70,8 @@ struct RowView {
     level: &'static str,
     children_over: bool,
     is_zero: bool,
+    /// Суммы без курса к базовой валюте («10 $, 500 ₽») — в факт не вошли.
+    no_rate: String,
 }
 
 struct UpcomingView {
@@ -77,6 +79,8 @@ struct UpcomingView {
     date: String,
     title: String,
     amount: String,
+    /// Символ валюты суммы: базовой или, если курса нет, валюты счёта.
+    cur: String,
     overdue: bool,
     is_expense: bool,
     is_transfer: bool,
@@ -125,8 +129,9 @@ fn opt_money(lang: Lang, v: Option<Decimal>) -> String {
     v.map(|x| money_in(lang, x)).unwrap_or_default()
 }
 
-fn row_view(lang: Lang, r: Row) -> RowView {
+fn row_view(lang: Lang, cur: &dyn Fn(&str) -> String, r: Row) -> RowView {
     let money = |v: Decimal| money_in(lang, v);
+    let no_rate = r.no_rate.iter().map(|(c, v)| format!("{}\u{a0}{}", money(*v), cur(c))).collect::<Vec<_>>().join(", ");
     let inherited = match (r.remaining, r.available) {
         (None, Some(_)) => true,
         (Some(rem), Some(av)) => av < rem,
@@ -138,7 +143,8 @@ fn row_view(lang: Lang, r: Row) -> RowView {
         level: r.level.code(),
         children_over: r.children_over_limit,
         available_negative: r.available.is_some_and(|a| a < Decimal::ZERO),
-        is_zero: r.forecast.is_zero() && r.limit.is_none(),
+        is_zero: r.forecast.is_zero() && r.limit.is_none() && r.no_rate.is_empty(),
+        no_rate,
         inherited: inherited && r.level != Level::None,
         code: r.code,
         parent: r.parent_code.unwrap_or_default(),
@@ -188,6 +194,7 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
             date: format!("{:02}.{:02}", u.date.day(), u.date.month()),
             title: u.title.clone(),
             amount: money(u.amount),
+            cur: page.cur(u.currency.as_deref().unwrap_or(&r.base_currency)).to_string(),
             overdue: u.status == "OVERDUE",
             is_expense: u.kind == "EXPENSE",
             is_transfer: u.kind == "TRANSFER",
@@ -217,6 +224,8 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         Some((k, d)) => sort_tree(r.expenses, k, d),
         None => r.expenses,
     };
+    let marks = page.session.clone();
+    let cur = move |code: &str| marks.cur(code).to_string();
     render(&BudgetPage {
         view: view.code(),
         title: period_title(&period, &page),
@@ -251,8 +260,8 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         upcoming,
         missing_rates: r.missing_rates.join(", "),
         base: r.base_currency.clone(),
-        expenses: expenses.into_iter().map(|x| row_view(lang, x)).collect(),
-        incomes: r.incomes.into_iter().map(|x| row_view(lang, x)).collect(),
+        expenses: expenses.into_iter().map(|x| row_view(lang, &cur, x)).collect(),
+        incomes: r.incomes.into_iter().map(|x| row_view(lang, &cur, x)).collect(),
         page,
     })
 }

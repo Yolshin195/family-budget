@@ -51,6 +51,8 @@ pub struct FactLine {
 /// Проводка на системный счёт «Обмен валют» — для курсовой разницы.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExchangeLine {
+    /// Обе стороны обмена — проводки одной транзакции.
+    pub transaction_id: Uuid,
     pub occurred_on: NaiveDate,
     pub currency: String,
     pub amount: Decimal,

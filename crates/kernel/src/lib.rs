@@ -8,6 +8,7 @@ pub mod error;
 pub mod feature;
 pub mod i18n;
 pub mod pagination;
+pub mod rates;
 pub mod throttle;
 pub mod undo;
 pub mod web;
