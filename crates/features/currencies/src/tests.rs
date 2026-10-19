@@ -160,3 +160,13 @@ fn templates_are_translated() {
     let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
+
+/// Ц8: знаков после запятой — от 0 до 4 (колонки NUMERIC(18,4)).
+#[tokio::test]
+#[ignore = "Ц8: исправление ждёт утверждения разбора (docs/stage-0.md)"]
+async fn minor_units_are_bounded() {
+    let svc = service();
+    let p = Uuid::new_v4();
+    assert!(svc.create(p, CreateCurrencyDto { minor_units: 7, ..create_dto("XXX") }).await.is_err(), "7 знаков приняты");
+    assert!(svc.create(p, CreateCurrencyDto { minor_units: -1, ..create_dto("YYY") }).await.is_err(), "−1 знак принят");
+}

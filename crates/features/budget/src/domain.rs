@@ -565,4 +565,24 @@ mod tests {
         assert_eq!(rate_on(&r, "USD", "THB", d(2026, 1, 1)), Some(dec("36")));
         assert_eq!(rate_on(&r, "RUB", "THB", d(2026, 1, 1)), None);
     }
+
+    fn coffee(valid_from: NaiveDate) -> Vec<LimitRule> {
+        vec![LimitRule { category_code: "FOOD_COFFEE".into(), period: View::Month, amount: dec("1500"), valid_from }]
+    }
+
+    /// Ц1: месячный лимит в годовом отчёте — 12 месяцев, а не 365/31.
+    #[test]
+    #[ignore = "Ц1: исправление ждёт утверждения разбора (docs/stage-0.md)"]
+    fn monthly_limit_in_year_report_is_twelve_months() {
+        let year = Period::containing(View::Year, d(2026, 10, 19));
+        assert_eq!(effective_limit(&coffee(d(2026, 1, 1)), "FOOD_COFFEE", &year), Some(dec("18000")));
+    }
+
+    /// Ц5: лимит, заведённый 20.10, не действует на январь–сентябрь.
+    #[test]
+    #[ignore = "Ц5: исправление ждёт утверждения разбора (docs/stage-0.md)"]
+    fn limit_counts_from_its_month_only() {
+        let year = Period::containing(View::Year, d(2026, 10, 19));
+        assert_eq!(effective_limit(&coffee(d(2026, 10, 20)), "FOOD_COFFEE", &year), Some(dec("4500")));
+    }
 }

@@ -205,3 +205,15 @@ fn templates_are_translated() {
     let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
+
+/// Ц2: у PINPAN есть операции — тип «расход» не должен меняться на «доход».
+#[tokio::test]
+#[ignore = "Ц2: исправление ждёт утверждения разбора (docs/stage-0.md)"]
+async fn kind_change_with_postings_is_rejected() {
+    let svc = service();
+    let p = Uuid::new_v4();
+    svc.create(p, create_dto("PINPAN")).await.unwrap();
+    let mut dto = update_dto("Pinpan");
+    dto.category_kind = "INCOME".into();
+    assert!(svc.update(p, "PINPAN", dto).await.is_err(), "тип категории сменился, хотя по ней есть операции");
+}

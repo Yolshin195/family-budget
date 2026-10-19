@@ -417,3 +417,47 @@ fn templates_are_translated() {
     let absent: Vec<&str> = dynamic.into_iter().filter(|k| crate::i18n::dict(k).is_none()).collect();
     assert!(absent.is_empty(), "нет перевода для ключей: {absent:?}");
 }
+
+/// Ц7: несуществующий план и дата вне правила не принимаются.
+#[tokio::test]
+#[ignore = "Ц7: исправление ждёт утверждения разбора (docs/stage-0.md)"]
+async fn unknown_plan_occurrence_is_rejected() {
+    let svc = service();
+    let mut input = receipt(&[("home", "1539.87")]);
+    input.plan_id = Some(Uuid::new_v4());
+    input.plan_date = Some(day(17));
+    assert!(svc.create(Uuid::new_v4(), Uuid::new_v4(), input).await.is_err(), "оплачено вхождение несуществующего плана");
+}
+
+/// Ц10: двойной клик «Сохранить» в форме счёта — два начальных остатка. Нужен `TEST_DATABASE_URL`.
+#[tokio::test]
+#[ignore = "Ц10: исправление ждёт утверждения разбора (docs/stage-0.md)"]
+async fn second_opening_is_rejected_by_db() {
+    let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
+        eprintln!("TEST_DATABASE_URL не задан — тест пропущен");
+        return;
+    };
+    let schema = format!("tx_c10_{}", Uuid::new_v4().simple());
+    let admin = sqlx::PgPool::connect(&url).await.unwrap();
+    sqlx::raw_sql(&format!("CREATE SCHEMA {schema}")).execute(&admin).await.unwrap();
+    let opts: sqlx::postgres::PgConnectOptions = url.parse().unwrap();
+    let pool = sqlx::PgPool::connect_with(opts.options([("search_path", schema.as_str())])).await.unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    use crate::domain::{Body, Transaction, TransactionData};
+    use crate::ports::TransactionRepository;
+    let repo = crate::adapters::postgres::PostgresTransactionRepository::new(pool.clone());
+    let accounts = [AccountCurrency { code: "CARD".into(), currency: "THB".into(), minor_units: 2 }];
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    // Оба запроса прошли проверку «остатка ещё нет» до того, как другой записал свой.
+    let opening = || {
+        let data = TransactionData { occurred_on: day(15), description: Description::default(), plan: None, body: Body::Opening { account: "card".into(), amount: d("1961.31") } };
+        Transaction::create(p, u, data, &accounts).unwrap()
+    };
+    repo.insert(&opening()).await.unwrap();
+    let second = repo.insert(&opening()).await;
+    let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM fb_transactions WHERE tx_kind = 'OPENING'").fetch_one(&pool).await.unwrap();
+    pool.close().await;
+    sqlx::raw_sql(&format!("DROP SCHEMA {schema} CASCADE")).execute(&admin).await.unwrap();
+    assert!(matches!(second, Err(AppError::Conflict(_))), "второй начальный остаток принят: {second:?}");
+    assert_eq!(n, 1, "два начальных остатка у одного счёта — остаток удвоен");
+}

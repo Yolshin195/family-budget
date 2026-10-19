@@ -84,3 +84,13 @@ fn positive(amount: rust_decimal::Decimal) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    /// Ц5: «сумма 0» закрывает лимит с даты — сейчас такое правило не создать.
+    #[test]
+    #[ignore = "Ц5: исправление ждёт утверждения разбора (docs/stage-0.md)"]
+    fn zero_amount_ends_limit() {
+        assert!(super::positive(rust_decimal::Decimal::ZERO).is_ok(), "лимит 0 = «лимита нет» с этой даты");
+    }
+}

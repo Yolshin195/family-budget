@@ -193,3 +193,25 @@ async fn foreign_project_undo_and_purge() {
     assert_eq!(svc.purge_project(mine).await.unwrap(), 1);
     assert!(svc.list(mine).await.unwrap().is_empty());
 }
+
+/// Ц4: «Электричество» с 16.10 оплачено 16.10; дату начала поменяли на 01.10 —
+/// оплата 16.10 должна остаться в календаре, а 01.10 не должно стать «просроченным».
+#[tokio::test]
+#[ignore = "Ц4: исправление ждёт утверждения разбора (docs/stage-0.md)"]
+async fn rule_change_keeps_payment_history() {
+    let (svc, payments) = setup();
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    let plan = svc.create(p, u, PlanInput { start_on: d(10, 16), amount: Decimal::from(2000), ..rent() }).await.unwrap();
+    payments.0.lock().unwrap().push(PaidRef {
+        plan_id: plan.id,
+        plan_date: d(10, 16),
+        transaction_id: Uuid::new_v4(),
+        amount: Decimal::from_str("1539.87").unwrap(),
+        currency: "THB".into(),
+        paid_on: d(10, 17),
+    });
+    svc.update(p, plan.id, PlanInput { start_on: d(10, 1), amount: Decimal::from(2000), ..rent() }).await.unwrap();
+    let occ = svc.occurrences(p, d(10, 1), d(10, 31), d(10, 19)).await.unwrap();
+    let st: Vec<_> = occ.iter().map(|o| (o.date, o.status.as_str())).collect();
+    assert_eq!(st, vec![(d(10, 16), "PAID")], "история оплат потерялась");
+}
