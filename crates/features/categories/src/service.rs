@@ -17,7 +17,6 @@ use crate::ports::{Deps, CategoryRepository};
 
 pub struct CategoryService {
     repo: Arc<dyn CategoryRepository>,
-    #[allow(dead_code)]
     deps: Deps,
 }
 
@@ -50,7 +49,16 @@ impl CategoryService {
 
     pub async fn update(&self, project_id: Uuid, code: &str, dto: UpdateCategoryDto) -> AppResult<CategoryDto> {
         let mut item = self.load(project_id, code).await?;
+        let kind = item.category_kind;
         item.change(dto.into_domain().map_err(AppError::Validation)?).map_err(AppError::Validation)?;
+        // Подкатегории отдельно проверять не нужно: у потомков тип такой же (check_tree), их меняют первыми.
+        if item.category_kind != kind && self.deps.usage.in_use(project_id, &item.code).await? {
+            return Err(AppError::Validation(format!(
+                "category_kind: у категории {} есть операции, планы или лимиты — тип «{}» не меняется",
+                item.code,
+                kind.as_str()
+            )));
+        }
         self.check_refs(project_id, &item).await?;
         self.repo.update(&item).await?;
         Ok(item.into())

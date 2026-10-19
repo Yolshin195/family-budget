@@ -23,5 +23,14 @@ pub trait CategoryRepository: Send + Sync {
 /// Зависимости фичи от других фич. Порты объявляет эта фича (потребитель),
 /// реализации живут в приложении: crates/app/src/wiring/wire_categories.rs.
 pub struct Deps {
+    pub usage: Arc<dyn CategoryUsage>,
+}
+
+/// Где категория уже использована.
+#[async_trait]
+pub trait CategoryUsage: Send + Sync {
+    /// Есть ли у категории операции, планы или лимиты — тогда её тип (расход/доход) не меняется:
+    /// иначе старые суммы уйдут в другое дерево бюджета и итоги разойдутся (этап 0, Ц2).
+    async fn in_use(&self, project_id: Uuid, code: &str) -> AppResult<bool>;
 }
 

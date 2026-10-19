@@ -17,7 +17,6 @@ use crate::ports::{Deps, CurrencyRepository};
 
 pub struct CurrencyService {
     repo: Arc<dyn CurrencyRepository>,
-    #[allow(dead_code)]
     deps: Deps,
 }
 
@@ -50,7 +49,18 @@ impl CurrencyService {
 
     pub async fn update(&self, project_id: Uuid, code: &str, dto: UpdateCurrencyDto) -> AppResult<CurrencyDto> {
         let mut item = self.load(project_id, code).await?;
+        let (minor, archived) = (item.minor_units, item.archived);
         item.change(dto.into_domain().map_err(AppError::Validation)?).map_err(AppError::Validation)?;
+        // Старые суммы записаны с прежней точностью: меньше знаков — и их уже не исправить.
+        if item.minor_units < minor && self.deps.usage.has_postings(project_id, &item.code).await? {
+            return Err(AppError::Validation(format!(
+                "minor_units: в {} уже есть суммы с {minor} знаками после запятой — меньше сделать нельзя",
+                item.code
+            )));
+        }
+        if item.archived && !archived {
+            self.check_archive(project_id, &item.code).await?;
+        }
         self.check_refs(project_id, &item).await?;
         self.repo.update(&item).await?;
         Ok(item.into())
@@ -59,6 +69,7 @@ impl CurrencyService {
     /// Архивирование вместо удаления: код остаётся занятым, ссылки на запись не «повисают».
     pub async fn archive(&self, project_id: Uuid, code: &str) -> AppResult<()> {
         let mut item = self.load(project_id, code).await?;
+        self.check_archive(project_id, &item.code).await?;
         item.archived = true;
         self.repo.update(&item).await
     }
@@ -95,6 +106,19 @@ impl CurrencyService {
             .into_iter()
             .map(|c| Choice { label: format!("{} · {}", c.code, c.title(lang)), tag: c.symbol.clone(), code: c.code, depth: 0 })
             .collect())
+    }
+
+    /// В архив — только валюту, которая не базовая и у которой нет активных счетов: иначе счёт
+    /// останется в валюте, которой «нет», и его нельзя будет изменить (этап 0, Ц8).
+    async fn check_archive(&self, project_id: Uuid, code: &str) -> AppResult<()> {
+        if self.deps.usage.base_currency(project_id).await?.as_deref() == Some(code) {
+            return Err(AppError::Conflict(format!("archived: {code} — базовая валюта проекта, её нельзя архивировать")));
+        }
+        let accounts = self.deps.usage.active_accounts(project_id, code).await?;
+        if !accounts.is_empty() {
+            return Err(AppError::Conflict(format!("archived: в {code} есть активные счета ({}) — сначала архивируйте их", accounts.join(", "))));
+        }
+        Ok(())
     }
 
     async fn load(&self, project_id: Uuid, code: &str) -> AppResult<Currency> {

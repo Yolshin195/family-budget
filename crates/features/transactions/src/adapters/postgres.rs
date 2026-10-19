@@ -328,6 +328,30 @@ impl TransactionRepository for PostgresTransactionRepository {
         Ok(yes)
     }
 
+    async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
+        let (yes,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM fb_postings p JOIN fb_transactions t ON t.id = p.transaction_id \
+             WHERE t.project_id = $1 AND p.ref_kind = 'CATEGORY' AND p.ref_code = $2)",
+        )
+        .bind(project_id)
+        .bind(code)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(yes)
+    }
+
+    async fn uses_currency(&self, project_id: Uuid, currency: &str) -> AppResult<bool> {
+        let (yes,): (bool,) = sqlx::query_as(
+            "SELECT EXISTS (SELECT 1 FROM fb_postings p JOIN fb_transactions t ON t.id = p.transaction_id \
+             WHERE t.project_id = $1 AND p.currency_code = $2)",
+        )
+        .bind(project_id)
+        .bind(currency)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(yes)
+    }
+
     async fn find_opening(&self, project_id: Uuid, account_code: &str) -> AppResult<Option<Transaction>> {
         let sql = format!(
             "SELECT {COLUMNS} FROM fb_transactions WHERE project_id = $1 AND tx_kind = 'OPENING' AND {} ORDER BY occurred_on LIMIT 1",

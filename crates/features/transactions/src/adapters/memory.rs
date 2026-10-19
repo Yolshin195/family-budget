@@ -155,6 +155,16 @@ impl TransactionRepository for InMemoryTransactionRepository {
         Ok(self.rows.lock().unwrap().iter().any(|r| r.project_id == project_id && r.accounts().any(|a| a == account_code)))
     }
 
+    async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
+        let rows = self.rows.lock().unwrap();
+        Ok(rows.iter().filter(|r| r.project_id == project_id).flat_map(|r| &r.postings).any(|p| p.ref_kind == RefKind::Category && p.ref_code == code))
+    }
+
+    async fn uses_currency(&self, project_id: Uuid, currency: &str) -> AppResult<bool> {
+        let rows = self.rows.lock().unwrap();
+        Ok(rows.iter().filter(|r| r.project_id == project_id).flat_map(|r| &r.postings).any(|p| p.currency == currency))
+    }
+
     async fn find_opening(&self, project_id: Uuid, account_code: &str) -> AppResult<Option<Transaction>> {
         let rows = self.rows.lock().unwrap();
         Ok(rows.iter().find(|r| r.project_id == project_id && r.tx_kind == TxKind::Opening && r.accounts().any(|a| a == account_code)).cloned())

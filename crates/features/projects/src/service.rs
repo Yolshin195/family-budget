@@ -424,6 +424,11 @@ impl ProjectService {
         Ok(project.id)
     }
 
+    /// Публичный контракт для других фич: базовая валюта проекта (её нельзя архивировать).
+    pub async fn base_currency(&self, project_id: Uuid) -> AppResult<Option<String>> {
+        Ok(self.repo.project(project_id).await?.map(|p| p.base_currency))
+    }
+
     pub async fn rename(&self, user_id: Uuid, project_id: Uuid, name: &str) -> AppResult<()> {
         self.deny_guest(user_id).await?;
         self.require_owner(user_id, project_id).await?;

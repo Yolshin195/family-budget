@@ -190,6 +190,16 @@ impl TransactionService {
         self.repo.has_postings(project_id, account_code).await
     }
 
+    /// Есть ли проводки на категорию (для категорий: тогда тип не меняется).
+    pub async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
+        self.repo.uses_category(project_id, code).await
+    }
+
+    /// Есть ли проводки в валюте (для валют: тогда точность не уменьшается).
+    pub async fn uses_currency(&self, project_id: Uuid, currency: &str) -> AppResult<bool> {
+        self.repo.uses_currency(project_id, currency).await
+    }
+
     /// «Сверить остаток»: разница между остатком из банка и остатком по проводкам вносится расходом
     /// или доходом на выбранную категорию. `None` — остатки совпали, вносить нечего.
     #[allow(clippy::too_many_arguments)]

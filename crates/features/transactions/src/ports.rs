@@ -93,6 +93,10 @@ pub trait TransactionRepository: Send + Sync {
     async fn has_postings(&self, project_id: Uuid, account_code: &str) -> AppResult<bool>;
     /// Транзакция начального остатка счёта.
     async fn find_opening(&self, project_id: Uuid, account_code: &str) -> AppResult<Option<Transaction>>;
+    /// Есть ли проводки на категорию (тогда её тип не меняется).
+    async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool>;
+    /// Есть ли проводки в валюте (тогда её точность не уменьшается).
+    async fn uses_currency(&self, project_id: Uuid, currency: &str) -> AppResult<bool>;
     /// Для быстрого расхода: последний счёт пользователя в расходах и доходах и его частые категории
     /// (по числу проводок с `since`, чаще — первые) для транзакций типа `kind`.
     async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate) -> AppResult<QuickStats>;

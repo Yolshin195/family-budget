@@ -184,6 +184,11 @@ impl PlanningService {
         Ok(Some((plan.tx_kind, skipped)))
     }
 
+    /// Публичный контракт для категорий: есть ли планы на категорию (тогда её тип не меняется).
+    pub async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
+        Ok(self.repo.list(project_id).await?.iter().any(|p| p.category_code.as_deref() == Some(code)))
+    }
+
     /// Пропустить вхождение (без транзакции).
     pub async fn skip(&self, project_id: Uuid, user_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<()> {
         let today = chrono::Local::now().date_naive();
