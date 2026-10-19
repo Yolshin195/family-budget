@@ -25,6 +25,7 @@ fn matches(r: &Transaction, project_id: Uuid, f: &Filter) -> bool {
         && f.kind.is_none_or(|k| r.tx_kind == k)
         && f.created_by.is_none_or(|u| r.created_by == u)
         && f.untranslated.is_none_or(|l| r.description.localized().is_some_and(|d| d.missing(l)))
+        && f.place_code.as_deref().is_none_or(|p| r.place_code.as_deref() == Some(p))
 }
 
 /// То же, что уникальные индексы шапки в БД: оплата вхождения плана и начальный остаток счёта — по одному.
@@ -208,12 +209,20 @@ impl TransactionRepository for InMemoryTransactionRepository {
             }
         }
         counts.sort_by_key(|c| std::cmp::Reverse(c.1));
+        let mut places: Vec<(String, usize)> = Vec::new();
+        for code in mine.iter().filter(|t| t.tx_kind.as_str() == kind && t.occurred_on >= since).filter_map(|t| t.place_code.as_ref()) {
+            match places.iter_mut().find(|c| &c.0 == code) {
+                Some(c) => c.1 += 1,
+                None => places.push((code.clone(), 1)),
+            }
+        }
+        places.sort_by_key(|c| std::cmp::Reverse(c.1));
         let last_account = mine
             .iter()
             .rev()
             .find(|t| matches!(t.tx_kind, TxKind::Expense | TxKind::Income))
             .and_then(|t| t.accounts().next().map(str::to_string));
-        Ok(QuickStats { last_account, frequent: counts.into_iter().map(|c| c.0).collect() })
+        Ok(QuickStats { last_account, frequent: counts.into_iter().map(|c| c.0).collect(), places: places.into_iter().map(|c| c.0).collect() })
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {

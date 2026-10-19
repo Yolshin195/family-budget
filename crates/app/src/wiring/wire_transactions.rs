@@ -158,3 +158,34 @@ impl ::transactions::PlansLookup for PlansLookupAdapter {
         }
     }
 }
+
+/// Места из фичи `places` (без неё мест нет).
+#[derive(Default)]
+pub struct PlacesLookupAdapter {
+    #[cfg(feature = "places")]
+    pub places: Option<Arc<::places::Service>>,
+}
+
+#[async_trait]
+impl ::transactions::PlacesLookup for PlacesLookupAdapter {
+    async fn all(&self, project_id: Uuid) -> AppResult<Vec<::transactions::PlaceInfo>> {
+        #[cfg(feature = "places")]
+        if let Some(places) = &self.places {
+            return Ok(places
+                .all(project_id, true)
+                .await?
+                .into_iter()
+                .map(|p| ::transactions::PlaceInfo {
+                    title: p.title(),
+                    search: p.search(),
+                    code: p.code,
+                    default_category_code: p.default_category_code,
+                    default_account_code: p.default_account_code,
+                    archived: p.archived,
+                })
+                .collect());
+        }
+        let _ = project_id;
+        Ok(Vec::new())
+    }
+}

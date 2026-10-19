@@ -17,7 +17,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use ::mcp::{
-    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem,
+    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Place, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem,
 };
 
 pub struct LedgerAdapter(pub Arc<::transactions::Service>);
@@ -59,6 +59,7 @@ fn tx_from(d: ::transactions::dto::TransactionDto) -> Tx {
         created_by: d.created_by,
         plan_id: d.plan_id,
         plan_date: d.plan_date,
+        place_code: d.place_code,
     }
 }
 
@@ -99,6 +100,7 @@ fn input_from(d: TxDraft) -> ::transactions::dto::TransactionInput {
         description_th: d.description_th,
         plan_id: d.plan_id,
         plan_date: d.plan_date,
+        place_code: d.place_code,
     }
 }
 
@@ -116,12 +118,18 @@ impl ::mcp::Ledger for LedgerAdapter {
                 .collect(),
             frequent_expense: q.frequent_expense,
             frequent_income: q.frequent_income,
+            places: q
+                .places
+                .into_iter()
+                .map(|p| ::mcp::PlaceInfo { code: p.code, title: p.title, search: p.search, category_code: p.category, account_code: p.account })
+                .collect(),
+            frequent_places: q.frequent_places,
         })
     }
 
     async fn list(&self, project_id: Uuid, filter: TxFilter, limit: i64, offset: i64) -> AppResult<(Vec<Tx>, i64)> {
         let size = limit.max(1);
-        let query = ::transactions::dto::ListQuery { from: filter.from, to: filter.to, account_code: filter.account_code, tx_kind: filter.kind, created_by: None, untranslated: None };
+        let query = ::transactions::dto::ListQuery { from: filter.from, to: filter.to, account_code: filter.account_code, tx_kind: filter.kind, created_by: None, untranslated: None, place_code: filter.place_code };
         let page = self.0.list(project_id, query, Pagination { page: offset / size, size }).await?;
         Ok((page.content.into_iter().map(tx_from).collect(), page.page.total_elements))
     }
@@ -274,6 +282,31 @@ pub struct DirectoriesAdapter {
     pub currencies: Arc<::currencies::Service>,
     pub accounts: Arc<::accounts::Service>,
     pub categories: Arc<::categories::Service>,
+    pub places: Arc<::places::Service>,
+}
+
+fn place_from(d: ::places::dto::PlaceDto) -> Place {
+    Place {
+        code: d.code,
+        name: d.name,
+        aliases: d.aliases,
+        category_code: d.default_category_code,
+        account_code: d.default_account_code,
+        kind: d.place_kind,
+        location: d.location,
+        archived: d.archived,
+    }
+}
+
+fn place_fields(p: &Place) -> ::places::dto::PlaceFields {
+    ::places::dto::PlaceFields {
+        name: p.name.clone(),
+        aliases: p.aliases.clone(),
+        default_category_code: p.category_code.clone(),
+        default_account_code: p.account_code.clone(),
+        place_kind: p.kind.clone(),
+        location: p.location.clone(),
+    }
 }
 
 fn currency_from(d: ::currencies::dto::CurrencyDto) -> Currency {
@@ -409,6 +442,16 @@ impl ::mcp::Directories for DirectoriesAdapter {
             sort_order: c.sort_order,
         };
         Ok(category_from(self.categories.update(project_id, &c.code, dto).await?))
+    }
+    async fn places(&self, project_id: Uuid) -> AppResult<Vec<Place>> {
+        Ok(self.places.all(project_id, true).await?.into_iter().map(place_from).collect())
+    }
+    async fn create_place(&self, project_id: Uuid, p: &Place) -> AppResult<Place> {
+        let dto = ::places::dto::CreatePlaceDto { code: p.code.clone(), data: place_fields(p) };
+        Ok(place_from(self.places.create(project_id, dto).await?))
+    }
+    async fn update_place(&self, project_id: Uuid, p: &Place) -> AppResult<Place> {
+        Ok(place_from(self.places.update(project_id, &p.code, place_fields(p)).await?))
     }
 }
 

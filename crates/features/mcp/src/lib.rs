@@ -23,7 +23,7 @@ use kernel::feature::Feature;
 use kernel::web::Web;
 
 pub use domain::{
-    Account, AccountInfo, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem,
+    Account, AccountInfo, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Place, PlaceInfo, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem,
 };
 pub use ports::{Accounts, Budget, Deps, Directories, Ledger, Limits, Plans, Rates};
 pub use service::{McpService as Service, Settings};

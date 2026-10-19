@@ -57,6 +57,17 @@ fn quick_info() -> QuickInfo {
         ],
         frequent_expense: vec!["CAFE".into()],
         frequent_income: vec![],
+        places: vec![
+            PlaceInfo {
+                code: "SEVEN_ELEVEN".into(),
+                title: "7-Eleven · Сукхумвит 24".into(),
+                search: kernel::search::join(["7-Eleven", "7-11", "เซเว่น", "SEVEN_ELEVEN"]),
+                category_code: Some("FOOD".into()),
+                account_code: Some("CARD".into()),
+            },
+            PlaceInfo { code: "MAKRO".into(), title: "Makro".into(), search: kernel::search::join(["Makro", "แม็คโคร", "MAKRO"]), category_code: None, account_code: None },
+        ],
+        frequent_places: vec!["SEVEN_ELEVEN".into()],
     }
 }
 
@@ -104,6 +115,7 @@ fn tx_of(id: Uuid, user: Uuid, d: &TxDraft, old: Option<&Tx>) -> Tx {
         created_by: user,
         plan_id: d.plan_id,
         plan_date: d.plan_date,
+        place_code: d.place_code.clone(),
     }
 }
 
@@ -113,7 +125,14 @@ impl Ledger for Arc<FakeLedger> {
         Ok(quick_info())
     }
     async fn list(&self, _p: Uuid, filter: TxFilter, limit: i64, offset: i64) -> AppResult<(Vec<Tx>, i64)> {
-        let all: Vec<Tx> = self.txs.lock().unwrap().iter().filter(|t| filter.kind.as_ref().is_none_or(|k| &t.kind == k)).cloned().collect();
+        let all: Vec<Tx> = self
+            .txs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| filter.kind.as_ref().is_none_or(|k| &t.kind == k) && filter.place_code.as_ref().is_none_or(|p| t.place_code.as_ref() == Some(p)))
+            .cloned()
+            .collect();
         let total = all.len() as i64;
         Ok((all.into_iter().skip(offset as usize).take(limit as usize).collect(), total))
     }
@@ -207,6 +226,7 @@ struct FakeDirs {
     currencies: Mutex<Vec<Currency>>,
     accounts: Mutex<Vec<Account>>,
     categories: Mutex<Vec<Category>>,
+    places: Mutex<Vec<Place>>,
     openings: Mutex<Vec<(String, Decimal, NaiveDate)>>,
 }
 
@@ -235,6 +255,19 @@ impl Default for FakeDirs {
                 cat("CAR", None, "EXPENSE", name("Машина", "Машина", "Car", "รถ"), 20),
                 cat("CARWASH", Some("CAR"), "EXPENSE", name("Мойка", "Мойка", "Car wash", "ล้างรถ"), 10),
                 cat("SALARY", None, "INCOME", name("Зарплата", "Зарплата", "Salary", "เงินเดือน"), 10),
+            ]),
+            places: Mutex::new(vec![
+                Place {
+                    code: "SEVEN_ELEVEN".into(),
+                    name: "7-Eleven".into(),
+                    aliases: vec!["7-11".into(), "เซเว่น".into()],
+                    category_code: Some("FOOD".into()),
+                    account_code: Some("CARD".into()),
+                    kind: "SHOP".into(),
+                    location: Some("Сукхумвит 24".into()),
+                    archived: false,
+                },
+                Place { code: "OLD".into(), name: "Old market".into(), aliases: vec![], category_code: None, account_code: None, kind: "MARKET".into(), location: None, archived: true },
             ]),
             openings: Mutex::default(),
         }
@@ -283,6 +316,16 @@ impl Directories for Arc<FakeDirs> {
     }
     async fn update_category(&self, _p: Uuid, c: &Category) -> AppResult<Category> {
         upsert(&self.categories, c, |x| x.code == c.code)
+    }
+    async fn places(&self, _p: Uuid) -> AppResult<Vec<Place>> {
+        Ok(self.places.lock().unwrap().clone())
+    }
+    async fn create_place(&self, _p: Uuid, x: &Place) -> AppResult<Place> {
+        self.places.lock().unwrap().push(x.clone());
+        Ok(x.clone())
+    }
+    async fn update_place(&self, _p: Uuid, x: &Place) -> AppResult<Place> {
+        upsert(&self.places, x, |y| y.code == x.code)
     }
 }
 
@@ -800,13 +843,13 @@ async fn directory_tools_need_their_right_and_are_hidden_without_it() {
 }
 
 #[tokio::test]
-async fn directories_checkbox_grants_the_four_directory_rights() {
+async fn directories_checkbox_grants_all_directory_rights() {
     let e = env();
     e.grant(&["directories", "limits:write"]).await;
     let g = e.svc.grants(e.user).await.unwrap().remove(0);
-    assert_eq!(g.scopes, vec!["read", "currencies:write", "accounts:write", "categories:write", "rates:write", "limits:write"]);
+    assert_eq!(g.scopes, vec!["read", "currencies:write", "accounts:write", "categories:write", "places:write", "rates:write", "limits:write"]);
     let c = e.caller(&e.oauth()).await;
-    assert!(e.svc.visible(&c, "add_currency") && e.svc.visible(&c, "set_rate") && e.svc.visible(&c, "set_limit"));
+    assert!(e.svc.visible(&c, "add_currency") && e.svc.visible(&c, "set_rate") && e.svc.visible(&c, "set_limit") && e.svc.visible(&c, "add_place"));
     assert!(!e.svc.visible(&c, "add_plan") && !e.svc.visible(&c, "add_expense"));
 }
 
@@ -1228,4 +1271,72 @@ async fn expense_without_rate_is_flagged() {
     assert_eq!(out.data["no_rate"], "USD");
     let ok = e.svc.add_expense(&c, expense("10", "cafe")).await.unwrap();
     assert!(!ok.summary.contains("no exchange rate") && ok.data.get("no_rate").is_none());
+}
+
+// ---------------------------------------------------------------- места (шаг 5)
+
+/// Место по названию или варианту написания подставляет категорию и счёт; переданное — важнее места.
+#[tokio::test]
+async fn place_fills_category_and_account() {
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let out = e.svc.add_expense(&c, AddFlowArgs { amount: Some("55".into()), place: Some("เซเว่น".into()), ..Default::default() }).await.unwrap();
+    let tx = e.ledger.txs.lock().unwrap()[0].clone();
+    assert_eq!((tx.place_code.as_deref(), tx.account_code.as_str(), tx.items[0].category_code.as_deref()), (Some("SEVEN_ELEVEN"), "CARD", Some("FOOD")));
+    assert!(!out.summary.contains("default account"), "счёт из места — не «по умолчанию»: {}", out.summary);
+    assert_eq!(out.data["transaction"]["place"], "SEVEN_ELEVEN");
+    e.svc.add_expense(&c, AddFlowArgs { place: Some("7-11".into()), account: Some("CASH".into()), ..expense("45", "cafe") }).await.unwrap();
+    let tx = e.ledger.txs.lock().unwrap()[1].clone();
+    assert_eq!((tx.account_code.as_str(), tx.items[0].category_code.as_deref()), ("CASH", Some("CAFE")));
+    let no_cat = e.svc.add_expense(&c, AddFlowArgs { amount: Some("10".into()), place: Some("makro".into()), ..Default::default() }).await.unwrap_err();
+    assert!(no_cat.0.contains("amount and category"), "у Makro нет категории: {}", no_cat.0);
+    let unknown = e.svc.add_expense(&c, AddFlowArgs { place: Some("Lotus".into()), ..expense("10", "cafe") }).await.unwrap_err();
+    assert!(unknown.0.contains("not found") && unknown.0.contains("add_place"), "{}", unknown.0);
+    // Фильтр ленты по месту; правка: "" убирает место, у перевода места нет.
+    let list = e.svc.list_transactions(&c, ListTransactionsArgs { place: Some("SEVEN_ELEVEN".into()), from: Some("2000-01-01".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(list.data["total"], 2);
+    let id = e.ledger.txs.lock().unwrap()[0].id.to_string();
+    e.svc.update_transaction(&c, UpdateTransactionArgs { id: id.clone(), place: Some("".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[0].place_code, None);
+    e.svc.add_transfer(&c, AddTransferArgs { from_account: "CASH".into(), to_account: "CARD".into(), amount: "100".into(), ..Default::default() }).await.unwrap();
+    let transfer = e.ledger.txs.lock().unwrap()[2].id.to_string();
+    let err = e.svc.update_transaction(&c, UpdateTransactionArgs { id: transfer, place: Some("SEVEN_ELEVEN".into()), ..Default::default() }).await.unwrap_err();
+    assert!(err.0.contains("no place"), "{}", err.0);
+    let ctx = e.svc.get_context(&c).await.unwrap();
+    assert_eq!((ctx.data["frequent_places"][0]["code"].as_str(), ctx.data["places_total"].as_u64()), (Some("SEVEN_ELEVEN"), Some(2)));
+    assert_eq!(ctx.data["permissions"]["write_places"], false);
+}
+
+/// Места добавляют и меняют только с правом «Места» (или «Все справочники»); список — с поиском без регистра.
+#[tokio::test]
+async fn places_directory_tools() {
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let add = || AddPlaceArgs {
+        code: "cafe_amazon".into(),
+        name: "Café Amazon".into(),
+        aliases: Some(vec!["คาเฟ่ อเมซอน".into()]),
+        category: Some("Кафе".into()),
+        account: Some("Наличные".into()),
+        kind: Some("cafe".into()),
+        location: Some("Он Нут".into()),
+    };
+    assert!(e.svc.add_place(&c, add()).await.unwrap_err().0.contains("places:write"));
+    e.grant(&["read", "directories"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let out = e.svc.add_place(&c, add()).await.unwrap();
+    assert!(out.summary.contains("CAFE_AMAZON 'Café Amazon · Он Нут'"), "{}", out.summary);
+    let p = e.dirs.places.lock().unwrap().iter().find(|p| p.code == "CAFE_AMAZON").cloned().unwrap();
+    assert_eq!((p.category_code.as_deref(), p.account_code.as_deref(), p.kind.as_str()), (Some("CAFE"), Some("CASH"), "CAFE"));
+    assert!(e.svc.add_place(&c, add()).await.unwrap_err().0.contains("already exists"));
+    let found = e.svc.list_places(&c, ListPlacesArgs { text: Some("cafe".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(found.data["places"].as_array().unwrap().len(), 1, "Café без диакритики");
+    let all = e.svc.list_places(&c, ListPlacesArgs { include_archived: Some(true), ..Default::default() }).await.unwrap();
+    assert_eq!(all.data["places"].as_array().unwrap().len(), 3);
+    e.svc.update_place(&c, UpdatePlaceArgs { code: "Café Amazon".into(), aliases: Some(vec![]), category: Some("".into()), ..Default::default() }).await.unwrap();
+    let p = e.dirs.places.lock().unwrap().iter().find(|p| p.code == "CAFE_AMAZON").cloned().unwrap();
+    assert_eq!((p.aliases.len(), p.category_code), (0, None));
+    assert!(e.svc.update_place(&c, UpdatePlaceArgs { code: "CAFE_AMAZON".into(), ..Default::default() }).await.unwrap_err().0.contains("nothing to change"));
 }

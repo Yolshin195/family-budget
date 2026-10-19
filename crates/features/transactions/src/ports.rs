@@ -31,6 +31,8 @@ pub struct Filter {
     pub created_by: Option<Uuid>,
     /// Только с описанием без перевода на этот язык.
     pub untranslated: Option<Lang>,
+    /// Только операции в этом месте.
+    pub place_code: Option<String>,
 }
 
 /// Проводка на категорию — факт для бюджета и лимитов.
@@ -118,6 +120,8 @@ pub trait TransactionRepository: Send + Sync {
 pub struct QuickStats {
     pub last_account: Option<String>,
     pub frequent: Vec<String>,
+    /// Частые места — по числу операций.
+    pub places: Vec<String>,
 }
 
 /// Зависимости фичи от других фич. Реализации — crates/app/src/wiring/wire_transactions.rs.
@@ -128,6 +132,28 @@ pub struct Deps {
     pub budget: Arc<dyn BudgetView>,
     /// Планы, вхождения которых оплачивают операции (из фичи `planning`).
     pub plans: Arc<dyn PlansLookup>,
+    /// Места операций (из фичи `places`; без неё мест нет).
+    pub places: Arc<dyn PlacesLookup>,
+}
+
+/// Место операции (справочник `places`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaceInfo {
+    pub code: String,
+    /// «7-Eleven · Сукхумвит 24»
+    pub title: String,
+    /// Название, варианты написания и код через `kernel::search::SEP` — для поиска в быстром вводе.
+    pub search: String,
+    pub default_category_code: Option<String>,
+    pub default_account_code: Option<String>,
+    pub archived: bool,
+}
+
+/// Что этой фиче нужно от справочника `places`.
+#[async_trait]
+pub trait PlacesLookup: Send + Sync {
+    /// Все места проекта, с архивными: старые операции показывают своё место. Их немного.
+    async fn all(&self, project_id: Uuid) -> AppResult<Vec<PlaceInfo>>;
 }
 
 /// Вхождение плана, которое оплачивает операция.

@@ -26,7 +26,14 @@
       </select>{% call m::err(error, "account_code") %}{% endcall %}</div>
   </div>
 
-  <div data-section="flow"{% if f.kind() == "TRANSFER" %} hidden{% endif %}>
+  <div class="space-y-4" data-section="flow"{% if f.kind() == "TRANSFER" %} hidden{% endif %}>
+  {% if !places.is_empty() %}
+  <div class="field"><label class="label" for="place_code">{{ page.t("place") }} <span class="label-note">· {{ page.t("optional") }}</span></label>
+    <select class="input" id="place_code" name="place_code" data-place{% call m::aria(error, "place_code") %}{% endcall %}>
+      <option value=""></option>
+      {% for x in places %}<option value="{{ x.code }}"{% if let Some(c) = x.default_category_code %} data-category="{{ c }}"{% endif %}{% if let Some(a) = x.default_account_code %} data-account="{{ a }}"{% endif %} {% if f.place_code == x.code %}selected{% endif %}>{{ x.title }}</option>{% endfor %}
+    </select>{% call m::err(error, "place_code") %}{% endcall %}</div>
+  {% endif %}
   <details class="disclosure more"{% if self.more_open() %} open{% endif %}>
     <summary><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg>{{ page.t("more") }} <span class="label-note">{{ self.more_summary() }}</span></summary>
     <div class="grid gap-4 sm:grid-cols-2 mt-3">

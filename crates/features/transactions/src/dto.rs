@@ -207,6 +207,10 @@ pub struct TransactionInput {
     pub plan_id: Option<Uuid>,
     #[serde(default)]
     pub plan_date: Option<NaiveDate>,
+    /// Место (расход и доход): подставляет счёт и категорию новых позиций, если их не указали
+    #[serde(default)]
+    #[schema(example = "SEVEN_ELEVEN")]
+    pub place_code: Option<String>,
 }
 
 /// Переводы описания (оригинал не меняется).
@@ -259,6 +263,8 @@ pub struct TransactionDto {
     pub created_by: Uuid,
     pub plan_id: Option<Uuid>,
     pub plan_date: Option<NaiveDate>,
+    /// Место (расход и доход)
+    pub place_code: Option<String>,
     pub postings: Vec<PostingDto>,
 }
 
@@ -274,6 +280,8 @@ pub struct ListQuery {
     pub created_by: Option<Uuid>,
     /// Только без перевода описания на этот язык (ru / en / th)
     pub untranslated: Option<String>,
+    /// Только операции в этом месте
+    pub place_code: Option<String>,
 }
 
 impl From<Transaction> for TransactionDto {
@@ -308,6 +316,7 @@ impl From<Transaction> for TransactionDto {
             created_by: x.created_by,
             plan_id: x.plan.map(|p| p.0),
             plan_date: x.plan.map(|p| p.1),
+            place_code: x.place_code,
             postings: x
                 .postings
                 .into_iter()
@@ -357,6 +366,7 @@ impl TransactionInput {
             occurred_on: self.occurred_on,
             description: Description { text: self.description, lang, ru: self.description_ru, en: self.description_en, th: self.description_th },
             plan,
+            place_code: self.place_code,
             body,
         })
     }
@@ -464,6 +474,24 @@ pub struct QuickDefaultsDto {
     /// До 6 частых категорий доходов
     pub frequent_income: Vec<String>,
     pub categories: Vec<QuickCategoryDto>,
+    /// Активные места: сначала частые в расходах пользователя за 30 дней, затем по названию. Пусто — мест нет
+    pub places: Vec<QuickPlaceDto>,
+    /// Коды частых мест (из `places`)
+    pub frequent_places: Vec<String>,
+}
+
+/// Место в форме быстрого расхода: что оно подставит.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct QuickPlaceDto {
+    pub code: String,
+    /// «7-Eleven · Сукхумвит 24»
+    pub title: String,
+    /// Название, варианты написания и код через `\u{1f}` — для поиска
+    pub search: String,
+    /// Категория по умолчанию (если активна)
+    pub category: Option<String>,
+    /// Счёт по умолчанию (если активен)
+    pub account: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, IntoParams)]

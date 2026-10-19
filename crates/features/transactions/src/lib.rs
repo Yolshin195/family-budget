@@ -22,7 +22,7 @@ use utoipa::OpenApi;
 
 pub use ports::Deps;
 pub use domain::AccountCurrency;
-pub use ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, ExchangeLine, FactLine, Payment, PlanOccurrence, PlansLookup};
+pub use ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, ExchangeLine, FactLine, Payment, PlaceInfo, PlacesLookup, PlanOccurrence, PlansLookup};
 /// Use cases фичи. Другие фичи получают к ним доступ только через свои порты и адаптеры в app/wiring.
 pub use service::TransactionService as Service;
 

@@ -121,6 +121,8 @@ pub fn dict(key: &str) -> Option<Tr> {
         "err.precision" => ("у {currency} не больше {n} знаков после запятой", "{currency} allows at most {n} decimal places", "{currency} มีทศนิยมได้ไม่เกิน {n} ตำแหน่ง"),
         "err.positive" => ("сумма должна быть больше нуля", "the amount must be greater than zero", "จำนวนเงินต้องมากกว่าศูนย์"),
         "err.account_not_found" => ("счёт '{code}' не найден", "account '{code}' not found", "ไม่พบบัญชี '{code}'"),
+        "place" => ("Место", "Place", "สถานที่"),
+        "err.place_not_found" => ("место '{code}' не найдено или в архиве", "place '{code}' not found or archived", "ไม่พบสถานที่ '{code}' หรือถูกเก็บถาวร"),
         "err.items_empty" => ("нужна хотя бы одна позиция", "add at least one item", "ต้องมีอย่างน้อยหนึ่งรายการ"),
         "err.items_max" => ("не больше {n} позиций", "at most {n} items", "ไม่เกิน {n} รายการ"),
         "err.category_required" => ("выберите категорию", "choose a category", "เลือกหมวดหมู่"),

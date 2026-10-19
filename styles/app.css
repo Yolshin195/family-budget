@@ -296,6 +296,12 @@
   .combo-list [role='option'] { @apply flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-3 text-sm; }
   .combo-list [role='option'][aria-selected='true'], .combo-list [role='option']:hover { @apply bg-sunken; }
   .combo-list .opt-path { @apply truncate text-xs text-subtle; }
+  /* Группы поиска быстрого ввода: «Категории», «Места» (шаг 5). */
+  .combo-list .opt-group { @apply px-3 pb-1 pt-2 text-xs font-medium text-subtle; }
+  .combo-list .opt-text { @apply flex min-w-0 flex-col py-1; }
+  /* Выбранное место — метка с крестиком над частыми категориями. */
+  .place-pick { @apply mb-2 inline-flex min-h-9 max-w-full items-center gap-2 rounded-full bg-sunken pl-3 pr-1 text-sm font-medium; }
+  .place-pick > span { @apply truncate; }
   .limit-note { @apply text-sm text-muted; }
   .limit-note:empty { @apply hidden; }
   .limit-note.warn { @apply text-warn; }

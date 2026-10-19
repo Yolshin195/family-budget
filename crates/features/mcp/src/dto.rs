@@ -54,6 +54,8 @@ pub struct ListTransactionsArgs {
     pub category: Option<String>,
     /// Text to search in descriptions and line notes (any language)
     pub text: Option<String>,
+    /// Place code or name: only transactions at this place
+    pub place: Option<String>,
     /// Page size, 1–200 (default 50)
     pub limit: Option<u32>,
     /// Skip this many transactions (paging)
@@ -136,6 +138,9 @@ pub struct AddFlowArgs {
     pub translations: Option<Translations>,
     /// Expenses only: this is a refund (money returned to the account)
     pub refund: Option<bool>,
+    /// Place (shop, café, market) code, name or other spelling — only an existing one (get_context, list_places);
+    /// fills in its category and account unless you pass them
+    pub place: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -180,6 +185,8 @@ pub struct UpdateTransactionArgs {
     pub amount: Option<String>,
     /// New category for a single-item expense/income
     pub category: Option<String>,
+    /// New place code or name (expense and income); "" removes the place
+    pub place: Option<String>,
     /// Expense/income items to change (with id) or add (without id); items not listed stay as they are
     pub items: Option<Vec<ItemArgs>>,
     /// Ids of items to delete from this expense/income
@@ -344,6 +351,50 @@ pub struct UpdateCategoryArgs {
     pub parent: Option<String>,
     /// New position among siblings, smaller first
     pub sort_order: Option<i32>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListPlacesArgs {
+    /// Text to find in names and other spellings (any language, case and accents ignored)
+    pub text: Option<String>,
+    /// Include archived places (default false)
+    pub include_archived: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AddPlaceArgs {
+    /// New place code, UPPER_SNAKE: Latin letters, digits and _, e.g. "SEVEN_ELEVEN" or "CAFE_AMAZON_SUKHUMVIT"
+    pub code: String,
+    /// Name as on the sign, not translated, e.g. "7-Eleven"
+    pub name: String,
+    /// Other spellings to find it by, any language, e.g. ["7-11", "เซเว่น"]
+    pub aliases: Option<Vec<String>>,
+    /// Default category code or name for its items (usually an expense category)
+    pub category: Option<String>,
+    /// Default account code or name, e.g. cash for a market
+    pub account: Option<String>,
+    /// shop | cafe | market | online | service | other (default other)
+    pub kind: Option<String>,
+    /// Branch or address, to tell branches apart, e.g. "Sukhumvit 24"
+    pub location: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct UpdatePlaceArgs {
+    /// Place code (or name) to change
+    pub code: String,
+    /// New name
+    pub name: Option<String>,
+    /// Replace the other spellings with this list ([] removes them all)
+    pub aliases: Option<Vec<String>>,
+    /// New default category code or name; "" removes it
+    pub category: Option<String>,
+    /// New default account code or name; "" removes it
+    pub account: Option<String>,
+    /// shop | cafe | market | online | service | other
+    pub kind: Option<String>,
+    /// New branch or address; "" removes it
+    pub location: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]

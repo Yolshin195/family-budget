@@ -19,11 +19,13 @@ use crate::service::{McpService, ToolResult};
 
 const INSTRUCTIONS: &str = "Family budget (double-entry household accounting) of the signed-in user. \
 Call get_context first: it returns the project, base currency, accounts with balances, the category tree with names in ru/en/th, \
-frequent categories and your permissions. Use exact codes from it (or names — they are matched in any language). \
+frequent categories and places, and your permissions. Use exact codes from it (or names — they are matched in any language). \
+A place (shop, café, market) fills in its category and account: pass `place` when the receipt or the user names one; \
+a place is never created from a receipt alone — only with add_place when the user agrees. Place names are not translated. \
 Transaction amounts are in the account currency; budget figures are in the base currency. \
 Dates are YYYY-MM-DD in the user's local calendar. Write the description in the user's language and, when you can, \
 pass translations into the other two languages (ru, en, th) — names of currencies, accounts, categories and plans too. \
-Depending on permissions you can also add and edit currencies, accounts, categories, exchange rates, limits and plans; \
+Depending on permissions you can also add and edit currencies, accounts, categories, places, exchange rates, limits and plans; \
 an exchange rate is the number of base-currency units for 1 unit of the currency (set_rate also takes the inverse: \
 units of the currency for 1 unit of the base currency). \
 Deleting or archiving anything is not possible through this server; \
@@ -237,6 +239,33 @@ impl BudgetServer {
     async fn update_category(&self, Parameters(a): Parameters<UpdateCategoryArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
         let c = caller(&ctx)?;
         reply(kernel::i18n::scope(c.lang, self.svc.update_category(&c, a)).await)
+    }
+
+    #[tool(
+        description = "Places (shops, cafés, markets) by name: code, name, branch or address, other spellings, kind, and the category and account each fills in. Pass text to search names and spellings in any language.",
+        annotations(title = "Places", read_only_hint = true, open_world_hint = false)
+    )]
+    async fn list_places(&self, Parameters(a): Parameters<ListPlacesArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
+        let c = caller(&ctx)?;
+        reply(kernel::i18n::scope(c.lang, self.svc.list_places(&c, a)).await)
+    }
+
+    #[tool(
+        description = "Add a place (shop, café, market) only when the user asks or confirms — never from a receipt alone: code, name as on the sign (not translated), other spellings incl. Thai, default category and account it fills in, kind, branch or address.",
+        annotations(title = "Add place", read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn add_place(&self, Parameters(a): Parameters<AddPlaceArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
+        let c = caller(&ctx)?;
+        reply(kernel::i18n::scope(c.lang, self.svc.add_place(&c, a)).await)
+    }
+
+    #[tool(
+        description = "Change a place by code: name, other spellings (the list is replaced), default category and account (\"\" removes), kind, branch or address. Only the passed fields change. Confirm with the user first.",
+        annotations(title = "Edit place", read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn update_place(&self, Parameters(a): Parameters<UpdatePlaceArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
+        let c = caller(&ctx)?;
+        reply(kernel::i18n::scope(c.lang, self.svc.update_place(&c, a)).await)
     }
 
     #[tool(

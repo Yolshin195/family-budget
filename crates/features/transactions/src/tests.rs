@@ -18,7 +18,7 @@ use crate::adapters::memory::InMemoryTransactionRepository;
 use crate::adapters::postgres::PostgresTransactionRepository;
 use crate::dto::{ItemInput, LineDto, ListQuery, TransactionInput, TranslationInput};
 use crate::domain::{AccountCurrency, Description};
-use crate::ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, Deps, PlanOccurrence, PlansLookup};
+use crate::ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, Deps, PlaceInfo, PlacesLookup, PlanOccurrence, PlansLookup};
 use crate::service::TransactionService;
 
 struct FakeAccounts;
@@ -117,8 +117,26 @@ impl PlansLookup for FakePlans {
     }
 }
 
+/// Места: SEVEN_ELEVEN — продукты наличными, OLD — в архиве.
+struct FakePlaces;
+
+#[async_trait::async_trait]
+impl PlacesLookup for FakePlaces {
+    async fn all(&self, _p: Uuid) -> AppResult<Vec<PlaceInfo>> {
+        let p = |code: &str, cat: Option<&str>, acc: Option<&str>, archived: bool| PlaceInfo {
+            code: code.into(),
+            title: code.into(),
+            search: code.into(),
+            default_category_code: cat.map(Into::into),
+            default_account_code: acc.map(Into::into),
+            archived,
+        };
+        Ok(vec![p("SEVEN_ELEVEN", Some("FOOD"), Some("CASH"), false), p("OLD", None, None, true)])
+    }
+}
+
 fn deps() -> Deps {
-    Deps { accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), budget: Arc::new(FakeBudget), plans: Arc::new(FakePlans) }
+    Deps { accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), budget: Arc::new(FakeBudget), plans: Arc::new(FakePlans), places: Arc::new(FakePlaces) }
 }
 
 fn service() -> TransactionService {
@@ -521,7 +539,7 @@ async fn second_opening_is_rejected_by_db() {
     let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
     // Оба запроса прошли проверку «остатка ещё нет» до того, как другой записал свой.
     let opening = || {
-        let data = TransactionData { occurred_on: day(15), description: Description::default(), plan: None, body: Draft::Opening { account: "card".into(), amount: d("1961.31") } };
+        let data = TransactionData { occurred_on: day(15), description: Description::default(), plan: None, place_code: None, body: Draft::Opening { account: "card".into(), amount: d("1961.31") } };
         Transaction::create(p, u, data, &accounts).unwrap()
     };
     repo.insert(&opening()).await.unwrap();
@@ -663,8 +681,10 @@ async fn receipt_items_migration_on_old_data() {
     let Some(db) = TestDb::new("tx_items_mig").await else { return };
     let mut before = sqlx::migrate!("./migrations");
     let all = before.migrations.to_vec();
-    let last = all.iter().filter(|m| m.migration_type.is_up_migration()).map(|m| m.version).max().unwrap();
-    before.migrations = all.iter().filter(|m| m.version < last).cloned().collect::<Vec<_>>().into();
+    // Схема до миграции позиций (20261019130736_receipt_items) — следующие миграции применяются вместе с ней.
+    let items = 20261019130736;
+    assert!(all.iter().any(|m| m.version == items));
+    before.migrations = all.iter().filter(|m| m.version < items).cloned().collect::<Vec<_>>().into();
     before.set_locking(false);
     before.run(&db.pool).await.unwrap();
     let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
@@ -754,6 +774,34 @@ async fn receipt_items_migration_on_old_data() {
     let (total,): (Decimal,) = sqlx::query_as("SELECT total FROM fb_transactions WHERE id = $1").bind(receipt_id).fetch_one(&db.pool).await.unwrap();
     assert_eq!(total, d("1260"));
     db.close().await;
+}
+
+on_each_repo! {
+    /// Шаг 5: место подставляет счёт и категорию новых позиций, если их не указали (раздел 5.2); указанное
+    /// важнее места; у перевода места нет; лента фильтруется по месту.
+    async fn place_fills_account_and_category(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let at_711 = |items: Vec<ItemInput>| TransactionInput { place_code: Some(" seven_eleven ".into()), items, ..input("EXPENSE", "") };
+        let t = svc.create(p, u, at_711(vec![ItemInput { amount: Some(d("55")), ..Default::default() }])).await.unwrap();
+        assert_eq!((t.place_code.as_deref(), t.account_code.as_str(), t.items[0].category_code.as_str()), (Some("SEVEN_ELEVEN"), "CASH", "FOOD"));
+        let own = TransactionInput { account_code: "card".into(), ..at_711(vec![ItemInput { category_code: Some("cafe".into()), amount: Some(d("45")), ..Default::default() }]) };
+        let t2 = svc.create(p, u, own).await.unwrap();
+        assert_eq!((t2.account_code.as_str(), t2.items[0].category_code.as_str()), ("CARD", "CAFE"), "указанное важнее места");
+        let tr = svc.create(p, u, TransactionInput { place_code: Some("SEVEN_ELEVEN".into()), ..transfer("card", "cash", "100", None, None) }).await.unwrap();
+        assert_eq!(tr.place_code, None, "у перевода места нет");
+        svc.create(p, u, receipt(&[("food", "10")])).await.unwrap();
+        let at = ListQuery { place_code: Some("seven_eleven".into()), ..Default::default() };
+        assert_eq!(svc.feed(p, at).await.unwrap().items.len(), 2);
+        for bad in ["NOWHERE", "OLD"] {
+            let e = svc.create(p, u, TransactionInput { place_code: Some(bad.into()), ..receipt(&[("food", "10")]) }).await.unwrap_err();
+            assert_eq!(problem(e), (kernel::error::codes::NOT_FOUND, "place_code".to_string()), "{bad}: нет или в архиве");
+        }
+        // Правка без места убирает его; позиции с `id` категорию от места не получают.
+        let mut edit = TransactionInput { items: vec![ItemInput { id: Some(t.items[0].id), ..Default::default() }], ..input("EXPENSE", "cash") };
+        edit.place_code = None;
+        let edited = svc.update(p, t.id, edit).await.unwrap();
+        assert_eq!((edited.place_code, edited.items[0].category_code.as_str()), (None, "FOOD"));
+    }
 }
 
 /// Техдолг #9: тексты ошибок фичи — только в словаре `i18n.rs`; в рабочем коде нет строк на русском,

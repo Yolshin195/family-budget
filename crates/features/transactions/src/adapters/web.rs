@@ -175,6 +175,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
         tx_kind: Some(params.kind.clone()).filter(|v| !v.is_empty()),
         created_by: Uuid::parse_str(&params.member).ok(),
         untranslated: (params.untranslated == "1").then(|| lang.code().to_string()),
+        place_code: None,
     };
     // Месяц целиком; итоги и выписка — по всем операциям фильтра, даже если лента обрезана (техдолг #25).
     let feed = svc.feed(p, query()).await?;
@@ -183,6 +184,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
     let accs: HashMap<String, String> = svc.account_titles(p, lang).await?.into_iter().collect();
     let accounts = svc.account_choices(p, lang).await?;
     let acc_title = |code: &str| accs.get(code).cloned().unwrap_or_else(|| code.to_string());
+    let places: HashMap<String, String> = svc.places(p).await?.into_iter().map(|x| (x.code, x.title)).collect();
     let cat_title = |code: &str| cats.get(code).cloned().unwrap_or_else(|| code.to_string());
 
     // Выписка: остаток на начало месяца и нарастающий остаток — только без прочих фильтров.
@@ -242,6 +244,13 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             "OPENING" => ("opening", format!("{} · {author}", acc_title(&t.account_code)), page_t(&page, "opening")),
             "INCOME" => ("income", format!("{} · {author}", acc_title(&t.account_code)), String::new()),
             _ => ("expense", format!("{} · {author}", acc_title(&t.account_code)), String::new()),
+        };
+        // Место: без описания — заголовок операции, иначе — первым в строке под ним («Café Amazon · Карта KBank · Алексей»).
+        let place = t.place_code.as_ref().map(|code| places.get(code).cloned().unwrap_or_else(|| code.clone()));
+        let (meta, desc_fallback) = match place {
+            Some(p) if t.title(lang).is_empty() => (meta, p),
+            Some(p) => (format!("{p} · {meta}"), desc_fallback),
+            None => (meta, desc_fallback),
         };
         let simple = t.items.len() == 1 && t.items[0].is_simple();
         let groups = if simple { Vec::new() } else { item_groups(lang, &t.items, &cat_title) };
@@ -406,6 +415,8 @@ struct TxForm {
     plan_id: String,
     plan_date: String,
     back: String,
+    /// Место (шаг 5): у перевода не сохраняется.
+    place_code: String,
     /// Скидка на чек (раздел 5.1): делится по позициям, не хранится — при правке поле пустое.
     discount_total: String,
     // Позиции — параллельные списки: каждая строка формы отправляет все поля, пустые тоже.
@@ -434,6 +445,8 @@ struct Prefill {
     desc_lang: String,
     /// Дата операции (из быстрого ввода: «Подробная карточка»).
     date: String,
+    /// Место (из быстрого ввода).
+    place: String,
     back: String,
 }
 
@@ -498,6 +511,8 @@ struct FormPage {
     units: Vec<(&'static str, String)>,
     accounts: Vec<Choice>,
     categories: Vec<Choice>,
+    /// Активные места и место самой операции; пусто — поля «Место» нет.
+    places: Vec<crate::ports::PlaceInfo>,
     /// Курс 1 единицы валюты к базовой на дату формы (для курса справочника рядом с курсом перевода).
     rates: HashMap<String, String>,
     /// Знаков после запятой у валюты счёта — для суммы «количество × цена» в браузере.
@@ -507,8 +522,9 @@ struct FormPage {
 }
 
 /// Поля формы, у которых свой текст ошибки рядом с полем.
-const FIELDS: [&str; 11] = [
+const FIELDS: [&str; 12] = [
     "occurred_on", "account_code", "tx_kind", "description", "to_account_code", "amount", "to_amount", "fee_category_code", "fee_amount", "discount_total", "items",
+    "place_code",
 ];
 
 impl FormPage {
@@ -626,6 +642,7 @@ impl TxForm {
             description_th: opt(&self.description_th),
             plan_id: opt(&self.plan_id).map(|s| Uuid::parse_str(&s)).transpose().map_err(|_| invalid("plan_id", "err.bad_id"))?,
             plan_date: opt(&self.plan_date).map(|s| s.parse()).transpose().map_err(|_| invalid("plan_date", "err.bad_date"))?,
+            place_code: if transfer { None } else { opt(&self.place_code) },
             ..Default::default()
         })
     }
@@ -651,6 +668,7 @@ impl TxForm {
             plan_id: t.plan_id.map(|u| u.to_string()).unwrap_or_default(),
             plan_date: t.plan_date.map(|d| d.to_string()).unwrap_or_default(),
             back: String::new(),
+            place_code: t.place_code.clone().unwrap_or_default(),
             discount_total: String::new(),
             item_id: col(&|x| x.id.to_string()),
             item_category: col(&|x| x.category_code.clone()),
@@ -707,7 +725,8 @@ async fn form_page(svc: &TransactionService, page: PageCtx, existing: Option<&Tr
     }
     let units = Unit::ALL.into_iter().map(|u| (u.as_str(), page_t(&page, &format!("unit.{}", u.as_str())))).collect();
     let minor = svc.minor_units(p).await?.into_iter().collect();
-    render(&FormPage { page: nested(page), id: existing.map(|t| t.id), f, items, units, accounts, categories, rates, minor, postings, error })
+    let places = svc.places(p).await?.into_iter().filter(|x| !x.archived || x.code == f.place_code).collect();
+    render(&FormPage { page: nested(page), id: existing.map(|t| t.id), f, items, units, accounts, categories, places, rates, minor, postings, error })
 }
 
 async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Query<Prefill>) -> PageResult {
@@ -728,6 +747,7 @@ async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
         plan_id: q.plan_id,
         plan_date: q.plan_date,
         back: q.back,
+        place_code: q.place,
         item_category: vec![q.category],
         item_amount: vec![if transfer { String::new() } else { q.amount }],
         ..Default::default()

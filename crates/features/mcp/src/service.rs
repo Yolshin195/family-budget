@@ -112,6 +112,8 @@ pub fn tool_right(name: &str) -> Option<Right> {
         "add_currency" | "update_currency" => Right::write("currencies"),
         "add_account" | "update_account" => Right::write("accounts"),
         "add_category" | "update_category" => Right::write("categories"),
+        "list_places" => Right::read("places"),
+        "add_place" | "update_place" => Right::write("places"),
         "list_rates" => Right::read("rates"),
         "set_rate" => Right::write("rates"),
         "list_limits" => Right::read("limits"),
@@ -121,6 +123,8 @@ pub fn tool_right(name: &str) -> Option<Right> {
 }
 
 const MAX_PAGE: i64 = 200;
+/// Частых мест в `get_context`.
+const FREQUENT_PLACES: usize = 10;
 /// Сколько операций просматривать при фильтре по категории или тексту.
 const SCAN_LIMIT: i64 = 1000;
 
@@ -361,6 +365,7 @@ impl McpService {
             "write_currencies": can(Right::write("currencies")),
             "write_accounts": can(Right::write("accounts")),
             "write_categories": can(Right::write("categories")),
+            "write_places": can(Right::write("places")),
             "write_rates": can(Right::write("rates")),
             "write_limits": can(Right::write("limits")),
             "delete": false,
@@ -403,6 +408,9 @@ impl McpService {
         data["income_categories"] = q.categories.iter().filter(|c| c.kind == "INCOME").map(cat).collect();
         data["frequent_expense_categories"] = json!(q.frequent_expense);
         data["frequent_income_categories"] = json!(q.frequent_income);
+        // Места (шаг 5): частые — с тем, что они подставят; все — list_places.
+        data["frequent_places"] = q.places.iter().filter(|p| q.frequent_places.contains(&p.code)).take(FREQUENT_PLACES).map(place_info_json).collect();
+        data["places_total"] = json!(q.places.len());
         Ok(ToolOutput {
             summary: format!(
                 "Project '{}', base currency {}, {} accounts, {} categories. Amounts of transactions are in the account currency.",
@@ -433,7 +441,11 @@ impl McpService {
             Some(k) if ["EXPENSE", "INCOME", "TRANSFER"].contains(&k.as_str()) => Some(k),
             Some(k) => return Err(ToolError(format!("kind: expected expense, income or transfer, got '{k}'"))),
         };
-        let filter = TxFilter { from: Some(from), to: Some(to), account_code, kind };
+        let place_code = match clean(a.place) {
+            Some(p) => Some(find_record("place", &p, &self.deps.directories.places(caller.project_id).await?)?.code.clone()),
+            None => None,
+        };
+        let filter = TxFilter { from: Some(from), to: Some(to), account_code, kind, place_code };
         let category_set: Option<HashSet<String>> = match a.category.as_deref() {
             Some(c) => {
                 let root = resolve("category", c, &q.categories, |x| &x.code, |x| x.search.clone())?.code.clone();
@@ -580,10 +592,16 @@ impl McpService {
         let today = today();
         let date = parse_date("date", a.date.as_deref(), today)?;
         let q = self.quick(caller, date).await?;
-        let items = self.items(&q, kind, a.amount.as_deref(), a.category.as_deref(), a.items)?;
-        let by_default = a.account.is_none();
-        let account_code = self.account(&q, "account", a.account.as_deref())?;
+        // Место подставляет категорию и счёт, если их не передали (docs/group-1.md, 5.2).
+        let place = clean(a.place).map(|p| place_of(&q, &p)).transpose()?;
+        let place_category = place.and_then(|p| p.category_code.as_deref()).filter(|c| q.categories.iter().any(|x| x.code == *c && x.kind == kind));
+        let category = a.category.as_deref().or(if a.items.is_none() { place_category } else { None });
+        let items = self.items(&q, kind, a.amount.as_deref(), category, a.items)?;
+        let place_account = place.and_then(|p| p.account_code.as_deref());
+        let by_default = a.account.is_none() && place_account.is_none();
+        let account_code = self.account(&q, "account", a.account.as_deref().or(place_account))?;
         let mut draft = blank_draft(kind, date, account_code, caller.lang);
+        draft.place_code = place.map(|p| p.code.clone());
         draft.refund = kind == "EXPENSE" && a.refund.unwrap_or(false);
         draft.items = items;
         draft.discount_total = a.discount_total.as_deref().map(|v| parse_money("discount_total", v)).transpose()?;
@@ -727,6 +745,15 @@ impl McpService {
                 draft.remove_item_ids = ids.iter().map(|id| Uuid::parse_str(id.trim()).map_err(|_| ToolError(format!("remove_item_ids: not an item id: '{id}'")))).collect::<Result<_, _>>()?;
             }
             draft.discount_total = a.discount_total.as_deref().map(|v| parse_money("discount_total", v)).transpose()?;
+            if let Some(p) = a.place.as_deref() {
+                draft.place_code = match p.trim() {
+                    "" => None,
+                    p => Some(place_of(&q, p)?.code.clone()),
+                };
+            }
+        }
+        if old.kind == "TRANSFER" && a.place.is_some() {
+            return Err(ToolError("transfers have no place".into()));
         }
         if a.description.is_some() || a.translations.is_some() || a.description_lang.is_some() {
             let description = a.description.or(old.description.clone());
@@ -1066,6 +1093,93 @@ impl McpService {
             ));
         }
         Ok(ToolOutput { summary, data: json!({"base_currency": base, "rate": rate_json(&saved, base), "replaced": old.is_some()}) })
+    }
+
+    /// Места по названию; `text` — поиск по названию и вариантам написания без регистра и диакритики.
+    pub async fn list_places(&self, caller: &Caller, a: ListPlacesArgs) -> ToolResult {
+        self.check(caller, Right::read("places"))?;
+        let all = self.deps.directories.places(caller.project_id).await?;
+        let with_archived = a.include_archived.unwrap_or(false);
+        let needle = clean(a.text).map(|t| kernel::search::fold(&t));
+        let list: Vec<&Place> = all
+            .iter()
+            .filter(|p| with_archived || !p.archived)
+            .filter(|p| needle.as_ref().is_none_or(|n| kernel::search::fold(&format!("{}{}{}", p.names(), kernel::search::SEP, p.code)).contains(n.as_str())))
+            .collect();
+        Ok(ToolOutput {
+            summary: format!("{} places.", list.len()),
+            data: json!({"places": list.iter().map(|p| place_json(p)).collect::<Vec<_>>()}),
+        })
+    }
+
+    /// Новое место: только явно — сервер не создаёт места из свободного текста.
+    pub async fn add_place(&self, caller: &Caller, a: AddPlaceArgs) -> ToolResult {
+        self.check(caller, Right::write("places"))?;
+        let code = parse_code("code", &a.code)?;
+        let all = self.deps.directories.places(caller.project_id).await?;
+        if let Some(x) = all.iter().find(|x| x.code == code) {
+            return Err(taken("place", &x.code, &x.title(), x.archived, "update_place"));
+        }
+        let place = Place {
+            code,
+            name: a.name.trim().to_string(),
+            aliases: a.aliases.unwrap_or_default(),
+            category_code: match clean(a.category) {
+                Some(c) => Some(self.any_category(caller, "category", &c).await?),
+                None => None,
+            },
+            account_code: match clean(a.account) {
+                Some(acc) => Some(find_ref("account", &acc, &self.deps.directories.accounts(caller.project_id).await?)?.code.clone()),
+                None => None,
+            },
+            kind: a.kind.as_deref().map(|k| parse_choice("kind", k, &PLACE_KINDS)).transpose()?.unwrap_or_else(|| "OTHER".into()),
+            location: clean(a.location),
+            archived: false,
+        };
+        let p = self.deps.directories.create_place(caller.project_id, &place).await?;
+        self.audit_write(caller, "add_place", &[("place", p.code.clone())]).await;
+        Ok(ToolOutput { summary: format!("Added place {} '{}'.", p.code, p.title()), data: json!({"place": place_json(&p)}) })
+    }
+
+    pub async fn update_place(&self, caller: &Caller, a: UpdatePlaceArgs) -> ToolResult {
+        self.check(caller, Right::write("places"))?;
+        if a.name.is_none() && a.aliases.is_none() && a.category.is_none() && a.account.is_none() && a.kind.is_none() && a.location.is_none() {
+            return Err(nothing_to_change());
+        }
+        let all = self.deps.directories.places(caller.project_id).await?;
+        let mut p = find_record("code", &a.code, &all)?.clone();
+        if let Some(n) = a.name {
+            p.name = n.trim().to_string();
+        }
+        if let Some(list) = a.aliases {
+            p.aliases = list;
+        }
+        if let Some(c) = a.category {
+            p.category_code = match c.trim() {
+                "" => None,
+                c => Some(self.any_category(caller, "category", c).await?),
+            };
+        }
+        if let Some(acc) = a.account {
+            p.account_code = match acc.trim() {
+                "" => None,
+                acc => Some(find_ref("account", acc, &self.deps.directories.accounts(caller.project_id).await?)?.code.clone()),
+            };
+        }
+        if let Some(k) = a.kind.as_deref() {
+            p.kind = parse_choice("kind", k, &PLACE_KINDS)?;
+        }
+        if let Some(l) = a.location {
+            p.location = clean(Some(l));
+        }
+        let p = self.deps.directories.update_place(caller.project_id, &p).await?;
+        self.audit_write(caller, "update_place", &[("place", p.code.clone())]).await;
+        Ok(ToolOutput { summary: format!("Updated place {} '{}'.", p.code, p.title()), data: json!({"place": place_json(&p)}) })
+    }
+
+    /// Код активной категории любого вида по коду или названию на любом языке.
+    async fn any_category(&self, caller: &Caller, field: &str, value: &str) -> Result<String, ToolError> {
+        Ok(find_ref(field, value, &self.deps.directories.categories(caller.project_id).await?)?.code.clone())
     }
 
     pub async fn list_rates(&self, caller: &Caller, a: ListRatesArgs) -> ToolResult {
@@ -1522,6 +1636,7 @@ fn blank_draft(kind: &str, date: NaiveDate, account_code: String, lang: Lang) ->
         description_th: None,
         plan_id: None,
         plan_date: None,
+        place_code: None,
     }
 }
 
@@ -1615,6 +1730,26 @@ fn tx_json(t: &Tx, lang: Lang) -> Value {
     if let Some(p) = t.plan_id {
         v["plan"] = json!({"id": p, "date": t.plan_date});
     }
+    if let Some(p) = &t.place_code {
+        v["place"] = json!(p);
+    }
     v
+}
+
+/// Место для ассистента: код, название и что оно подставит.
+fn place_info_json(p: &PlaceInfo) -> Value {
+    json!({"code": p.code, "title": p.title, "category": p.category_code, "account": p.account_code})
+}
+
+fn place_json(p: &Place) -> Value {
+    json!({
+        "code": p.code, "name": p.name, "location": p.location, "aliases": p.aliases, "kind": p.kind.to_lowercase(),
+        "category": p.category_code, "account": p.account_code, "archived": p.archived,
+    })
+}
+
+/// Активное место по коду, названию или варианту написания (`kernel::search`).
+fn place_of<'a>(q: &'a QuickInfo, value: &str) -> Result<&'a PlaceInfo, ToolError> {
+    resolve("place", value, &q.places, |x| &x.code, |x| x.search.clone()).map_err(|e| ToolError(format!("{e}; list_places shows all places, add_place adds one")))
 }
 

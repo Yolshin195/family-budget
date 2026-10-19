@@ -346,9 +346,20 @@
         row.hidden = false; filterCats(); total(); $('select', row).focus();
       });
     }
+    // Место (шаг 5): счёт и пустые категории видимых позиций — из места; без JS это сделает сервер.
+    function applyPlace(sel) {
+      var o = sel.selectedOptions[0], acc = $('[name=account_code]', form);
+      if (!o || !o.value) return;
+      if (o.dataset.account && acc && $('option[value="' + CSS.escape(o.dataset.account) + '"]', acc)) acc.value = o.dataset.account;
+      if (o.dataset.category) visible().forEach(function (row) {
+        var c = $('[name=item_category]', row), op = c && $('option[value="' + CSS.escape(o.dataset.category) + '"]', c);
+        if (c && !c.value && op && !op.disabled) c.value = o.dataset.category;
+      });
+    }
     form.addEventListener('input', function () { total(); syncTransfer(); });
     form.addEventListener('change', function (e) {
       if (e.target.name === 'tx_kind') syncKind();
+      if (e.target.matches && e.target.matches('[data-place]')) applyPlace(e.target);
       filterCats(); total(); warn(); syncTransfer();
     });
     // «120+45» в поле суммы → 165 при выходе из поля (и в добавленных строках позиций).
@@ -547,7 +558,7 @@
 
   /* ---------------------------------------------------------------- быстрый расход (раздел 10) */
   var dlg = $('#quick');
-  var Q = { data: null, kind: 'EXPENSE', category: '', loading: null };
+  var Q = { data: null, kind: 'EXPENSE', category: '', place: null, loading: null };
 
   function api(method, url, payload) {
     var h = { Accept: 'application/json', 'X-CSRF-Token': csrf };
@@ -581,7 +592,8 @@
     $('[data-q-transfer]', dlg).hidden = !t;
     $$('[data-label-flow]', dlg).forEach(function (el) { var x = $('span', el) || el; x.textContent = t ? el.dataset.labelTransfer : el.dataset.labelFlow; });
     var c = Q.category && catByCode(Q.category);
-    if (c && c.kind !== kind) Q.category = '';
+    if (c && c.kind !== kind) { Q.category = ''; markFrom('#q-cat-from', false); }
+    showPlace(); if (Q.place && !Q.category && !t) applyPlace(Q.place, true);
     renderChips(); updateLimit(); if (t) fillTo();
   }
   // Счета зачисления — все, кроме счёта списания; по умолчанию — как в прошлом переводе.
@@ -607,7 +619,7 @@
     $('#q-rate').textContent = differ ? rateText(evalAmount($('#q-amount').value), f.symbol, evalAmount($('#q-to-amount').value), t.symbol, parseFloat(f.rate_to_base), parseFloat(t.rate_to_base)) : '';
   }
   function pickCategory(code) {
-    Q.category = code;
+    Q.category = code; markFrom('#q-cat-from', false);
     renderChips();
     $('#q-cat-err').hidden = true;
     updateLimit();
@@ -638,6 +650,9 @@
   function fold(s) {
     return s.trim().toLowerCase().normalize('NFD').replace(/\u0438\u0306/g, '\u0439').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/\s+/g, ' ');
   }
+  // Иконка из спрайта страницы (у метки места — map-pin).
+  function iconOf(name) { var u = $('#q-place use'); return u ? u.getAttribute('href').replace(/#.*$/, '#i-' + name) : ''; }
+  // Поиск ищет категории и места (шаг 5): сначала «Категории», затем «Места»; пока мест нет — как раньше.
   function renderResults() {
     var q = fold(search.value);
     results.textContent = ''; active = -1;
@@ -646,20 +661,56 @@
       if (c.folded == null) c.folded = fold(c.search);
       return c.kind === Q.kind && c.folded.indexOf(q) >= 0;
     }).slice(0, 12);
-    if (!found.length) {
-      var li = doc.createElement('li'); li.className = 'opt-path'; li.textContent = i18n.noMatch || ''; li.setAttribute('role', 'presentation'); results.appendChild(li);
+    var all = Q.data.places || [], grouped = all.length > 0, n = 0;
+    var places = all.filter(function (p) {
+      if (p.folded == null) p.folded = fold(p.search);
+      return p.folded.indexOf(q) >= 0;
+    }).slice(0, 8);
+    function row(cls) {
+      var li = doc.createElement('li'); li.className = cls || ''; li.setAttribute('role', 'presentation'); results.appendChild(li); return li;
     }
-    found.forEach(function (c, i) {
+    function option(icon, title, sub, pick) {
       var li = doc.createElement('li');
-      li.id = 'q-opt-' + i; li.setAttribute('role', 'option'); li.dataset.code = c.code;
-      var t = doc.createElement('span'); t.textContent = c.title; li.appendChild(t);
-      var p = pathOf(c); if (p) { var s = doc.createElement('span'); s.className = 'opt-path'; s.textContent = p; li.appendChild(s); }
-      li.addEventListener('mousedown', function (e) { e.preventDefault(); choose(c.code); });
-      results.appendChild(li);
+      li.id = 'q-opt-' + n++; li.setAttribute('role', 'option');
+      if (grouped) li.appendChild(svgIcon(iconOf(icon)));
+      var box = grouped ? doc.createElement('span') : li; if (grouped) { box.className = 'opt-text'; li.appendChild(box); }
+      var t = doc.createElement('span'); t.textContent = title; box.appendChild(t);
+      if (sub) { var s = doc.createElement('span'); s.className = 'opt-path'; s.textContent = sub; box.appendChild(s); }
+      li.addEventListener('mousedown', function (e) { e.preventDefault(); pick(); });
+      results.appendChild(li); return li;
+    }
+    if (!found.length && !places.length) row('opt-path').textContent = i18n.noMatch || '';
+    if (found.length && grouped) row('opt-group').textContent = i18n.categories || '';
+    found.forEach(function (c) { option('tag', c.title, pathOf(c), function () { choose(c.code); }).dataset.code = c.code; });
+    if (places.length) row('opt-group').textContent = i18n.places || '';
+    places.forEach(function (p) {
+      var c = p.category && catByCode(p.category), a = p.account && accountBy(p.account);
+      var fills = [c && c.kind === Q.kind ? c.title : '', a ? a.title : ''].filter(Boolean).join(' · ');
+      option('map-pin', p.title, fills ? (i18n.fills || '') + ': ' + fills : '', function () { choosePlace(p.code); }).dataset.place = p.code;
     });
     results.hidden = false; search.setAttribute('aria-expanded', 'true');
   }
-  function choose(code) { pickCategory(code); search.value = ''; results.hidden = true; search.setAttribute('aria-expanded', 'false'); $('#q-amount').focus(); }
+  function closeSearch() { search.value = ''; results.hidden = true; search.setAttribute('aria-expanded', 'false'); $('#q-amount').focus(); }
+  function choose(code) { pickCategory(code); closeSearch(); }
+  function choosePlace(code) { applyPlace(placeBy(code)); closeSearch(); }
+  // Место (шаг 5): метка с крестиком; категория и счёт места — с пометкой «· из места», пока их не сменили.
+  function placeBy(code) { return ((Q.data && Q.data.places) || []).filter(function (p) { return p.code === code; })[0]; }
+  function markFrom(id, on) { var el = $(id); if (el) el.hidden = !on; }
+  function showPlace() {
+    var box = $('#q-place'); if (!box) return;
+    box.hidden = !Q.place || Q.kind === 'TRANSFER';
+    $('#q-place-title').textContent = Q.place ? Q.place.title : '';
+  }
+  // `keepAccount` — «Сохранить и ещё» и смена типа: счёт уже выбран, место подставляет только категорию.
+  function applyPlace(p, keepAccount) {
+    Q.place = p || null; showPlace();
+    if (!p) { markFrom('#q-cat-from', false); markFrom('#q-acc-from', false); return; }
+    var c = p.category && catByCode(p.category);
+    if (c && c.kind === Q.kind) { pickCategory(p.category); markFrom('#q-cat-from', true); }
+    if (!keepAccount && p.account && accountBy(p.account)) {
+      $('#q-account').value = p.account; updateCurrency(); updateLimit(); markFrom('#q-acc-from', true);
+    }
+  }
   function moveActive(d) {
     var opts = $$('[role=option]', results); if (!opts.length) return;
     active = (active + d + opts.length) % opts.length;
@@ -675,7 +726,7 @@
       else if (e.key === 'Enter' && !results.hidden) {
         e.preventDefault();
         var opts = $$('[role=option]', results), o = opts[active >= 0 ? active : 0];
-        if (o) choose(o.dataset.code);
+        if (o) { if (o.dataset.place) choosePlace(o.dataset.place); else choose(o.dataset.code); }
       } else if (e.key === 'Escape' && !results.hidden) { e.preventDefault(); e.stopPropagation(); search.value = ''; renderResults(); }
     });
     search.addEventListener('blur', function () { setTimeout(function () { results.hidden = true; }, 120); });
@@ -703,6 +754,7 @@
     qState('loading');
     Q.loading = api('GET', '/api/transactions/quick-defaults?date=' + todayISO(0)).then(function (d) {
       Q.data = d; fillAccounts(); renderChips(); qState('ready');
+      if ((d.places || []).length && search) { search.placeholder = search.dataset.withPlaces; search.setAttribute('aria-label', search.dataset.withPlaces); }
       if (!d.accounts.length) { showError(i18n.noAccounts); }
       return d;
     }).catch(function () { Q.loading = null; qState('failed'); });
@@ -717,6 +769,8 @@
       $('#q-date').hidden = true; $('#q-date').value = todayISO(0);
     }
     renderChips(); updateLimit();
+    // «Сохранить и ещё» оставляет место, как счёт и дату.
+    if (keepAccountDate && Q.place) applyPlace(Q.place, true); else applyPlace(null);
   }
   function openQuick(kind, category, accountCode) {
     if (!dlg) return false;
@@ -776,6 +830,7 @@
       description: desc || null, description_lang: lang.toUpperCase(),
       items: [{ category_code: Q.category, amount: String(amount) }]
     };
+    if (Q.place) payload.place_code = Q.place.code;
     showError('');
     $$('.dialog-foot button', dlg).forEach(function (b) { b.disabled = true; });
     api('POST', '/api/transactions', payload).then(function (t) {
@@ -807,7 +862,8 @@
     $('#q-to').addEventListener('change', function () { $('#q-to-err').hidden = true; updateTransfer(); });
     $('#q-to-amount').addEventListener('input', function () { $('#q-to-amount-err').hidden = true; updateTransfer(); });
     $('#q-amount').addEventListener('blur', function () { var i = $('#q-amount'), v = evalAmount(i.value); if (!isNaN(v) && /[+*/]|\d-/.test(i.value)) { i.value = String(v); updateLimit(); } });
-    $('#q-account').addEventListener('change', function () { updateCurrency(); updateLimit(); if (Q.kind === 'TRANSFER') fillTo(); });
+    $('#q-account').addEventListener('change', function () { markFrom('#q-acc-from', false); updateCurrency(); updateLimit(); if (Q.kind === 'TRANSFER') fillTo(); });
+    $('#q-place-x').addEventListener('click', function () { applyPlace(null); search.focus(); });
     $('[data-action="quick-retry"]', dlg).addEventListener('click', function () { load().then(function () { setKind(Q.kind); $('#q-amount').focus(); }); });
     $$('[data-close]', dlg).forEach(function (b) { b.addEventListener('click', function () { dlg.close(); }); });
     dlg.addEventListener('click', function (e) { if (e.target === dlg) dlg.close(); });
@@ -819,6 +875,7 @@
       if (!isNaN(v)) q.set('amount', String(v));
       if (Q.kind === 'TRANSFER' && $('#q-to').value) q.set('to_account', $('#q-to').value);
       else if (Q.category) q.set('category', Q.category);
+      if (Q.place && Q.kind !== 'TRANSFER') q.set('place', Q.place.code);
       if ($('#q-account').value) q.set('account', $('#q-account').value);
       q.set('date', selectedDate());
       if ($('#q-desc').value.trim()) { q.set('desc', $('#q-desc').value.trim()); q.set('desc_lang', lang); }

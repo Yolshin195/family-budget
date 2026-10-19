@@ -181,11 +181,17 @@
       </div>
 
       <fieldset class="field" data-q-flow>
-        <legend class="label" id="q-cat-label">{{ page.t("category") }}</legend>
+        <legend class="label" id="q-cat-label">{{ page.t("category") }} <span class="label-note" id="q-cat-from" hidden>· {{ page.t("quick.from_place") }}</span></legend>
+        <div class="place-pick" id="q-place" hidden>
+          <svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("map-pin") }}"></use></svg><span id="q-place-title"></span>
+          <button type="button" class="btn-icon" id="q-place-x" aria-label="{{ page.t("quick.remove_place") }}" title="{{ page.t("quick.remove_place") }}">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("x") }}"></use></svg></button>
+        </div>
         <div class="chips" id="q-chips" aria-describedby="q-cat-err"></div>
         <div class="combo">
           <svg class="icon combo-icon" aria-hidden="true"><use href="{{ page.icon("search") }}"></use></svg>
           <input id="q-search" class="input input-search" type="search" placeholder="{{ page.t("quick.search") }}" aria-label="{{ page.t("quick.search") }}"
+                 data-with-places="{{ page.t("quick.search_places") }}"
                  role="combobox" aria-expanded="false" aria-controls="q-results" aria-autocomplete="list">
           <ul id="q-results" class="combo-list" role="listbox" aria-label="{{ page.t("category") }}" hidden></ul>
         </div>
@@ -195,7 +201,7 @@
 
       <div class="grid gap-4 sm:grid-cols-2">
         <div class="field">
-          <label class="label" for="q-account" data-label-flow="{{ page.t("account") }}" data-label-transfer="{{ page.t("quick.from") }}">{{ page.t("account") }}</label>
+          <label class="label" for="q-account" data-label-flow="{{ page.t("account") }}" data-label-transfer="{{ page.t("quick.from") }}"><span>{{ page.t("account") }}</span> <span class="label-note" id="q-acc-from" hidden>· {{ page.t("quick.from_place") }}</span></label>
           <select id="q-account" class="input" name="account_code"></select>
         </div>
         <fieldset class="field">
@@ -283,6 +289,7 @@
   data-undo="{{ page.t("undo") }}" data-close="{{ page.t("close") }}" data-expense="{{ page.t("expense") }}" data-income="{{ page.t("income") }}"
   data-available="{{ page.t("quick.available") }}" data-left="{{ page.t("quick.left") }}" data-over="{{ page.t("quick.over") }}"
   data-warn="{{ page.t("quick.warn") }}" data-anyway="{{ page.t("quick.saved_anyway") }}" data-choose="{{ page.t("quick.choose_category") }}"
+  data-categories="{{ page.t("quick.categories") }}" data-places="{{ page.t("quick.places") }}" data-fills="{{ page.t("quick.fills") }}"
   data-no-match="{{ page.t("quick.no_match") }}" data-no-accounts="{{ page.t("quick.no_accounts") }}" data-failed="{{ page.t("quick.failed") }}"
   data-undone="{{ page.t("quick.undone") }}" data-frequent="{{ page.t("quick.frequent") }}" data-amount-required="{{ page.t("quick.amount_hint") }}"
   data-transfer="{{ page.t("transfer") }}" data-choose-to="{{ page.t("quick.choose_to") }}" data-received-required="{{ page.t("quick.received_required") }}"

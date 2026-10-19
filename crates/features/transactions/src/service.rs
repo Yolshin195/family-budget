@@ -12,8 +12,8 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::domain::{Body, Description, Draft, ItemDraft, ItemsDraft, RefKind, Transaction, TransactionData, TxKind};
-use crate::dto::{ListQuery, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, TransactionDto, TransactionInput, TranslationInput};
-use crate::ports::{CategoryInfo, Deps, ExchangeLine, FactLine, Filter, Payment, TransactionRepository, taken};
+use crate::dto::{ItemInput, ListQuery, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, QuickPlaceDto, TransactionDto, TransactionInput, TranslationInput};
+use crate::ports::{CategoryInfo, Deps, ExchangeLine, FactLine, Filter, Payment, PlaceInfo, TransactionRepository, taken};
 
 /// Частых категорий в форме быстрого расхода.
 pub const FREQUENT: usize = 6;
@@ -46,7 +46,8 @@ impl TransactionService {
     }
 
     /// Создать транзакцию. `created_by` — текущий пользователь, не из тела запроса.
-    pub async fn create(&self, project_id: Uuid, created_by: Uuid, input: TransactionInput) -> AppResult<TransactionDto> {
+    pub async fn create(&self, project_id: Uuid, created_by: Uuid, mut input: TransactionInput) -> AppResult<TransactionDto> {
+        self.apply_place(project_id, &mut input, None).await?;
         let data = input.into_domain()?;
         let accounts = self.deps.accounts.currencies(project_id).await?;
         let item = Transaction::create(project_id, created_by, data, &accounts)?;
@@ -101,9 +102,10 @@ impl TransactionService {
         Ok(Feed { items: items.into_iter().map(Into::into).collect(), truncated, totals, statement })
     }
 
-    pub async fn update(&self, project_id: Uuid, id: Uuid, input: TransactionInput) -> AppResult<TransactionDto> {
+    pub async fn update(&self, project_id: Uuid, id: Uuid, mut input: TransactionInput) -> AppResult<TransactionDto> {
         let mut item = self.load(project_id, id).await?;
         let before = item.clone();
+        self.apply_place(project_id, &mut input, before.place_code.as_deref()).await?;
         let data = input.into_domain()?;
         let accounts = self.deps.accounts.currencies(project_id).await?;
         item.change(data, &accounts)?;
@@ -112,6 +114,33 @@ impl TransactionService {
         self.check_opening(&item).await?;
         self.repo.update(&item).await.map_err(|e| conflict(e, &item))?;
         Ok(item.into())
+    }
+
+    /// Место операции (docs/group-1.md, 5.2): если счёт и категории новых позиций не указаны — берутся из места.
+    /// Новое место — только активное; место, которое у операции уже было, остаётся и после архивации.
+    /// У перевода и начального остатка места нет.
+    async fn apply_place(&self, project_id: Uuid, input: &mut TransactionInput, before: Option<&str>) -> AppResult<()> {
+        let flow = matches!(TxKind::parse(&input.tx_kind), Some(TxKind::Expense | TxKind::Income));
+        let code = input.place_code.take().map(|v| v.trim().to_uppercase()).filter(|v| flow && !v.is_empty());
+        let Some(code) = code else { return Ok(()) };
+        let places = self.deps.places.all(project_id).await?;
+        let place = places
+            .into_iter()
+            .find(|p| p.code == code && (!p.archived || before == Some(code.as_str())))
+            .ok_or_else(|| Problem::new(codes::NOT_FOUND, "place_code", tr("err.place_not_found", &[("code", &code)])))?;
+        if input.account_code.trim().is_empty()
+            && let Some(account) = place.default_account_code
+        {
+            input.account_code = account;
+        }
+        if let Some(category) = place.default_category_code {
+            let empty = |x: &ItemInput| x.id.is_none() && x.category_code.as_deref().is_none_or(|c| c.trim().is_empty());
+            for x in input.items.iter_mut().filter(|x| empty(x)) {
+                x.category_code = Some(category.clone());
+            }
+        }
+        input.place_code = Some(code);
+        Ok(())
     }
 
     /// Изменить только переводы описания.
@@ -177,18 +206,18 @@ impl TransactionService {
         let body = Draft::Opening { account: code.clone(), amount };
         match existing {
             Some(mut t) => {
-                let data = TransactionData { occurred_on: date, description: t.description.clone(), plan: None, body };
+                let data = TransactionData { occurred_on: date, description: t.description.clone(), plan: None, place_code: None, body };
                 t.change(data, &accounts).map_err(opening_error)?;
                 self.repo.update(&t).await
             }
             None => {
-                let data = TransactionData { occurred_on: date, description: Description::default(), plan: None, body: body.clone() };
+                let data = TransactionData { occurred_on: date, description: Description::default(), plan: None, place_code: None, body: body.clone() };
                 let t = Transaction::create(project_id, user_id, data, &accounts).map_err(opening_error)?;
                 match self.repo.insert(&t).await {
                     // Повторное нажатие «Сохранить»: остаток успел записать параллельный запрос — обновляем его.
                     Err(AppError::Conflict(m)) if m == taken::OPENING => {
                         let mut t = self.repo.find_opening(project_id, &code).await?.ok_or_else(|| AppError::Conflict(m))?;
-                        let data = TransactionData { occurred_on: date, description: t.description.clone(), plan: None, body };
+                        let data = TransactionData { occurred_on: date, description: t.description.clone(), plan: None, place_code: None, body };
                         t.change(data, &accounts).map_err(opening_error)?;
                         self.repo.update(&t).await
                     }
@@ -243,7 +272,7 @@ impl TransactionService {
         let accounts = self.deps.accounts.currencies(project_id).await?;
         let items = ItemsDraft::replace(vec![ItemDraft::simple(category_code, diff.abs())]);
         let body = Draft::Flow { income: diff > Decimal::ZERO, account: code, items, refund: false };
-        let data = TransactionData { occurred_on: date, description, plan: None, body };
+        let data = TransactionData { occurred_on: date, description, plan: None, place_code: None, body };
         let item = Transaction::create(project_id, user_id, data, &accounts)?;
         self.check_refs(project_id, &item, None).await.map_err(|e| match e {
             AppError::Invalid(_) | AppError::Validation(_) if diff > Decimal::ZERO => err("category_code", "err.reconcile_need_income", &[]).into(),
@@ -278,7 +307,24 @@ impl TransactionService {
             Body::Transfer { from, to, .. } if active(&from) && active(&to) => Some((from, to)),
             _ => None,
         });
+        // Места: сначала частые в расходах пользователя, затем по названию; подставляют только активное.
+        let mut places: Vec<PlaceInfo> = self.deps.places.all(project_id).await?.into_iter().filter(|p| !p.archived).collect();
+        let rank = |code: &str| expense.places.iter().position(|c| c == code).unwrap_or(usize::MAX);
+        places.sort_by_key(|p| (rank(&p.code), p.title.to_lowercase()));
+        let frequent_places: Vec<String> = places.iter().filter(|p| rank(&p.code) != usize::MAX).map(|p| p.code.clone()).collect();
+        let places = places
+            .into_iter()
+            .map(|p| QuickPlaceDto {
+                category: p.default_category_code.filter(|c| cats.iter().any(|x| &x.code == c)),
+                account: p.default_account_code.filter(|a| active(a)),
+                code: p.code,
+                title: p.title,
+                search: p.search,
+            })
+            .collect();
         Ok(QuickDefaultsDto {
+            places,
+            frequent_places,
             date,
             base_currency: base_currency.to_string(),
             default_account,
@@ -339,6 +385,11 @@ impl TransactionService {
 
     pub async fn category_choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>> {
         self.deps.categories.choices(project_id, lang).await
+    }
+
+    /// Места проекта, с архивными (форма показывает активные и место самой операции).
+    pub async fn places(&self, project_id: Uuid) -> AppResult<Vec<PlaceInfo>> {
+        self.deps.places.all(project_id).await
     }
 
     pub async fn account_titles(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<(String, String)>> {
@@ -466,6 +517,7 @@ fn filter_of(query: ListQuery) -> AppResult<Filter> {
         kind,
         created_by: query.created_by,
         untranslated: query.untranslated.as_deref().and_then(Lang::parse),
+        place_code: query.place_code.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_uppercase),
     })
 }
 

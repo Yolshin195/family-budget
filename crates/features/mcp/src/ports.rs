@@ -11,7 +11,7 @@ use kernel::i18n::Lang;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::{Account, BudgetReport, Category, Currency, Grant, Limit, Occurrence, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter};
+use crate::domain::{Account, BudgetReport, Category, Currency, Grant, Limit, Occurrence, Place, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter};
 
 #[async_trait]
 pub trait GrantRepository: Send + Sync {
@@ -75,6 +75,10 @@ pub trait Directories: Send + Sync {
     async fn categories(&self, project_id: Uuid) -> AppResult<Vec<Category>>;
     async fn create_category(&self, project_id: Uuid, category: &Category) -> AppResult<Category>;
     async fn update_category(&self, project_id: Uuid, category: &Category) -> AppResult<Category>;
+    /// Все места проекта, с архивными.
+    async fn places(&self, project_id: Uuid) -> AppResult<Vec<Place>>;
+    async fn create_place(&self, project_id: Uuid, place: &Place) -> AppResult<Place>;
+    async fn update_place(&self, project_id: Uuid, place: &Place) -> AppResult<Place>;
 }
 
 /// Курсы валют (фича `rates`). Удаления нет.

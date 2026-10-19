@@ -298,6 +298,8 @@ pub struct Transaction {
     pub created_by: Uuid,
     /// Вхождение плана, которое оплачено этой транзакцией.
     pub plan: Option<(Uuid, NaiveDate)>,
+    /// Место (справочник `places`) — у расхода и дохода; у перевода и начального остатка всегда пусто.
+    pub place_code: Option<String>,
     /// Позиции чека (расход и доход), в порядке чека.
     pub items: Vec<Item>,
     pub postings: Vec<Posting>,
@@ -309,6 +311,8 @@ pub struct TransactionData {
     pub occurred_on: NaiveDate,
     pub description: Description,
     pub plan: Option<(Uuid, NaiveDate)>,
+    /// Код места; у перевода и начального остатка не сохраняется.
+    pub place_code: Option<String>,
     pub body: Draft,
 }
 
@@ -669,6 +673,7 @@ impl Transaction {
             description: Description::default(),
             created_by,
             plan: None,
+            place_code: None,
             items: Vec::new(),
             postings: Vec::new(),
         };
@@ -683,12 +688,17 @@ impl Transaction {
         if kind == TxKind::Opening && data.plan.is_some() {
             return Err(err("plan_id", "err.opening_plan", &[]));
         }
+        let place_code = match kind {
+            TxKind::Expense | TxKind::Income => data.place_code.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(|v| kernel::code::code("place_code", v)).transpose()?,
+            TxKind::Transfer | TxKind::Opening => None,
+        };
         let (items, postings) = build(data.body, &self.items, accounts)?;
         check_balanced(&postings).and_then(|_| check_items(kind, &items, &postings)).map_err(|m| Problem::validation("postings", m))?;
         self.occurred_on = data.occurred_on;
         self.tx_kind = kind;
         self.description = data.description.cleaned();
         self.plan = data.plan;
+        self.place_code = place_code;
         self.items = items;
         self.postings = postings;
         Ok(())
@@ -799,6 +809,7 @@ mod tests {
             occurred_on: NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
             description: Description { text: Some(" Чек ".into()), lang: Lang::Ru, ru: Some("Чек".into()), en: Some("Receipt".into()), th: Some(" ".into()) },
             plan: None,
+            place_code: None,
             body,
         }
     }

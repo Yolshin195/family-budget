@@ -27,12 +27,12 @@ impl Right {
 }
 
 /// Права доступа ассистента, которые можно выдать в браузере. «Просмотр» есть всегда.
-pub const GRANT_SCOPES: [&str; 8] =
-    ["read", "transactions:write", "currencies:write", "accounts:write", "categories:write", "rates:write", "limits:write", "planning:write"];
+pub const GRANT_SCOPES: [&str; 9] =
+    ["read", "transactions:write", "currencies:write", "accounts:write", "categories:write", "places:write", "rates:write", "limits:write", "planning:write"];
 /// Отмечены по умолчанию: просмотр всего и операции.
 pub const DEFAULT_GRANT_SCOPES: [&str; 2] = ["read", "transactions:write"];
 /// Справочники: их разом отмечает флажок «Справочники».
-pub const DIRECTORY_SCOPES: [&str; 4] = ["currencies:write", "accounts:write", "categories:write", "rates:write"];
+pub const DIRECTORY_SCOPES: [&str; 5] = ["currencies:write", "accounts:write", "categories:write", "places:write", "rates:write"];
 /// Значение флажка «Справочники» в форме — все права из `DIRECTORY_SCOPES` (форма работает и без JS).
 pub const ALL_DIRECTORIES: &str = "directories";
 
@@ -179,7 +179,19 @@ pub struct CategoryInfo {
     pub available: Option<Decimal>,
 }
 
-/// Всё, чтобы быстро записать операцию: счета, категории, частые, счёт по умолчанию.
+/// Активное место (справочник `places`): что оно подставит в операцию.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaceInfo {
+    pub code: String,
+    /// «7-Eleven · Сукхумвит 24»
+    pub title: String,
+    /// Название, варианты написания и код через `kernel::search::SEP`.
+    pub search: String,
+    pub category_code: Option<String>,
+    pub account_code: Option<String>,
+}
+
+/// Всё, чтобы быстро записать операцию: счета, категории, места, частые, счёт по умолчанию.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct QuickInfo {
     pub default_account: Option<String>,
@@ -187,6 +199,9 @@ pub struct QuickInfo {
     pub categories: Vec<CategoryInfo>,
     pub frequent_expense: Vec<String>,
     pub frequent_income: Vec<String>,
+    /// Активные места: сначала частые.
+    pub places: Vec<PlaceInfo>,
+    pub frequent_places: Vec<String>,
 }
 
 /// Позиция чека. В черновике пустое поле — значение по умолчанию (1 шт, без цены и скидки), а у позиции с `id`
@@ -240,6 +255,8 @@ pub struct TxDraft {
     pub description_th: Option<String>,
     pub plan_id: Option<Uuid>,
     pub plan_date: Option<NaiveDate>,
+    /// Место (расход и доход).
+    pub place_code: Option<String>,
 }
 
 /// Сохранённая операция.
@@ -266,6 +283,7 @@ pub struct Tx {
     pub created_by: Uuid,
     pub plan_id: Option<Uuid>,
     pub plan_date: Option<NaiveDate>,
+    pub place_code: Option<String>,
 }
 
 impl Tx {
@@ -293,6 +311,7 @@ impl Tx {
             description_th: self.description_th.clone(),
             plan_id: self.plan_id,
             plan_date: self.plan_date,
+            place_code: self.place_code.clone(),
         }
     }
 
@@ -315,6 +334,7 @@ pub struct TxFilter {
     pub to: Option<NaiveDate>,
     pub account_code: Option<String>,
     pub kind: Option<String>,
+    pub place_code: Option<String>,
 }
 
 /// Строка бюджета по категории (суммы по поддереву, в базовой валюте).
@@ -530,7 +550,32 @@ pub struct Plan {
     pub draft: PlanDraft,
 }
 
+/// Место (справочник `places`): название не переводится — имя собственное.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Place {
+    pub code: String,
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub category_code: Option<String>,
+    pub account_code: Option<String>,
+    /// SHOP / CAFE / MARKET / ONLINE / SERVICE / OTHER
+    pub kind: String,
+    pub location: Option<String>,
+    pub archived: bool,
+}
+
+impl Place {
+    /// «7-Eleven · Сукхумвит 24»
+    pub fn title(&self) -> String {
+        match &self.location {
+            Some(l) => format!("{} · {l}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
 pub const ACCOUNT_KINDS: [&str; 4] = ["CASH", "CARD", "BANK", "SAVINGS"];
+pub const PLACE_KINDS: [&str; 6] = ["SHOP", "CAFE", "MARKET", "ONLINE", "SERVICE", "OTHER"];
 pub const CATEGORY_KINDS: [&str; 2] = ["EXPENSE", "INCOME"];
 pub const PLAN_KINDS: [&str; 3] = ["EXPENSE", "INCOME", "TRANSFER"];
 pub const LIMIT_PERIODS: [&str; 3] = ["WEEK", "MONTH", "YEAR"];
@@ -574,6 +619,18 @@ impl Record for Category {
     }
     fn names(&self) -> String {
         self.name.search()
+    }
+    fn archived(&self) -> bool {
+        self.archived
+    }
+}
+
+impl Record for Place {
+    fn code(&self) -> &str {
+        &self.code
+    }
+    fn names(&self) -> String {
+        kernel::search::join(std::iter::once(self.name.as_str()).chain(self.aliases.iter().map(String::as_str)))
     }
     fn archived(&self) -> bool {
         self.archived

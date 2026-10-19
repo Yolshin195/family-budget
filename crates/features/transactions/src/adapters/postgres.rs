@@ -15,7 +15,7 @@ use crate::domain::{Description, Item, Posting, RefKind, Transaction, TxKind, Un
 use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
 const COLUMNS: &str = "id, project_id, occurred_on, tx_kind, description, description_lang, \
-                       description_ru, description_en, description_th, created_by, plan_id, plan_date";
+                       description_ru, description_en, description_th, created_by, plan_id, plan_date, place_code";
 /// Транзакция с проводкой на счёт $N.
 macro_rules! touches {
     ($n:literal) => {
@@ -27,7 +27,7 @@ macro_rules! touches {
         )
     };
 }
-/// $1 проект, $2..$3 период, $4 счёт, $5 тип, $6 автор, $7 язык «без перевода» (NULL — условие выключено).
+/// $1 проект, $2..$3 период, $4 счёт, $5 тип, $6 автор, $7 язык «без перевода», $8 место (NULL — условие выключено).
 const FILTER: &str = concat!(
     "project_id = $1 \
     AND ($2::date IS NULL OR occurred_on >= $2) AND ($3::date IS NULL OR occurred_on <= $3) \
@@ -35,7 +35,8 @@ const FILTER: &str = concat!(
     touches!("4"),
     ") AND ($5::text IS NULL OR tx_kind = $5) AND ($6::uuid IS NULL OR created_by = $6) \
     AND ($7::text IS NULL OR (description IS NOT NULL AND description_lang <> $7 AND \
-         (CASE $7 WHEN 'RU' THEN description_ru WHEN 'EN' THEN description_en ELSE description_th END) IS NULL))"
+         (CASE $7 WHEN 'RU' THEN description_ru WHEN 'EN' THEN description_en ELSE description_th END) IS NULL)) \
+    AND ($8::text IS NULL OR place_code = $8)"
 );
 
 pub struct PostgresTransactionRepository {
@@ -94,6 +95,7 @@ struct Row {
     created_by: Uuid,
     plan_id: Option<Uuid>,
     plan_date: Option<NaiveDate>,
+    place_code: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -166,6 +168,7 @@ impl Row {
             },
             created_by: self.created_by,
             plan: self.plan_id.zip(self.plan_date),
+            place_code: self.place_code,
             items,
             postings,
         })
@@ -243,6 +246,7 @@ fn bind_filter<'q, O>(
         .bind(f.kind.map(|k| k.as_str()))
         .bind(f.created_by)
         .bind(f.untranslated.map(|l| l.upper()))
+        .bind(f.place_code.as_deref())
 }
 
 #[async_trait]
@@ -252,7 +256,7 @@ impl TransactionRepository for PostgresTransactionRepository {
         sqlx::query(
             "INSERT INTO fb_transactions (id, project_id, occurred_on, tx_kind, description, description_lang, \
              description_ru, description_en, description_th, created_by, plan_id, plan_date, opening_account, \
-             account_code, total, refund) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+             account_code, total, refund, place_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
         )
         .bind(item.id)
         .bind(item.project_id)
@@ -270,6 +274,7 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(item.account_code())
         .bind(item.total())
         .bind(item.refund())
+        .bind(&item.place_code)
         .execute(&mut *tx)
         .await
         .map_err(unique)?;
@@ -283,7 +288,7 @@ impl TransactionRepository for PostgresTransactionRepository {
         let res = sqlx::query(
             "UPDATE fb_transactions SET occurred_on = $3, tx_kind = $4, description = $5, description_lang = $6, \
              description_ru = $7, description_en = $8, description_th = $9, plan_id = $10, plan_date = $11, \
-             opening_account = $12, account_code = $13, total = $14, refund = $15 WHERE project_id = $1 AND id = $2",
+             opening_account = $12, account_code = $13, total = $14, refund = $15, place_code = $16 WHERE project_id = $1 AND id = $2",
         )
         .bind(item.project_id)
         .bind(item.id)
@@ -300,6 +305,7 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(item.account_code())
         .bind(item.total())
         .bind(item.refund())
+        .bind(&item.place_code)
         .execute(&mut *tx)
         .await
         .map_err(unique)?;
@@ -322,7 +328,7 @@ impl TransactionRepository for PostgresTransactionRepository {
 
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>> {
         let sql = format!(
-            "SELECT {COLUMNS} FROM fb_transactions WHERE {FILTER} ORDER BY occurred_on DESC, created_at DESC, id LIMIT $8 OFFSET $9"
+            "SELECT {COLUMNS} FROM fb_transactions WHERE {FILTER} ORDER BY occurred_on DESC, created_at DESC, id LIMIT $9 OFFSET $10"
         );
         let rows: Vec<Row> = bind_filter(sqlx::query_as(&sql), project_id, filter).bind(limit).bind(offset).fetch_all(&self.pool).await?;
         self.with_postings(rows).await
@@ -350,7 +356,7 @@ impl TransactionRepository for PostgresTransactionRepository {
     async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)> {
         let sql = format!(
             "SELECT COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0), COALESCE(SUM(amount) FILTER (WHERE amount < 0), 0) \
-             FROM fb_postings WHERE ref_kind = 'ACCOUNT' AND ref_code = $8 \
+             FROM fb_postings WHERE ref_kind = 'ACCOUNT' AND ref_code = $9 \
              AND transaction_id IN (SELECT id FROM fb_transactions WHERE {FILTER})"
         );
         Ok(bind_filter(sqlx::query_as(&sql), project_id, filter).bind(account).fetch_one(&self.pool).await?)
@@ -490,7 +496,18 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(since)
         .fetch_all(&self.pool)
         .await?;
-        Ok(QuickStats { last_account: last.map(|r| r.0), frequent: frequent.into_iter().map(|r| r.0).collect() })
+        let places: Vec<(String,)> = sqlx::query_as(
+            "SELECT place_code FROM fb_transactions \
+             WHERE project_id = $1 AND created_by = $2 AND tx_kind = $3 AND occurred_on >= $4 AND place_code IS NOT NULL \
+             GROUP BY place_code ORDER BY count(*) DESC, max(occurred_on) DESC LIMIT 12",
+        )
+        .bind(project_id)
+        .bind(user_id)
+        .bind(kind)
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(QuickStats { last_account: last.map(|r| r.0), frequent: frequent.into_iter().map(|r| r.0).collect(), places: places.into_iter().map(|r| r.0).collect() })
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
