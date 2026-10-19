@@ -12,6 +12,7 @@ MCP-сервер для Claude: расходы голосом и по фото �
 
 Что сделано по ТЗ v3 (разделы 9–13) и что осталось — [docs/tz-v3.md](docs/tz-v3.md).
 Схема БД для https://app.diagrams.net — [docs/db-schema.drawio](docs/db-schema.drawio) (File → Open from → Device).
+Сайт (предварительная версия на GitHub Pages) — https://yolshin195.github.io/family-budget/.
 
 ## Запуск
 
@@ -93,10 +94,10 @@ gh attestation verify oci://ghcr.io/yolshin195/family-budget:latest -R Yolshin19
 ## Сайт: лендинг и блог
 
 `site/` — статический сайт на Zola: лендинг, блог («Что нового» по версиям, гайды со скриншотами, идеи), «О проекте»,
-отзывы и правовые страницы — всё на русском, английском и тайском. Пока публикуется на GitHub Pages
-(`.github/workflows/site.yml`) отдельно от приложения и закрыт от индексации. Команды: `make site-check`, `make site`,
-`make site-serve`. Как писать статьи и записи о релизах — [site/README.md](site/README.md), правила для Claude —
-[CLAUDE.md](CLAUDE.md).
+отзывы и правовые страницы — всё на русском, английском и тайском. Пока публикуется
+на [GitHub Pages](https://yolshin195.github.io/family-budget/) (`.github/workflows/site.yml`) отдельно от приложения
+и закрыт от индексации. Команды: `make site-check`, `make site`, `make site-serve`. Как писать статьи и записи
+о релизах — [site/README.md](site/README.md), правила для Claude — [CLAUDE.md](CLAUDE.md).
 
 ## MCP для Claude
 
