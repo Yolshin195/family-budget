@@ -13,7 +13,7 @@ use utoipa::OpenApi;
 use uuid::Uuid;
 
 use crate::dto::{
-    BalanceDto, BalanceQuery, LineDto, ListQuery, PostingDto, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, QuickQuery, TransactionDto, TransactionInput,
+    BalanceDto, BalanceQuery, ItemDto, ItemInput, LineDto, ListQuery, PostingDto, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, QuickQuery, TransactionDto, TransactionInput,
     TranslationInput,
 };
 use crate::service::TransactionService;
@@ -33,7 +33,7 @@ pub fn router(service: Arc<TransactionService>) -> Router {
 #[derive(OpenApi)]
 #[openapi(
     paths(create, list, get_one, update, delete, translate, quick_defaults, balances),
-    components(schemas(TransactionInput, TransactionDto, LineDto, PostingDto, TranslationInput, QuickDefaultsDto, QuickAccountDto, QuickCategoryDto, BalanceDto)),
+    components(schemas(TransactionInput, TransactionDto, ItemInput, ItemDto, LineDto, PostingDto, TranslationInput, QuickDefaultsDto, QuickAccountDto, QuickCategoryDto, BalanceDto)),
     tags((name = "Транзакции", description = "Двойная запись: транзакция = шапка + проводки, сумма проводок по каждой валюте = 0. \
         Клиент присылает тип и поля формы, сервер строит проводки."))
 )]

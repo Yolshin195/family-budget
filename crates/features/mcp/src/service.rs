@@ -9,6 +9,7 @@ use kernel::auth::{API_TOKEN_PREFIX, Credential, RequestMeta, Role, Via as AuthV
 use kernel::error::{AppError, AppResult};
 use kernel::i18n::Lang;
 use kernel::throttle::RateLimiter;
+use kernel::web::parse_money;
 use rust_decimal::Decimal;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -82,6 +83,8 @@ impl From<AppError> for ToolError {
     fn from(e: AppError) -> Self {
         match e {
             AppError::Validation(m) | AppError::Conflict(m) | AppError::NotFound(m) | AppError::Forbidden(m) => ToolError(m),
+            // Код ошибки — для ассистента (AMOUNT_MISMATCH, KIND_MISMATCH, NOT_FOUND…), текст — на языке пользователя.
+            AppError::Invalid(p) => ToolError(format!("[{}] {p}", p.code)),
             AppError::TooManyRequests(m) => ToolError(m),
             other => {
                 eprintln!("mcp: {other:?}");
@@ -448,12 +451,12 @@ impl McpService {
                 let (page, all) = self.deps.ledger.list(caller.project_id, filter.clone(), MAX_PAGE, scanned).await?;
                 let n = page.len() as i64;
                 found.extend(page.into_iter().filter(|t| {
-                    category_set.as_ref().is_none_or(|set| t.lines.iter().any(|l| set.contains(&l.category_code)) || t.fee_category_code.as_ref().is_some_and(|f| set.contains(f)))
+                    category_set.as_ref().is_none_or(|set| t.items.iter().filter_map(|x| x.category_code.as_ref()).any(|c| set.contains(c)) || t.fee_category_code.as_ref().is_some_and(|f| set.contains(f)))
                         && text.as_ref().is_none_or(|needle| {
                             [t.description.as_deref(), t.description_ru.as_deref(), t.description_en.as_deref(), t.description_th.as_deref()]
                                 .into_iter()
                                 .flatten()
-                                .chain(t.lines.iter().filter_map(|l| l.note.as_deref()))
+                                .chain(t.items.iter().flat_map(|x| [x.name.as_deref(), x.note.as_deref()]).flatten())
                                 .any(|s| s.to_lowercase().contains(needle.as_str()))
                         })
                 }));
@@ -545,16 +548,11 @@ impl McpService {
         Ok(ToolOutput { summary: format!("{} scheduled payments from {from} to {to}, {open} not settled yet.", rows.len()), data: json!({"from": from, "to": to, "payments": rows}) })
     }
 
-    /// Строки операции из параметров: позиции или сумма+категория.
-    fn lines(&self, q: &QuickInfo, kind: &str, amount: Option<&str>, category: Option<&str>, items: Option<Vec<ItemArgs>>) -> Result<Vec<TxLine>, ToolError> {
-        let find = |c: &str| category_code(q, kind, "category", c);
+    /// Позиции операции из параметров: позиции или сумма+категория. Категории — по коду или названию.
+    fn items(&self, q: &QuickInfo, kind: &str, amount: Option<&str>, category: Option<&str>, items: Option<Vec<ItemArgs>>) -> Result<Vec<TxItem>, ToolError> {
         match (items.filter(|i| !i.is_empty()), amount, category) {
-            (Some(items), None, None) => items
-                .into_iter()
-                .enumerate()
-                .map(|(i, it)| Ok(TxLine { category_code: find(&it.category)?, amount: parse_amount(&format!("items[{i}].amount"), &it.amount)?, note: clean(it.note) }))
-                .collect(),
-            (None, Some(amount), Some(category)) => Ok(vec![TxLine { category_code: find(category)?, amount: parse_amount("amount", amount)?, note: None }]),
+            (Some(items), None, None) => items.into_iter().enumerate().map(|(i, it)| item_from(q, kind, i + 1, it)).collect(),
+            (None, Some(amount), Some(category)) => Ok(vec![TxItem::simple(category_code(q, kind, "category", category)?, parse_amount("amount", amount)?)]),
             (None, _, _) => Err(ToolError("pass amount and category, or items".into())),
             (Some(_), _, _) => Err(ToolError("pass either items or amount+category, not both".into())),
         }
@@ -582,14 +580,15 @@ impl McpService {
         let today = today();
         let date = parse_date("date", a.date.as_deref(), today)?;
         let q = self.quick(caller, date).await?;
-        let lines = self.lines(&q, kind, a.amount.as_deref(), a.category.as_deref(), a.items)?;
+        let items = self.items(&q, kind, a.amount.as_deref(), a.category.as_deref(), a.items)?;
         let by_default = a.account.is_none();
         let account_code = self.account(&q, "account", a.account.as_deref())?;
         let mut draft = blank_draft(kind, date, account_code, caller.lang);
         draft.refund = kind == "EXPENSE" && a.refund.unwrap_or(false);
-        draft.lines = lines;
+        draft.items = items;
+        draft.discount_total = a.discount_total.as_deref().map(|v| parse_money("discount_total", v)).transpose()?;
         self.describe(caller, &mut draft, a.description, a.description_lang, a.translations)?;
-        let tx = self.deps.ledger.create(caller.project_id, caller.user_id, draft).await?;
+        let tx = kernel::i18n::scope(caller.lang, self.deps.ledger.create(caller.project_id, caller.user_id, draft)).await?;
         self.audit_write(caller, tool, &[("transaction", tx.id.to_string())]).await;
         let mut data = json!({"transaction": tx_json(&tx, caller.lang)});
         let mut summary = format!("Saved {} {} {} on {} from account {}.", kind.to_lowercase(), tx.total.normalize(), tx.currency, tx.occurred_on, tx.account_code);
@@ -611,14 +610,14 @@ impl McpService {
         if kind == "EXPENSE" {
             // Остаток лимитов после записи — как в диалоге быстрого расхода.
             let after = self.quick(caller, date).await?;
-            let left: Vec<Value> = tx
-                .lines
+            let codes: Vec<&str> = tx.items.iter().filter_map(|x| x.category_code.as_deref()).collect();
+            let left: Vec<Value> = codes
                 .iter()
-                .filter_map(|l| after.categories.iter().find(|c| c.code == l.category_code))
+                .filter_map(|code| after.categories.iter().find(|c| c.code == *code))
                 .filter(|c| c.available.is_some())
                 .map(|c| json!({"category": c.code, "title": c.title, "month_limit": c.limit, "month_available": c.available}))
                 .collect();
-            let first = tx.lines.iter().filter_map(|l| after.categories.iter().find(|c| c.code == l.category_code)).find_map(|c| c.available.map(|a| (c, a)));
+            let first = codes.iter().filter_map(|code| after.categories.iter().find(|c| c.code == *code)).find_map(|c| c.available.map(|a| (c, a)));
             if let Some((c, available)) = first {
                 summary.push_str(&if available < rust_decimal::Decimal::ZERO {
                     format!(" Monthly limit of '{}' is exceeded by {} {} (with parent limits).", c.title, (-available).normalize(), caller.base_currency)
@@ -656,7 +655,7 @@ impl McpService {
         draft.fee_amount = a.fee_amount.as_deref().map(|v| parse_amount("fee_amount", v)).transpose()?;
         draft.fee_category_code = a.fee_category.as_deref().map(|c| category_code(&q, "EXPENSE", "fee_category", c)).transpose()?;
         self.describe(caller, &mut draft, a.description, a.description_lang, a.translations)?;
-        let tx = self.deps.ledger.create(caller.project_id, caller.user_id, draft).await?;
+        let tx = kernel::i18n::scope(caller.lang, self.deps.ledger.create(caller.project_id, caller.user_id, draft)).await?;
         self.audit_write(caller, "add_transfer", &[("transaction", tx.id.to_string())]).await;
         let received = match (&tx.to_amount, &tx.to_currency) {
             (Some(x), Some(c)) => format!(", received {x} {c}"),
@@ -691,8 +690,8 @@ impl McpService {
             draft.account_code = self.account(&q, "account", Some(acc))?;
         }
         if old.kind == "TRANSFER" {
-            if a.items.is_some() || a.category.is_some() {
-                return Err(ToolError("transfers have no categories; change amount, accounts or to_amount".into()));
+            if a.items.is_some() || a.category.is_some() || a.remove_item_ids.is_some() || a.discount_total.is_some() {
+                return Err(ToolError("transfers have no items or categories; change amount, accounts or to_amount".into()));
             }
             if let Some(v) = a.amount.as_deref() {
                 draft.amount = Some(parse_amount("amount", v)?);
@@ -708,29 +707,33 @@ impl McpService {
                 return Err(ToolError("to_account and to_amount apply to transfers only".into()));
             }
             match (a.items, a.amount.as_deref(), a.category.as_deref()) {
-                (Some(items), None, None) => draft.lines = self.lines(&q, &old.kind, None, None, Some(items))?,
+                (Some(items), None, None) => draft.items = items.into_iter().enumerate().map(|(i, it)| item_from(&q, &old.kind, i + 1, it)).collect::<Result<_, _>>()?,
                 (Some(_), _, _) => return Err(ToolError("pass either items or amount/category, not both".into())),
                 (None, None, None) => {}
                 (None, amount, category) => {
-                    if draft.lines.len() != 1 {
-                        return Err(ToolError("this transaction has several lines; pass items to replace them".into()));
-                    }
-                    let line = &mut draft.lines[0];
-                    if let Some(v) = amount {
-                        line.amount = parse_amount("amount", v)?;
-                    }
-                    if let Some(c) = category {
-                        line.category_code = category_code(&q, &old.kind, "category", c)?;
-                    }
+                    // Операция из одной позиции — сумма и категория меняются у неё.
+                    let [only] = old.items.as_slice() else {
+                        return Err(ToolError("this transaction has several items; pass items with their ids to change them".into()));
+                    };
+                    draft.items = vec![TxItem {
+                        id: only.id,
+                        amount: amount.map(|v| parse_amount("amount", v)).transpose()?,
+                        category_code: category.map(|c| category_code(&q, &old.kind, "category", c)).transpose()?,
+                        ..Default::default()
+                    }];
                 }
             }
+            if let Some(ids) = a.remove_item_ids {
+                draft.remove_item_ids = ids.iter().map(|id| Uuid::parse_str(id.trim()).map_err(|_| ToolError(format!("remove_item_ids: not an item id: '{id}'")))).collect::<Result<_, _>>()?;
+            }
+            draft.discount_total = a.discount_total.as_deref().map(|v| parse_money("discount_total", v)).transpose()?;
         }
         if a.description.is_some() || a.translations.is_some() || a.description_lang.is_some() {
             let description = a.description.or(old.description.clone());
             let lang = a.description_lang.or_else(|| Some(old.description_lang.code().to_string()));
             self.describe(caller, &mut draft, description, lang, a.translations)?;
         }
-        let tx = self.deps.ledger.update(caller.project_id, id, draft).await?;
+        let tx = kernel::i18n::scope(caller.lang, self.deps.ledger.update(caller.project_id, id, draft)).await?;
         self.audit_write(caller, "update_transaction", &[("transaction", tx.id.to_string())]).await;
         Ok(ToolOutput { summary: format!("Updated transaction {} ({} {} on {}).", tx.id, tx.total, tx.currency, tx.occurred_on), data: json!({"transaction": tx_json(&tx, caller.lang)}) })
     }
@@ -767,12 +770,12 @@ impl McpService {
             draft.amount = Some(amount);
         } else {
             let category = occ.category_code.clone().ok_or_else(|| ToolError("the plan has no category".into()))?;
-            draft.lines = vec![TxLine { category_code: category, amount, note: None }];
+            draft.items = vec![TxItem::simple(category, amount)];
         }
         draft.description = Some(occ.name.clone());
         draft.plan_id = Some(plan_id);
         draft.plan_date = Some(date);
-        let tx = self.deps.ledger.create(caller.project_id, caller.user_id, draft).await?;
+        let tx = kernel::i18n::scope(caller.lang, self.deps.ledger.create(caller.project_id, caller.user_id, draft)).await?;
         self.audit_write(caller, "pay_planned", &[("transaction", tx.id.to_string())]).await;
         Ok(ToolOutput {
             summary: format!("Paid '{}' scheduled for {date}: {} {} on {}.", occ.name, tx.total, tx.currency, tx.occurred_on),
@@ -1503,7 +1506,10 @@ fn blank_draft(kind: &str, date: NaiveDate, account_code: String, lang: Lang) ->
         kind: kind.to_string(),
         account_code,
         refund: false,
-        lines: Vec::new(),
+        items: Vec::new(),
+        replace_items: true,
+        remove_item_ids: Vec::new(),
+        discount_total: None,
         to_account_code: None,
         amount: None,
         to_amount: None,
@@ -1541,6 +1547,45 @@ fn subtree(categories: &[CategoryInfo], root: &str) -> HashSet<String> {
     }
 }
 
+/// Позиция для ассистента: id (для правки), категория и сумма; остальное — только если задано.
+fn item_json(x: &TxItem) -> Value {
+    let mut v = json!({"id": x.id, "category": x.category_code, "amount": x.amount});
+    if let Some(n) = &x.name {
+        v["name"] = json!(n);
+    }
+    if x.quantity.is_some_and(|q| q != rust_decimal::Decimal::ONE) || x.unit.as_deref().is_some_and(|u| u != "pcs") {
+        v["quantity"] = json!(x.quantity);
+        v["unit"] = json!(x.unit);
+    }
+    if let Some(p) = x.price {
+        v["price"] = json!(p);
+    }
+    if x.discount.is_some_and(|d| !d.is_zero()) {
+        v["discount"] = json!(x.discount);
+    }
+    if let Some(n) = &x.note {
+        v["note"] = json!(n);
+    }
+    v
+}
+
+/// Позиция из параметров инструмента: категория — по коду или названию, числа — как в форме («120+45»).
+fn item_from(q: &QuickInfo, kind: &str, i: usize, it: ItemArgs) -> Result<TxItem, ToolError> {
+    let f = |name: &str| format!("items[{i}].{name}");
+    let num = |name: &str, v: Option<String>| v.map(|v| parse_money(&f(name), &v)).transpose();
+    Ok(TxItem {
+        id: it.id.map(|id| Uuid::parse_str(id.trim()).map_err(|_| ToolError(format!("{}: not an item id: '{id}'", f("id"))))).transpose()?,
+        category_code: it.category.map(|c| category_code(q, kind, &f("category"), &c)).transpose()?,
+        name: clean(it.name),
+        quantity: num("quantity", it.quantity)?,
+        unit: clean(it.unit),
+        price: num("price", it.price)?,
+        discount: num("discount", it.discount)?,
+        amount: it.amount.map(|v| parse_amount(&f("amount"), &v)).transpose()?,
+        note: clean(it.note),
+    })
+}
+
 fn tx_json(t: &Tx, lang: Lang) -> Value {
     let mut v = json!({
         "id": t.id,
@@ -1559,7 +1604,7 @@ fn tx_json(t: &Tx, lang: Lang) -> Value {
             v["fee"] = json!({"amount": t.fee_amount, "category": t.fee_category_code});
         }
     } else {
-        v["lines"] = t.lines.iter().map(|l| json!({"category": l.category_code, "amount": l.amount, "note": l.note})).collect();
+        v["items"] = t.items.iter().map(item_json).collect();
         if t.refund {
             v["refund"] = json!(true);
         }

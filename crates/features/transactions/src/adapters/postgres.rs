@@ -1,4 +1,4 @@
-//! Исходящий адаптер: порт на PostgreSQL (таблицы `fb_transactions`, `fb_postings`).
+//! Исходящий адаптер: порт на PostgreSQL (таблицы `fb_transactions`, `fb_transaction_items`, `fb_postings`).
 //! Сумму проводок по каждой валюте дополнительно проверяет отложенный триггер БД.
 
 use async_trait::async_trait;
@@ -9,7 +9,7 @@ use rust_decimal::Decimal;
 use sqlx::{PgPool, Postgres, Transaction as SqlTx};
 use uuid::Uuid;
 
-use crate::domain::{Description, Posting, RefKind, Transaction, TxKind, system};
+use crate::domain::{Description, Item, Posting, RefKind, Transaction, TxKind, Unit, system};
 use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
 const COLUMNS: &str = "id, project_id, occurred_on, tx_kind, description, description_lang, \
@@ -48,8 +48,15 @@ impl PostgresTransactionRepository {
     async fn with_postings(&self, rows: Vec<Row>) -> AppResult<Vec<Transaction>> {
         let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
         let postings: Vec<PostingRow> = sqlx::query_as(
-            "SELECT transaction_id, ref_kind, ref_code, currency_code, amount, note FROM fb_postings \
+            "SELECT transaction_id, ref_kind, ref_code, currency_code, amount, note, item_id FROM fb_postings \
              WHERE transaction_id = ANY($1) ORDER BY transaction_id, position",
+        )
+        .bind(&ids)
+        .fetch_all(&self.pool)
+        .await?;
+        let items: Vec<ItemRow> = sqlx::query_as(
+            "SELECT transaction_id, id, category_code, item_name, quantity, unit, price_per_unit, discount, amount, note \
+             FROM fb_transaction_items WHERE transaction_id = ANY($1) ORDER BY transaction_id, position",
         )
         .bind(&ids)
         .fetch_all(&self.pool)
@@ -57,7 +64,8 @@ impl PostgresTransactionRepository {
         rows.into_iter()
             .map(|r| {
                 let mine = postings.iter().filter(|p| p.transaction_id == r.id).map(PostingRow::to_domain).collect::<AppResult<Vec<_>>>()?;
-                r.into_domain(mine)
+                let lines = items.iter().filter(|x| x.transaction_id == r.id).map(ItemRow::to_domain).collect::<AppResult<Vec<_>>>()?;
+                r.into_domain(lines, mine)
             })
             .collect()
     }
@@ -87,6 +95,7 @@ struct PostingRow {
     currency_code: String,
     amount: Decimal,
     note: Option<String>,
+    item_id: Option<Uuid>,
 }
 
 impl PostingRow {
@@ -97,12 +106,43 @@ impl PostingRow {
             currency: self.currency_code.clone(),
             amount: self.amount,
             note: self.note.clone(),
+            item_id: self.item_id,
+        })
+    }
+}
+
+#[derive(sqlx::FromRow)]
+struct ItemRow {
+    transaction_id: Uuid,
+    id: Uuid,
+    category_code: String,
+    item_name: Option<String>,
+    quantity: Decimal,
+    unit: String,
+    price_per_unit: Option<Decimal>,
+    discount: Decimal,
+    amount: Decimal,
+    note: Option<String>,
+}
+
+impl ItemRow {
+    fn to_domain(&self) -> AppResult<Item> {
+        Ok(Item {
+            id: self.id,
+            category_code: self.category_code.clone(),
+            name: self.item_name.clone(),
+            quantity: self.quantity.normalize(),
+            unit: Unit::parse(&self.unit).ok_or_else(|| bad_value("fb_transaction_items.unit", &self.unit))?,
+            price: self.price_per_unit.map(|p| p.normalize()),
+            discount: self.discount,
+            amount: self.amount,
+            note: self.note.clone(),
         })
     }
 }
 
 impl Row {
-    fn into_domain(self, postings: Vec<Posting>) -> AppResult<Transaction> {
+    fn into_domain(self, items: Vec<Item>, postings: Vec<Posting>) -> AppResult<Transaction> {
         Ok(Transaction {
             id: self.id,
             project_id: self.project_id,
@@ -117,6 +157,7 @@ impl Row {
             },
             created_by: self.created_by,
             plan: self.plan_id.zip(self.plan_date),
+            items,
             postings,
         })
     }
@@ -135,15 +176,37 @@ fn unique(e: sqlx::Error) -> AppError {
 }
 
 fn bad_value(column: &str, value: &str) -> AppError {
-    AppError::Internal(anyhow::anyhow!("{column}: неизвестное значение '{value}'"))
+    AppError::Internal(anyhow::anyhow!("{column}: unknown value '{value}'"))
 }
 
+/// Позиции и проводки пишутся заново: сначала удаляются проводки (они ссылаются на позиции), потом позиции.
+/// `id` позиций сохраняются — они из домена.
 async fn write_postings(tx: &mut SqlTx<'_, Postgres>, item: &Transaction) -> AppResult<()> {
     sqlx::query("DELETE FROM fb_postings WHERE transaction_id = $1").bind(item.id).execute(&mut **tx).await?;
+    sqlx::query("DELETE FROM fb_transaction_items WHERE transaction_id = $1").bind(item.id).execute(&mut **tx).await?;
+    for (i, x) in item.items.iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO fb_transaction_items (id, transaction_id, position, item_name, quantity, unit, price_per_unit, discount, amount, \
+             category_code, note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+        )
+        .bind(x.id)
+        .bind(item.id)
+        .bind(i as i32 + 1)
+        .bind(&x.name)
+        .bind(x.quantity)
+        .bind(x.unit.as_str())
+        .bind(x.price)
+        .bind(x.discount)
+        .bind(x.amount)
+        .bind(&x.category_code)
+        .bind(&x.note)
+        .execute(&mut **tx)
+        .await?;
+    }
     for (i, p) in item.postings.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO fb_postings (transaction_id, position, ref_kind, ref_code, currency_code, amount, note) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO fb_postings (transaction_id, position, ref_kind, ref_code, currency_code, amount, note, item_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
         )
         .bind(item.id)
         .bind(i as i32 + 1)
@@ -152,6 +215,7 @@ async fn write_postings(tx: &mut SqlTx<'_, Postgres>, item: &Transaction) -> App
         .bind(&p.currency)
         .bind(p.amount)
         .bind(&p.note)
+        .bind(p.item_id)
         .execute(&mut **tx)
         .await?;
     }
@@ -178,8 +242,8 @@ impl TransactionRepository for PostgresTransactionRepository {
         let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO fb_transactions (id, project_id, occurred_on, tx_kind, description, description_lang, \
-             description_ru, description_en, description_th, created_by, plan_id, plan_date, opening_account) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+             description_ru, description_en, description_th, created_by, plan_id, plan_date, opening_account, \
+             account_code, total, refund) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
         )
         .bind(item.id)
         .bind(item.project_id)
@@ -194,6 +258,9 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(item.plan.map(|p| p.0))
         .bind(item.plan.map(|p| p.1))
         .bind(item.opening_account())
+        .bind(item.account_code())
+        .bind(item.total())
+        .bind(item.refund())
         .execute(&mut *tx)
         .await
         .map_err(unique)?;
@@ -207,7 +274,7 @@ impl TransactionRepository for PostgresTransactionRepository {
         let res = sqlx::query(
             "UPDATE fb_transactions SET occurred_on = $3, tx_kind = $4, description = $5, description_lang = $6, \
              description_ru = $7, description_en = $8, description_th = $9, plan_id = $10, plan_date = $11, \
-             opening_account = $12 WHERE project_id = $1 AND id = $2",
+             opening_account = $12, account_code = $13, total = $14, refund = $15 WHERE project_id = $1 AND id = $2",
         )
         .bind(item.project_id)
         .bind(item.id)
@@ -221,6 +288,9 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(item.plan.map(|p| p.0))
         .bind(item.plan.map(|p| p.1))
         .bind(item.opening_account())
+        .bind(item.account_code())
+        .bind(item.total())
+        .bind(item.refund())
         .execute(&mut *tx)
         .await
         .map_err(unique)?;

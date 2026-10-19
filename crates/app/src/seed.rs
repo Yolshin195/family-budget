@@ -189,8 +189,41 @@ async fn tx(s: &Services, p: Uuid, t: Tx<'_>) -> AppResult<()> {
             .into_iter()
             .map(|(c, a, n)| transactions::dto::LineDto { category_code: c.into(), amount: dec(a), note: n.map(Into::into) })
             .collect(),
+        ..Default::default()
     };
     s.transactions.create(p, t.by, input).await.map(|_| ())
+}
+
+/// Чек с ценами (группа 1, шаг 2): позиции (категория, название, количество, единица, цена, скидка).
+/// Названия позиций — данные пользователя, без переводов.
+async fn receipt(s: &Services, p: Uuid, date: NaiveDate, desc: (&str, Lang), tr: (Option<&str>, Option<&str>, Option<&str>), items: &[(&str, &str, &str, &str, &str, &str)], by: Uuid) -> AppResult<()> {
+    if date > chrono::Local::now().date_naive() {
+        return Ok(());
+    }
+    let input = transactions::dto::TransactionInput {
+        occurred_on: date,
+        account_code: "CARD_KBANK".into(),
+        tx_kind: "EXPENSE".into(),
+        description: Some(desc.0.into()),
+        description_lang: desc.1.upper().into(),
+        description_ru: tr.0.map(Into::into),
+        description_en: tr.1.map(Into::into),
+        description_th: tr.2.map(Into::into),
+        items: items
+            .iter()
+            .map(|(c, n, q, u, price, discount)| transactions::dto::ItemInput {
+                category_code: Some((*c).into()),
+                name: Some((*n).into()),
+                quantity: Some(dec(q)),
+                unit: Some((*u).into()),
+                price_per_unit: Some(dec(price)),
+                discount: Some(dec(discount)),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    };
+    s.transactions.create(p, by, input).await.map(|_| ())
 }
 
 /// Перевод между счетами: `to_amount` — при обмене валют, `fee` — комиссия (категория, сумма).
@@ -228,6 +261,7 @@ async fn transfer(s: &Services, p: Uuid, t: Transfer<'_>) -> AppResult<()> {
         description_th: None,
         plan_id: t.plan.map(|x| x.0),
         plan_date: t.plan.map(|x| x.1),
+        ..Default::default()
     };
     s.transactions.create(p, t.by, input).await.map(|_| ())
 }
@@ -332,6 +366,9 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
         tx(s, p, Tx { date: day(back, 3), account: "CARD_SCB", kind: "EXPENSE", desc: Some(("ท็อปส์ ซูเปอร์มาร์เก็ต", Lang::Th)), tr: (Some("Tops, супермаркет"), None, None),
             lines: vec![("FOOD_GROCERIES", "1640", Some("овощи, мясо")), ("HOUSEHOLD", "385", Some("средства для стирки")), ("FOOD_CAFE", "120", Some("кофе"))], plan: None, by: anna }).await?;
         tx(s, p, Tx { date: day(back, 4), account: "CASH", kind: "EXPENSE", desc: Some(("Grab до офиса", ru)), tr: (None, None, None), lines: vec![("TRANSPORT_TAXI", "210", None)], plan: None, by: me }).await?;
+        // Чек с ценами: количество × цена − скидка; бананы — на вес.
+        receipt(s, p, day(back, 5), ("Завтрак в 7-Eleven", ru), (None, Some("Breakfast at 7-Eleven"), Some("อาหารเช้าที่เซเว่น")),
+            &[("FOOD_GROCERIES", "Вода 1,5 л", "1", "pcs", "14", "0"), ("FOOD_CAFE", "Кофе латте", "1", "pcs", "45", "0"), ("FOOD_CAFE", "Круассан", "2", "pcs", "25", "3"), ("FOOD_GROCERIES", "Бананы", "0.45", "kg", "60", "0")], me).await?;
         // Обмен через приложение: списано 20 050 ₽ (из них 50 ₽ комиссия), зачислено по курсу хуже справочного.
         let got = if back == 1 { "7640" } else { "7280" };
         transfer(s, p, Transfer { date: day(back, 2), from: "TINKOFF_RUB", to: "CARD_KBANK", amount: "20050", to_amount: Some(got), fee: Some(("FEES", "50")),

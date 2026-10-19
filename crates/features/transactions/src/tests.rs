@@ -16,9 +16,9 @@ use kernel::testing::TestDb;
 
 use crate::adapters::memory::InMemoryTransactionRepository;
 use crate::adapters::postgres::PostgresTransactionRepository;
-use crate::dto::{LineDto, ListQuery, TransactionInput, TranslationInput};
+use crate::dto::{ItemInput, LineDto, ListQuery, TransactionInput, TranslationInput};
 use crate::domain::{AccountCurrency, Description};
-use crate::ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, Deps, PlanOccurrence, PlansLookup};
+use crate::ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, Deps, PlanOccurrence, PlansLookup};
 use crate::service::TransactionService;
 
 struct FakeAccounts;
@@ -50,10 +50,14 @@ impl AccountsLookup for FakeAccounts {
 
 #[async_trait::async_trait]
 impl CategoriesLookup for FakeCategories {
-    async fn kind_of(&self, _p: Uuid, code: &str) -> AppResult<Option<String>> {
+    async fn kind_of(&self, _p: Uuid, code: &str) -> AppResult<Option<CategoryRef>> {
+        let c = |kind: &str, archived: bool| Some(CategoryRef { kind: kind.into(), archived });
         Ok(match code {
-            "FOOD" | "CAFE" | "HOME" | "FEES" => Some("EXPENSE".into()),
-            "SALARY" => Some("INCOME".into()),
+            "FOOD" | "CAFE" | "HOME" | "FEES" => c("EXPENSE", false),
+            "SALARY" => c("INCOME", false),
+            // Архивные: старые ссылки остаются, новые нельзя.
+            "OLD_FOOD" => c("EXPENSE", true),
+            "OLD_BONUS" => c("INCOME", true),
             _ => None,
         })
     }
@@ -177,6 +181,7 @@ fn input(kind: &str, account: &str) -> TransactionInput {
         description_th: None,
         plan_id: None,
         plan_date: None,
+        ..Default::default()
     }
 }
 
@@ -195,6 +200,14 @@ fn transfer(from: &str, to: &str, amount: &str, to_amount: Option<&str>, fee: Op
     }
 }
 
+/// Код и поле ошибки с кодом (техдолг #9).
+fn problem(e: AppError) -> (&'static str, String) {
+    match e {
+        AppError::Invalid(p) => (p.code, p.field),
+        other => panic!("ожидалась ошибка с кодом, а пришла {other:?}"),
+    }
+}
+
 async fn balance(svc: &TransactionService, p: Uuid, account: &str) -> Decimal {
     svc.balance(p, account, day(31)).await.unwrap()
 }
@@ -204,7 +217,7 @@ on_each_repo! {
         let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
         let t = svc.create(p, u, receipt(&[("food", "900"), ("home", "250"), ("cafe", "100")])).await.unwrap();
         assert_eq!(t.total, d("1250"));
-        assert_eq!((t.lines.len(), t.postings.len(), t.currency.as_str()), (3, 4, "THB"));
+        assert_eq!((t.items.len(), t.postings.len(), t.currency.as_str()), (3, 4, "THB"));
         assert_eq!(t.created_by, u);
         assert_eq!(balance(&svc, p, "CARD").await, d("-1250"));
         let facts = svc.lines(p, day(1), day(31)).await.unwrap();
@@ -215,11 +228,11 @@ on_each_repo! {
 on_each_repo! {
     async fn category_kind_must_match(svc) {
         let err = svc.create(Uuid::new_v4(), Uuid::new_v4(), receipt(&[("food", "10"), ("salary", "5")])).await.unwrap_err();
-        assert!(matches!(err, AppError::Validation(m) if m.contains("lines[2]")));
+        assert_eq!(problem(err), ("KIND_MISMATCH", "items[2].category_code".into()));
         let err = svc.create(Uuid::new_v4(), Uuid::new_v4(), transfer("card", "cash", "10", None, Some(("salary", "1")))).await.unwrap_err();
-        assert!(matches!(err, AppError::Validation(m) if m.contains("fee_category_code")), "комиссия — расход");
+        assert_eq!(problem(err), ("KIND_MISMATCH", "fee_category_code".into()), "комиссия — расход");
         let err = svc.create(Uuid::new_v4(), Uuid::new_v4(), receipt(&[("nope", "10")])).await.unwrap_err();
-        assert!(matches!(err, AppError::Validation(_)));
+        assert_eq!(problem(err), ("NOT_FOUND", "items[1].category_code".into()));
     }
 }
 
@@ -227,7 +240,7 @@ on_each_repo! {
     async fn unknown_account_is_validation_error(svc) {
         let mut input = receipt(&[("food", "10")]);
         input.account_code = "NOPE".into();
-        assert!(matches!(svc.create(Uuid::new_v4(), Uuid::new_v4(), input).await.unwrap_err(), AppError::Validation(_)));
+        assert_eq!(problem(svc.create(Uuid::new_v4(), Uuid::new_v4(), input).await.unwrap_err()), ("NOT_FOUND", "account_code".into()));
     }
 }
 
@@ -313,7 +326,8 @@ on_each_repo! {
         assert!(svc.get(mine, t.id).await.is_err());
         assert!(matches!(svc.undo_delete(other, token).await.unwrap_err(), AppError::NotFound(_)));
         let back = svc.undo_delete(mine, token).await.unwrap();
-        assert_eq!((back.id, back.total, back.lines.len()), (t.id, d("1000"), 2));
+        assert_eq!((back.id, back.total, back.items.len()), (t.id, d("1000"), 2));
+        assert_eq!(back.items.iter().map(|x| x.id).collect::<Vec<_>>(), t.items.iter().map(|x| x.id).collect::<Vec<_>>(), "«Отменить» возвращает позиции с теми же id");
 
         svc.create(other, me, receipt(&[("FOOD", "1")])).await.unwrap();
         assert_eq!(svc.purge_project(mine).await.unwrap(), 1);
@@ -412,7 +426,7 @@ on_each_repo! {
         let t = svc.reconcile(p, u, "card", d("940"), day(5), "food", desc()).await.unwrap().unwrap();
         assert_eq!((t.tx_kind.as_str(), t.total), ("EXPENSE", d("60")));
         let err = svc.reconcile(p, u, "card", d("1000"), day(5), "food", desc()).await.unwrap_err();
-        assert!(matches!(err, AppError::Validation(m) if m.contains("дохода")), "остаток больше — нужна категория дохода");
+        assert!(err.to_string().contains("дохода"), "остаток больше — нужна категория дохода: {err}");
         svc.reconcile(p, u, "card", d("1000"), day(5), "salary", desc()).await.unwrap().unwrap();
         assert_eq!(balance(&svc, p, "CARD").await, d("1000"));
     }
@@ -480,7 +494,7 @@ on_each_repo! {
             input.plan_date = Some(day(date));
             input
         };
-        let err = |e: AppError, field: &str| matches!(e, AppError::Validation(m) if m.starts_with(field));
+        let err = |e: AppError, field: &str| matches!(e, AppError::Invalid(p) if p.field == field);
         assert!(err(svc.create(p, u, pay(Uuid::new_v4(), 5, "EXPENSE")).await.unwrap_err(), "plan_date"), "нет такого плана");
         assert!(err(svc.create(p, u, pay(RENT, 17, "EXPENSE")).await.unwrap_err(), "plan_date"), "17-е — не дата правила (платили 17-го, а план на 5-е)");
         assert!(err(svc.create(p, u, pay(RENT, 5, "INCOME")).await.unwrap_err(), "plan_id"), "план — расход, операция — доход");
@@ -498,7 +512,7 @@ on_each_repo! {
 /// Двойной клик «Сохранить» в форме счёта больше не удваивает остаток. Только на PostgreSQL.
 #[tokio::test]
 async fn second_opening_is_rejected_by_db() {
-    use crate::domain::{Body, Transaction, TransactionData};
+    use crate::domain::{Draft, Transaction, TransactionData};
     use crate::ports::TransactionRepository;
     let Some(db) = TestDb::migrated("tx_opening", vec![sqlx::migrate!("./migrations")]).await else { return };
     let pool = db.pool.clone();
@@ -507,7 +521,7 @@ async fn second_opening_is_rejected_by_db() {
     let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
     // Оба запроса прошли проверку «остатка ещё нет» до того, как другой записал свой.
     let opening = || {
-        let data = TransactionData { occurred_on: day(15), description: Description::default(), plan: None, body: Body::Opening { account: "card".into(), amount: d("1961.31") } };
+        let data = TransactionData { occurred_on: day(15), description: Description::default(), plan: None, body: Draft::Opening { account: "card".into(), amount: d("1961.31") } };
         Transaction::create(p, u, data, &accounts).unwrap()
     };
     repo.insert(&opening()).await.unwrap();
@@ -539,5 +553,227 @@ on_each_repo! {
         again.amount = Some(d("1"));
         let err = svc.create(p, u, again).await.unwrap_err();
         assert!(matches!(err, AppError::Conflict(m) if m.contains("CARD")), "второй остаток через API");
+    }
+}
+
+fn priced(category: &str, name: &str, qty: &str, unit: &str, price: &str, discount: &str) -> ItemInput {
+    ItemInput {
+        category_code: Some(category.into()),
+        name: Some(name.into()),
+        quantity: Some(d(qty)),
+        unit: Some(unit.into()),
+        price_per_unit: Some(d(price)),
+        discount: Some(d(discount)),
+        ..Default::default()
+    }
+}
+
+fn items(list: Vec<ItemInput>) -> TransactionInput {
+    TransactionInput { items: list, ..input("EXPENSE", "card") }
+}
+
+on_each_repo! {
+    /// Группа 1, шаг 2: чек с ценами — суммы позиций считает сервер, у каждой позиции своя проводка.
+    async fn receipt_with_prices(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let mut input = items(vec![
+            priced("food", "Вода 1,5 л", "1", "pcs", "14", "0"),
+            priced("cafe", "Круассан", "2", "pcs", "25", "3"),
+            priced("food", "Бананы", "0.45", "kg", "60", "0"),
+            ItemInput { category_code: Some("cafe".into()), name: Some("Латте".into()), amount: Some(d("45")), ..Default::default() },
+        ]);
+        input.discount_total = Some(d("13.30"));
+        let t = svc.create(p, u, input).await.unwrap();
+        // 14 + 47 + 27 + 45 = 133; скидка на чек 13,30 = 10 %: 1,40 + 4,70 + 2,70 + 4,50.
+        assert_eq!(t.total, d("119.70"));
+        assert_eq!(t.items.iter().map(|x| (x.amount, x.discount)).collect::<Vec<_>>(), vec![(d("12.60"), d("1.40")), (d("42.30"), d("7.70")), (d("24.30"), d("2.70")), (d("40.50"), d("4.50"))]);
+        assert_eq!((t.items[2].unit.as_str(), t.items[2].quantity, t.items[3].price_per_unit), ("kg", d("0.45"), None));
+        let again = svc.get(p, t.id).await.unwrap();
+        assert_eq!(again.items.iter().map(|x| (x.id, x.amount, x.name.clone())).collect::<Vec<_>>(), t.items.iter().map(|x| (x.id, x.amount, x.name.clone())).collect::<Vec<_>>());
+        let cats: Vec<_> = again.postings.iter().filter(|x| x.ref_kind == "CATEGORY").map(|x| x.amount).collect();
+        assert_eq!(cats, again.items.iter().map(|x| x.amount).collect::<Vec<_>>(), "одна проводка на позицию, сумма — сумма позиции");
+        assert_eq!(balance(svc, p, "CARD").await, d("-119.70"));
+        // Сумма не сходится с ценой — ошибка с кодом.
+        let wrong = items(vec![ItemInput { amount: Some(d("50")), ..priced("cafe", "Круассан", "2", "pcs", "25", "3") }]);
+        assert_eq!(problem(svc.create(p, u, wrong).await.unwrap_err()), ("AMOUNT_MISMATCH", "items[1].amount".into()));
+    }
+}
+
+on_each_repo! {
+    /// Раздел 5.6: правка по id — id позиций не меняются; не названные позиции остаются, remove_item_ids удаляет.
+    async fn items_are_edited_by_id(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let t = svc.create(p, u, receipt(&[("food", "100"), ("cafe", "50"), ("home", "30")])).await.unwrap();
+        let ids: Vec<Uuid> = t.items.iter().map(|x| x.id).collect();
+        let mut edit = items(vec![ItemInput { id: Some(ids[1]), amount: Some(d("60")), name: Some("Кофе".into()), ..Default::default() }, ItemInput { category_code: Some("food".into()), amount: Some(d("5")), ..Default::default() }]);
+        edit.remove_item_ids = vec![ids[2]];
+        let t = svc.update(p, t.id, edit).await.unwrap();
+        assert_eq!(
+            t.items.iter().map(|x| (x.category_code.as_str(), x.amount, x.name.as_deref())).collect::<Vec<_>>(),
+            vec![("FOOD", d("100"), None), ("CAFE", d("60"), Some("Кофе")), ("FOOD", d("5"), None)]
+        );
+        assert_eq!((t.items[0].id, t.items[1].id), (ids[0], ids[1]));
+        assert_eq!(svc.get(p, t.id).await.unwrap().items.iter().map(|x| x.id).take(2).collect::<Vec<_>>(), vec![ids[0], ids[1]]);
+        assert_eq!(balance(svc, p, "CARD").await, d("-165"));
+        // Позиция чужой операции — ошибка поля.
+        let foreign = items(vec![ItemInput { id: Some(Uuid::new_v4()), amount: Some(d("1")), ..Default::default() }]);
+        assert_eq!(problem(svc.update(p, t.id, foreign).await.unwrap_err()).1, "items[1].id");
+        // Старый формат `lines` заменяет весь чек — как раньше.
+        let t = svc.update(p, t.id, receipt(&[("home", "7")])).await.unwrap();
+        assert_eq!((t.items.len(), t.total), (1, d("7")));
+        assert!(!ids.contains(&t.items[0].id));
+    }
+}
+
+on_each_repo! {
+    /// Техдолг #3: правка проверяет тип категории и у ссылок из прежней версии — доход не превратить в
+    /// расход на категории дохода; архивная категория остаётся в старой операции, но не в новой.
+    async fn kept_category_is_checked_by_kind(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let salary = TransactionInput { lines: vec![LineDto { category_code: "salary".into(), amount: d("5000"), note: None }], ..input("INCOME", "card") };
+        let t = svc.create(p, u, salary).await.unwrap();
+        let as_expense = TransactionInput { lines: vec![LineDto { category_code: "salary".into(), amount: d("5000"), note: None }], ..input("EXPENSE", "card") };
+        assert_eq!(problem(svc.update(p, t.id, as_expense).await.unwrap_err()), ("KIND_MISMATCH", "items[1].category_code".into()));
+        assert_eq!(problem(svc.create(p, u, receipt(&[("old_food", "1")])).await.unwrap_err()), ("NOT_FOUND", "items[1].category_code".into()), "архивная — только в старых операциях");
+    }
+}
+
+on_each_repo! {
+    /// Быстрый ввод и старые клиенты: счёт, категория и сумма — одна позиция «1 шт» без цены (раздел 10).
+    async fn minimal_request_is_one_simple_item(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let quick = items(vec![ItemInput { category_code: Some("cafe".into()), amount: Some(d("55")), ..Default::default() }]);
+        let t = svc.create(p, u, quick).await.unwrap();
+        let x = &t.items[0];
+        assert_eq!((x.quantity, x.unit.as_str(), x.price_per_unit, x.discount, x.amount, x.is_simple()), (d("1"), "pcs", None, d("0"), d("55"), true));
+        let legacy = svc.create(p, u, receipt(&[("food", "10")])).await.unwrap();
+        assert!(legacy.items[0].is_simple());
+        let both = TransactionInput { items: vec![ItemInput::default()], ..receipt(&[("food", "10")]) };
+        assert_eq!(problem(svc.create(p, u, both).await.unwrap_err()).1, "items");
+    }
+}
+
+/// Миграция позиций (docs/group-1.md, раздел 7) на старых данных: каждая проводка на категорию расхода и дохода
+/// становится позицией «1 шт» с названием из уточнения, проводке ставится item_id, шапка получает счёт, сумму и
+/// признак возврата. Остатки не меняются. Только на PostgreSQL.
+#[tokio::test]
+async fn receipt_items_migration_on_old_data() {
+    use crate::ports::TransactionRepository;
+    let Some(db) = TestDb::new("tx_items_mig").await else { return };
+    let mut before = sqlx::migrate!("./migrations");
+    let all = before.migrations.to_vec();
+    let last = all.iter().filter(|m| m.migration_type.is_up_migration()).map(|m| m.version).max().unwrap();
+    before.migrations = all.iter().filter(|m| m.version < last).cloned().collect::<Vec<_>>().into();
+    before.set_locking(false);
+    before.run(&db.pool).await.unwrap();
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    let (receipt_id, refund_id, salary_id, transfer_id, opening_id) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let header = |id: Uuid, kind: &str, n: i64| {
+        sqlx::query("INSERT INTO fb_transactions (id, project_id, occurred_on, tx_kind, description_lang, created_by, opening_account) VALUES ($1, $2, $3, $4, 'RU', $5, $6)")
+            .bind(id)
+            .bind(p)
+            .bind(day(n as u32))
+            .bind(kind.to_string())
+            .bind(u)
+            .bind((kind == "OPENING").then_some("CARD"))
+    };
+    let posting = |id: Uuid, pos: i32, kind: &str, code: &str, cur: &str, amount: &str, note: Option<&str>| {
+        sqlx::query("INSERT INTO fb_postings (transaction_id, position, ref_kind, ref_code, currency_code, amount, note) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+            .bind(id)
+            .bind(pos)
+            .bind(kind.to_string())
+            .bind(code.to_string())
+            .bind(cur.to_string())
+            .bind(d(amount))
+            .bind(note.map(str::to_string))
+    };
+    let mut tx = db.pool.begin().await.unwrap();
+    for (id, kind, n) in [(opening_id, "OPENING", 1), (receipt_id, "EXPENSE", 2), (refund_id, "EXPENSE", 3), (salary_id, "INCOME", 4), (transfer_id, "TRANSFER", 5)] {
+        header(id, kind, n).execute(&mut *tx).await.unwrap();
+    }
+    for q in [
+        posting(opening_id, 1, "ACCOUNT", "CARD", "THB", "1000", None),
+        posting(opening_id, 2, "SYSTEM", "OPENING", "THB", "-1000", None),
+        posting(receipt_id, 1, "ACCOUNT", "CARD", "THB", "-1250", None),
+        posting(receipt_id, 2, "CATEGORY", "FOOD", "THB", "900", Some("овощи, мясо")),
+        posting(receipt_id, 3, "CATEGORY", "HOME", "THB", "250", None),
+        posting(receipt_id, 4, "CATEGORY", "FOOD", "THB", "100", Some("кофе")),
+        posting(refund_id, 1, "ACCOUNT", "CARD", "THB", "300", None),
+        posting(refund_id, 2, "CATEGORY", "FOOD", "THB", "-300", None),
+        posting(salary_id, 1, "ACCOUNT", "CARD", "THB", "5000", None),
+        posting(salary_id, 2, "CATEGORY", "SALARY", "THB", "-5000", None),
+        posting(transfer_id, 1, "ACCOUNT", "TINKOFF", "RUB", "-10050", None),
+        posting(transfer_id, 2, "CATEGORY", "FEES", "RUB", "50", None),
+        posting(transfer_id, 3, "SYSTEM", "EXCHANGE", "RUB", "10000", None),
+        posting(transfer_id, 4, "SYSTEM", "EXCHANGE", "THB", "-3912.40", None),
+        posting(transfer_id, 5, "ACCOUNT", "CARD", "THB", "3912.40", None),
+    ] {
+        q.execute(&mut *tx).await.unwrap();
+    }
+    tx.commit().await.unwrap();
+    let repo = crate::adapters::postgres::PostgresTransactionRepository::new(db.pool.clone());
+    let balances = |r: Vec<(String, Decimal)>| {
+        let mut r = r;
+        r.sort();
+        r
+    };
+    let balances_before = balances(repo.balances(p, day(31)).await.unwrap());
+
+    let mut after = sqlx::migrate!("./migrations");
+    after.set_locking(false);
+    after.run(&db.pool).await.unwrap();
+
+    assert_eq!(balances(repo.balances(p, day(31)).await.unwrap()), balances_before, "остатки не меняются");
+    let load = |id: Uuid| repo.find(p, id);
+    let receipt = load(receipt_id).await.unwrap().unwrap();
+    assert_eq!(
+        receipt.items.iter().map(|x| (x.category_code.as_str(), x.name.as_deref(), x.amount, x.quantity, x.price)).collect::<Vec<_>>(),
+        vec![("FOOD", Some("овощи, мясо"), d("900"), d("1"), None), ("HOME", None, d("250"), d("1"), None), ("FOOD", Some("кофе"), d("100"), d("1"), None)]
+    );
+    for t in [&receipt, &load(refund_id).await.unwrap().unwrap(), &load(salary_id).await.unwrap().unwrap(), &load(transfer_id).await.unwrap().unwrap(), &load(opening_id).await.unwrap().unwrap()] {
+        crate::domain::check_items(t.tx_kind, &t.items, &t.postings).unwrap_or_else(|e| panic!("{:?}: {e}", t.tx_kind));
+    }
+    let heads: Vec<(Uuid, Option<String>, Option<Decimal>, bool)> =
+        sqlx::query_as("SELECT id, account_code, total, refund FROM fb_transactions WHERE project_id = $1").bind(p).fetch_all(&db.pool).await.unwrap();
+    let head = |id: Uuid| heads.iter().find(|h| h.0 == id).map(|h| (h.1.clone().unwrap_or_default(), h.2.unwrap_or_default().normalize(), h.3)).unwrap();
+    assert_eq!(head(receipt_id), ("CARD".into(), d("1250"), false));
+    assert_eq!(head(refund_id), ("CARD".into(), d("300"), true));
+    assert_eq!(head(salary_id), ("CARD".into(), d("5000"), false));
+    assert_eq!(head(transfer_id), ("TINKOFF".into(), d("10050"), false), "у перевода — счёт списания и списано всего");
+    assert_eq!(head(opening_id), ("CARD".into(), d("1000"), false));
+    let refund = load(refund_id).await.unwrap().unwrap();
+    assert!(refund.refund() && refund.items[0].amount == d("300"));
+    // Число позиций = числу проводок на категории расходов и доходов (сверка из раздела 7).
+    let (n_items,): (i64,) = sqlx::query_as("SELECT count(*) FROM fb_transaction_items").fetch_one(&db.pool).await.unwrap();
+    assert_eq!(n_items, 5);
+    // Шапка после записи приложением — та же, что после миграции.
+    let svc = TransactionService::new(Arc::new(repo), deps());
+    let edited = svc.update(p, receipt_id, TransactionInput { items: vec![ItemInput { id: Some(receipt.items[1].id), amount: Some(d("260")), ..Default::default() }], ..input("EXPENSE", "card") }).await.unwrap();
+    assert_eq!((edited.total, edited.items[1].id), (d("1260"), receipt.items[1].id));
+    let (total,): (Decimal,) = sqlx::query_as("SELECT total FROM fb_transactions WHERE id = $1").bind(receipt_id).fetch_one(&db.pool).await.unwrap();
+    assert_eq!(total, d("1260"));
+    db.close().await;
+}
+
+/// Техдолг #9: тексты ошибок фичи — только в словаре `i18n.rs`; в рабочем коде нет строк на русском,
+/// иначе участник с английским или тайским интерфейсом увидит ошибку по-русски. `http.rs` не проверяется:
+/// в нём только описание API для разработчиков (OpenAPI), оно на русском.
+#[test]
+fn no_russian_literals_in_code() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    for file in ["domain.rs", "service.rs", "dto.rs", "ports.rs", "adapters/web.rs", "adapters/postgres.rs"] {
+        let text = std::fs::read_to_string(root.join(file)).unwrap();
+        let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+        for (n, line) in code.lines().enumerate() {
+            let line = line.trim_start();
+            if line.starts_with("//") || line.starts_with("#[schema") {
+                continue;
+            }
+            // Строковые литералы строки (комментарий после кода отрезан: в литералах фичи нет «//»).
+            let code_part = line.split(" //").next().unwrap_or_default();
+            let literals: Vec<&str> = code_part.split('"').skip(1).step_by(2).collect();
+            let russian = literals.iter().find(|l| l.chars().any(|c| ('а'..='я').contains(&c.to_ascii_lowercase()) || ('А'..='Я').contains(&c) || c == 'ё'));
+            assert!(russian.is_none(), "{file}:{}: строка на русском в коде — перенесите в i18n.rs: {:?}", n + 1, russian);
+        }
     }
 }

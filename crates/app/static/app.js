@@ -245,7 +245,7 @@
     form.dataset.bound = '1';
     var lines = $('[data-lines]', form), totalEl = $('[data-total]', form), curEl = $('span[data-cur]', form), note = $('[data-limit-note]', form);
     var kind = function () { var r = $('[name=tx_kind]:checked', form); return r ? r.value : 'EXPENSE'; };
-    var flow = $('[data-section=flow]', form), transfer = $('[data-section=transfer]', form), accLabel = $('label[for=account_code]', form);
+    var flows = $$('[data-section=flow]', form), transfer = $('[data-section=transfer]', form), accLabel = $('label[for=account_code]', form);
     var refund = $('[data-refund]', form);
     function opt(sel) { var o = sel && sel.selectedOptions[0]; return o ? { cur: o.dataset.cur || '', sym: o.dataset.sym || o.dataset.cur || '', rate: parseFloat(o.dataset.rate) } : { cur: '', sym: '', rate: NaN }; }
     // Перевод: валюты счетов, «Зачислено» — только при разных валютах, курс из сумм (без комиссии).
@@ -264,18 +264,34 @@
     }
     function syncKind() {
       var t = kind() === 'TRANSFER';
-      if (flow) { flow.hidden = t; flow.disabled = t; }
+      flows.forEach(function (el) { el.hidden = t; if (el.tagName === 'FIELDSET') el.disabled = t; });
       if (transfer) { transfer.hidden = !t; transfer.disabled = !t; }
       if (accLabel && accLabel.dataset.labelFlow) accLabel.textContent = t ? accLabel.dataset.labelTransfer : accLabel.dataset.labelFlow;
       syncTransfer();
     }
     function filterCats() { $$('select[data-kind-filtered]', form).forEach(function (s) { filterOptions(s, kind()); }); }
+    // Позиция с ценой: сумма = round(количество × цена) − скидка, поле суммы только для чтения
+    // (docs/group-1.md, 3.2); итог сервер пересчитает при сохранении по тем же правилам.
+    function minor() { var o = ($('[name=account_code]', form) || {}).selectedOptions; var m = o && o[0] ? parseInt(o[0].dataset.minor, 10) : NaN; return isNaN(m) ? 2 : m; }
+    function itemAmount(row) {
+      var amount = $('[data-amount]', row), price = evalAmount(($('[data-price]', row) || {}).value);
+      if (isNaN(price)) { amount.readOnly = false; return evalAmount(amount.value); }
+      var q = evalAmount(($('[data-qty]', row) || {}).value), d = evalAmount(($('[data-discount]', row) || {}).value), k = Math.pow(10, minor());
+      var v = Math.round((isNaN(q) ? 1 : q) * price * k) / k - (isNaN(d) ? 0 : d);
+      amount.readOnly = true;
+      amount.value = v > 0 ? String(Math.round(v * k) / k) : '';
+      return v;
+    }
     function total() {
-      var s = 0;
-      $$('[data-amount]', form).forEach(function (i) { var v = evalAmount(i.value); if (!isNaN(v)) s += v; });
+      var s = 0, acc = $('[name=account_code]', form), sym = acc && acc.selectedOptions[0] ? opt(acc).sym : '';
+      $$('[data-line]', form).forEach(function (row) {
+        if (row.hidden) return;
+        var v = itemAmount(row), sum = $('[data-item-sum]', row);
+        if (sum) sum.textContent = isNaN(v) ? '' : money(v);
+        if (!isNaN(v)) s += v;
+      });
       totalEl.textContent = money(s);
-      var acc = $('[name=account_code]', form);
-      curEl.textContent = acc && acc.selectedOptions[0] ? opt(acc).sym : '';
+      $$('span[data-cur]', form).forEach(function (el) { el.textContent = sym; });
       return s;
     }
     function warn() {
@@ -296,24 +312,50 @@
         showLimit(note, worst, baseSym || d.base_currency);
       }).catch(function () { note.textContent = ''; });
     }
+    // Пустые строки в запасе нужны только без JS: прячем их до «Добавить позицию».
+    var visible = function () { return $$('[data-line]', lines).filter(function (r) { return !r.hidden; }); };
+    $$('.item-spare', lines).forEach(function (r) { r.hidden = true; });
+    if (!visible().length && $('[data-line]', lines)) $('[data-line]', lines).hidden = false;
+    function clearRow(row) {
+      $$('input', row).forEach(function (i) { if (i.type === 'checkbox') i.checked = false; else i.value = ''; i.readOnly = false; i.removeAttribute('autofocus'); i.removeAttribute('aria-invalid'); });
+      $$('select', row).forEach(function (sel) { sel.selectedIndex = 0; });
+      $$('.field-error', row).forEach(function (el) { el.remove(); });
+    }
     lines.addEventListener('click', function (e) {
       var rm = e.target.closest('[data-remove-line]');
-      if (rm && $$('[data-line]', lines).length > 1) { rm.closest('[data-line]').remove(); total(); warn(); }
+      if (!rm) return;
+      var row = rm.closest('[data-line]');
+      if (visible().length > 1) row.remove(); else clearRow(row);
+      total(); warn();
     });
     var add = $('[data-add-line]', form);
-    if (add) add.addEventListener('click', function () {
-      var rows = $$('[data-line]', lines), row = rows[rows.length - 1].cloneNode(true), n = rows.length + 1;
-      $$('input', row).forEach(function (i) { i.value = ''; i.removeAttribute('autofocus'); i.removeAttribute('aria-invalid'); });
-      $('select', row).value = '';
-      $$('[id]', row).forEach(function (el) { var id = el.id.replace(/-\d+$/, '-' + n); var lab = $('label[for="' + el.id + '"]', row); el.id = id; if (lab) lab.htmlFor = id; });
-      lines.appendChild(row); filterCats(); $('select', row).focus();
-    });
+    if (add) {
+      add.hidden = false;
+      add.addEventListener('click', function () {
+        var row = $$('[data-line]', lines).filter(function (r) { return r.hidden; })[0];
+        if (!row) {
+          var rows = $$('[data-line]', lines), n = rows.length + 1;
+          row = rows[rows.length - 1].cloneNode(true);
+          clearRow(row);
+          $$('[id]', row).forEach(function (el) { var id = el.id.replace(/-\d+$/, '-' + n); var lab = $('label[for="' + el.id + '"]', row); el.id = id; if (lab) lab.htmlFor = id; });
+          $$('[aria-label]', row).forEach(function (el) { el.setAttribute('aria-label', el.getAttribute('aria-label').replace(/\d+$/, n)); });
+          lines.appendChild(row);
+        }
+        row.hidden = false; filterCats(); total(); $('select', row).focus();
+      });
+    }
     form.addEventListener('input', function () { total(); syncTransfer(); });
     form.addEventListener('change', function (e) {
       if (e.target.name === 'tx_kind') syncKind();
       filterCats(); total(); warn(); syncTransfer();
     });
-    $$('[data-amount], [data-sent], [data-received], [data-fee]', form).forEach(function (i) { i.addEventListener('blur', function () { var v = evalAmount(i.value); if (!isNaN(v) && /[+*/]|\d-/.test(i.value)) { i.value = String(v); syncTransfer(); } }); });
+    // «120+45» в поле суммы → 165 при выходе из поля (и в добавленных строках позиций).
+    form.addEventListener('focusout', function (e) {
+      var i = e.target;
+      if (!i.matches || !i.matches('[data-amount], [data-sent], [data-received], [data-fee], [data-price], [data-qty], [data-discount], [data-discount-total]') || i.readOnly) return;
+      var v = evalAmount(i.value);
+      if (!isNaN(v) && /[+*/]|\d-/.test(i.value)) { i.value = String(v); total(); syncTransfer(); }
+    });
     filterCats(); total(); syncKind(); warn();
   });
   }
@@ -722,7 +764,7 @@
     var payload = {
       occurred_on: selectedDate(), account_code: $('#q-account').value, tx_kind: Q.kind,
       description: desc || null, description_lang: lang.toUpperCase(),
-      lines: [{ category_code: Q.category, amount: String(amount) }]
+      items: [{ category_code: Q.category, amount: String(amount) }]
     };
     showError('');
     $$('.dialog-foot button', dlg).forEach(function (b) { b.disabled = true; });

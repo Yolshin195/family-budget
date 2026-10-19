@@ -3,7 +3,7 @@
 {% block title %}{% if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
 {% block heading %}{% if !f.plan_id.is_empty() %}{{ page.t("paid_plan") }}{% else if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
 {% block content %}
-{% call m::form_alert(error, "occurred_on,account_code,tx_kind,line_category_code,line_amount,description,to_account_code,amount,to_amount,fee_category_code,fee_amount") %}{% endcall %}
+{% if let Some(e) = self.general_error() %}<div class="alert alert-error mb-4" role="alert"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("circle-alert") }}"></use></svg><span>{{ e }}</span></div>{% endif %}
 <form method="post" class="card card-pad form max-w-3xl" id="tx" data-tx-form data-limit-warn>
   <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
   <input type="hidden" name="plan_id" value="{{ f.plan_id }}">
@@ -22,8 +22,19 @@
       <input class="input" type="date" id="occurred_on" name="occurred_on" value="{{ f.occurred_on }}" required{% call m::aria(error, "occurred_on") %}{% endcall %}>{% call m::err(error, "occurred_on") %}{% endcall %}</div>
     <div class="field"><label class="label" for="account_code" data-label-flow="{{ page.t("account") }}" data-label-transfer="{{ page.t("from") }}">{% if f.kind() == "TRANSFER" %}{{ page.t("from") }}{% else %}{{ page.t("account") }}{% endif %}</label>
       <select class="input" id="account_code" name="account_code" required data-account{% call m::aria(error, "account_code") %}{% endcall %}>
-        {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" data-sym="{{ page.cur(a.tag) }}" data-rate="{{ self.rate_of(a.tag) }}" {% if f.account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
+        {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" data-sym="{{ page.cur(a.tag) }}" data-rate="{{ self.rate_of(a.tag) }}" data-minor="{{ self.minor_of(a.code) }}" {% if f.account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
       </select>{% call m::err(error, "account_code") %}{% endcall %}</div>
+  </div>
+
+  <div data-section="flow"{% if f.kind() == "TRANSFER" %} hidden{% endif %}>
+  <details class="disclosure more"{% if self.more_open() %} open{% endif %}>
+    <summary><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg>{{ page.t("more") }} <span class="label-note">{{ self.more_summary() }}</span></summary>
+    <div class="grid gap-4 sm:grid-cols-2 mt-3">
+      <div class="field"><label class="label" for="discount_total">{{ page.t("discount_total") }}</label>
+        <input class="input num" id="discount_total" name="discount_total" value="{{ f.discount_total }}" inputmode="decimal" placeholder="0.00" aria-describedby="discount-hint" data-discount-total{% call m::aria(error, "discount_total") %}{% endcall %}>
+        <p class="hint" id="discount-hint">{{ page.t("discount_total_hint") }}</p>{% call m::err(error, "discount_total") %}{% endcall %}</div>
+    </div>
+  </details>
   </div>
 
   <fieldset class="field" data-section="flow"{% if f.kind() == "TRANSFER" %} hidden disabled{% endif %}>
@@ -32,25 +43,45 @@
       <label class="checkbox checkbox-sm" title="{{ page.t("refund_hint") }}"><input type="checkbox" name="refund" value="1" data-refund {% if f.refund == "1" %}checked{% endif %}><span>{{ page.t("refund") }}</span></label>
       <p class="text-sm text-muted" aria-live="polite">{{ page.t("total") }}: <b class="amount text-default" data-total>0.00</b> <span data-cur></span></p>
     </div>
+    <div class="item-head" aria-hidden="true"><span>{{ page.t("category") }}</span><span class="text-right">{{ page.t("amount") }}</span><span>{{ page.t("item_name") }}</span></div>
     <div class="lines" data-lines>
-      {% for l in lines %}
-      <div class="line" data-line>
-        <label class="sr-only" for="lc-{{ loop.index }}">{{ page.t("category") }} {{ loop.index }}</label>
-        <select class="input" id="lc-{{ loop.index }}" name="line_category" data-kind-filtered{% if loop.first %}{% call m::aria(error, "line_category_code") %}{% endcall %}{% endif %}>
-          <option value=""></option>
-          {% for c in categories %}<option value="{{ c.code }}" data-kind="{{ c.tag }}" {% if l.category == c.code %}selected{% endif %}>{{ c.indent() }}{{ c.label }}</option>{% endfor %}
-        </select>
-        <label class="sr-only" for="la-{{ loop.index }}">{{ page.t("amount") }} {{ loop.index }}</label>
-        <input class="input num" id="la-{{ loop.index }}" name="line_amount" value="{{ l.amount }}" inputmode="decimal" placeholder="0.00" data-amount{% if loop.first && f.plan_id.is_empty() && id.is_none() && f.kind() != "TRANSFER" %} autofocus{% endif %}>
-        <label class="sr-only" for="ln-{{ loop.index }}">{{ page.t("note") }} {{ loop.index }}</label>
-        <input class="input line-note" id="ln-{{ loop.index }}" name="line_note" value="{{ l.note }}" placeholder="{{ page.t("note") }}" maxlength="200">
-        <button type="button" class="btn-icon" data-remove-line aria-label="{{ page.t("remove") }}" title="{{ page.t("remove") }}"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("x") }}"></use></svg></button>
+      {% for x in items %}
+      <div class="item{% if x.spare %} item-spare{% endif %}" data-line>
+        <input type="hidden" name="item_id" value="{{ x.id }}">
+        <div class="item-row">
+          <select class="input" id="ic-{{ x.n }}" name="item_category" data-kind-filtered aria-label="{{ page.t("category") }} {{ x.n }}"{% if x.bad("category_code") %} aria-invalid="true"{% endif %}>
+            <option value=""></option>
+            {% for c in categories %}<option value="{{ c.code }}" data-kind="{{ c.tag }}" {% if x.category == c.code %}selected{% endif %}>{{ c.indent() }}{{ c.label }}</option>{% endfor %}
+          </select>
+          <input class="input num" id="ia-{{ x.n }}" name="item_amount" value="{{ x.amount }}" inputmode="decimal" placeholder="0.00" data-amount aria-label="{{ page.t("amount") }} {{ x.n }}"{% if x.bad("amount") %} aria-invalid="true"{% endif %}{% if loop.first && f.plan_id.is_empty() && id.is_none() && f.kind() != "TRANSFER" %} autofocus{% endif %}>
+          <input class="input item-name" id="in-{{ x.n }}" name="item_name" value="{{ x.name }}" placeholder="{{ page.t("item_name") }}" maxlength="200" aria-label="{{ page.t("item_name") }} {{ x.n }}">
+          <input type="checkbox" class="price-toggle" id="ip-{{ x.n }}" data-price-toggle{% if x.open() %} checked{% endif %}>
+          <label class="price-pill" for="ip-{{ x.n }}">{{ page.t("x_price") }}</label>
+          <button type="button" class="btn-icon" data-remove-line aria-label="{{ page.t("remove") }} {{ x.n }}" title="{{ page.t("remove") }}"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("x") }}"></use></svg></button>
+        </div>
+        <div class="item-price">
+          <div class="field"><label class="label" for="iq-{{ x.n }}">{{ page.t("quantity") }}</label>
+            <input class="input num" id="iq-{{ x.n }}" name="item_qty" value="{{ x.qty }}" inputmode="decimal" placeholder="1" data-qty></div>
+          <div class="field"><label class="label" for="iu-{{ x.n }}">{{ page.t("unit") }}</label>
+            <select class="input" id="iu-{{ x.n }}" name="item_unit">
+              {% for (code, label) in units %}<option value="{{ code }}" {% if x.unit == *code %}selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select></div>
+          <span class="op" aria-hidden="true">×</span>
+          <div class="field"><label class="label" for="ipr-{{ x.n }}">{{ page.t("price") }}</label>
+            <input class="input num" id="ipr-{{ x.n }}" name="item_price" value="{{ x.price }}" inputmode="decimal" placeholder="0.00" data-price{% if x.bad("price") %} aria-invalid="true"{% endif %}></div>
+          <span class="op" aria-hidden="true">−</span>
+          <div class="field"><label class="label" for="id-{{ x.n }}">{{ page.t("discount") }}</label>
+            <input class="input num" id="id-{{ x.n }}" name="item_discount" value="{{ x.discount }}" inputmode="decimal" placeholder="0.00" data-discount{% if x.bad("discount") %} aria-invalid="true"{% endif %}></div>
+          <span class="op" aria-hidden="true">=</span>
+          <p class="item-sum" aria-live="polite"><b data-item-sum></b> <span data-cur></span></p>
+        </div>
+        {% for e in x.errors %}<p class="field-error">{{ e }}</p>{% endfor %}
       </div>
       {% endfor %}
     </div>
-    {% call m::err(error, "line_category_code") %}{% endcall %}{% call m::err(error, "line_amount") %}{% endcall %}
+    {% call m::err(error, "items") %}{% endcall %}
     <p class="limit-note" data-limit-note aria-live="polite"></p>
-    <button type="button" class="btn-ghost btn-sm mt-2" data-add-line><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("add_line") }}</button>
+    <button type="button" class="btn-ghost btn-sm mt-2" data-add-line hidden><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("add_line") }}</button>
   </fieldset>
 
   <fieldset class="field space-y-4" data-section="transfer"{% if f.kind() != "TRANSFER" %} hidden disabled{% endif %}>

@@ -76,15 +76,35 @@ pub struct UpcomingArgs {
     pub to: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ItemArgs {
-    /// Category code or name (expense category for expenses, income category for income)
-    pub category: String,
-    /// Amount in the account currency, e.g. "120.50"
-    #[serde(deserialize_with = "amount")]
-    #[schemars(with = "String")]
-    pub amount: String,
-    /// Optional note for this line
+    /// update_transaction only: id of an existing item of this transaction (from list_transactions) to change;
+    /// omit to add a new item. Omitted fields of an existing item keep their values
+    pub id: Option<String>,
+    /// Category code or name (expense category for expenses, income category for income); required for new items
+    pub category: Option<String>,
+    /// Item name as on the receipt, in the language it was written ("Croissant", "Круассан"); not translated
+    pub name: Option<String>,
+    /// Quantity, e.g. "2" or "0.45" (default 1)
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub quantity: Option<String>,
+    /// Unit of the quantity: pcs | kg | l | g (default pcs)
+    pub unit: Option<String>,
+    /// Price per unit from the price tag; with a price the amount is computed: round(quantity × price) − discount
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub price: Option<String>,
+    /// Discount on this item in the account currency
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub discount: Option<String>,
+    /// Item amount in the account currency, e.g. "120.50" — required without a price; with a price it must match
+    /// the computed amount (otherwise the error code is AMOUNT_MISMATCH)
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub amount: Option<String>,
+    /// Optional note for this item
     pub note: Option<String>,
 }
 
@@ -96,8 +116,12 @@ pub struct AddFlowArgs {
     pub amount: Option<String>,
     /// Category code or name for a single-line transaction
     pub category: Option<String>,
-    /// Several lines (a receipt split into categories) instead of amount+category
+    /// Receipt items (with names, quantities and prices when visible) instead of amount+category
     pub items: Option<Vec<ItemArgs>>,
+    /// Discount on the whole receipt, split across items in proportion to their amounts
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub discount_total: Option<String>,
     /// Account code or name (default: the user's last used account)
     pub account: Option<String>,
     /// Date YYYY-MM-DD, or "today" / "yesterday" (default: today)
@@ -148,14 +172,20 @@ pub struct UpdateTransactionArgs {
     pub date: Option<String>,
     /// New account (source account for transfers)
     pub account: Option<String>,
-    /// New amount: for a single-line expense/income or a transfer
+    /// New amount: for a single-item expense/income or a transfer
     #[serde(default, deserialize_with = "opt_amount")]
     #[schemars(with = "Option<String>")]
     pub amount: Option<String>,
-    /// New category for a single-line expense/income
+    /// New category for a single-item expense/income
     pub category: Option<String>,
-    /// Replace all lines of an expense/income
+    /// Expense/income items to change (with id) or add (without id); items not listed stay as they are
     pub items: Option<Vec<ItemArgs>>,
+    /// Ids of items to delete from this expense/income
+    pub remove_item_ids: Option<Vec<String>>,
+    /// Discount on the whole receipt added to the items' discounts, split in proportion to their amounts
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub discount_total: Option<String>,
     /// Transfers: new destination account
     pub to_account: Option<String>,
     /// Transfers: new received amount (exchange)

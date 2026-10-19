@@ -62,10 +62,11 @@
           {% if t.dto.plan_id.is_some() %}<span class="badge badge-info"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("calendar-check") }}"></use></svg>{{ page.t("from_plan") }}</span>{% endif %}
         </p>
         <p class="text-xs text-subtle mt-0.5">{{ t.meta }}</p>
-        {% if !t.lines.is_empty() %}
+        {% if !t.groups.is_empty() %}
         <ul class="tx-lines">
-          {% for l in t.lines %}
-            <li><span>{{ l.category }}{% if !l.note.is_empty() %} <span class="text-subtle">— {{ l.note }}</span>{% endif %}</span><span class="amount">{{ l.amount }}</span></li>
+          {% for g in t.groups %}
+            <li><span>{{ g.category }}</span><span class="amount">{{ g.amount }}</span></li>
+            {% for x in g.items %}<li class="tx-item">{{ x }}</li>{% endfor %}
           {% endfor %}
         </ul>
         {% else if !t.category.is_empty() %}

@@ -231,7 +231,7 @@ pub fn dict(key: &str) -> Option<Tr> {
         "quick.no_match" => ("Ничего не нашлось", "No matches", "ไม่พบ"),
         "quick.yesterday" => ("Вчера", "Yesterday", "เมื่อวาน"),
         "quick.other_date" => ("Другая…", "Other…", "วันอื่น…"),
-        "quick.split" => ("Разбить на позиции", "Split into items", "แยกเป็นรายการย่อย"),
+        "quick.split" => ("Подробная карточка", "Full details", "รายละเอียดทั้งหมด"),
         "quick.save_more" => ("Сохранить и ещё", "Save & add another", "บันทึกและเพิ่มอีก"),
         "quick.available" => ("Доступно", "Available", "ใช้ได้"),
         "quick.left" => ("Останется доступно", "Will remain", "จะเหลือ"),

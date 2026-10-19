@@ -188,11 +188,28 @@ pub struct QuickInfo {
     pub frequent_income: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct TxLine {
-    pub category_code: String,
-    pub amount: Decimal,
+/// Позиция чека. В черновике пустое поле — значение по умолчанию (1 шт, без цены и скидки), а у позиции с `id`
+/// при правке — прежнее значение. У сохранённой операции заполнены `id`, категория, количество, единица,
+/// скидка и сумма.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TxItem {
+    pub id: Option<Uuid>,
+    pub category_code: Option<String>,
+    pub name: Option<String>,
+    pub quantity: Option<Decimal>,
+    /// pcs, kg, l, g
+    pub unit: Option<String>,
+    pub price: Option<Decimal>,
+    pub discount: Option<Decimal>,
+    pub amount: Option<Decimal>,
     pub note: Option<String>,
+}
+
+impl TxItem {
+    /// Позиция «категория и сумма».
+    pub fn simple(category_code: String, amount: Decimal) -> Self {
+        Self { category_code: Some(category_code), amount: Some(amount), ..Default::default() }
+    }
 }
 
 /// Операция для создания или изменения (как форма в интерфейсе).
@@ -203,7 +220,13 @@ pub struct TxDraft {
     pub kind: String,
     pub account_code: String,
     pub refund: bool,
-    pub lines: Vec<TxLine>,
+    /// Позиции: с `id` — изменить, без `id` — добавить.
+    pub items: Vec<TxItem>,
+    /// `items` — весь чек (новая операция): не названные позиции удаляются.
+    pub replace_items: bool,
+    pub remove_item_ids: Vec<Uuid>,
+    /// Скидка на чек: делится по позициям пропорционально сумме.
+    pub discount_total: Option<Decimal>,
     pub to_account_code: Option<String>,
     pub amount: Option<Decimal>,
     pub to_amount: Option<Decimal>,
@@ -227,7 +250,7 @@ pub struct Tx {
     pub account_code: String,
     pub to_account_code: Option<String>,
     pub refund: bool,
-    pub lines: Vec<TxLine>,
+    pub items: Vec<TxItem>,
     pub total: Decimal,
     pub currency: String,
     pub to_amount: Option<Decimal>,
@@ -252,7 +275,11 @@ impl Tx {
             kind: self.kind.clone(),
             account_code: self.account_code.clone(),
             refund: self.refund,
-            lines: self.lines.clone(),
+            // Позиции не меняются, пока их не назвали.
+            items: Vec::new(),
+            replace_items: false,
+            remove_item_ids: Vec::new(),
+            discount_total: None,
             to_account_code: self.to_account_code.clone(),
             amount: (self.kind == "TRANSFER").then_some(self.total),
             to_amount: self.to_amount,

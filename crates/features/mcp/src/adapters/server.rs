@@ -103,7 +103,7 @@ impl BudgetServer {
     }
 
     #[tool(
-        description = "Record an expense: amount + category, or items (a receipt split by categories). Account defaults to the user's last used one — if the user names a currency or a payment method (cash, card), pass the matching account from get_context. Date defaults to today. Returns the saved transaction and what is left of the monthly limit.",
+        description = "Record an expense: amount + category, or items — a receipt: each item with category, name, and quantity × price (amount is computed) or amount; discount_total for a discount on the whole receipt. Account defaults to the user's last used one — if the user names a currency or a payment method (cash, card), pass the matching account from get_context. Date defaults to today. Returns the saved transaction and what is left of the monthly limit.",
         annotations(title = "Add expense", read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]
     async fn add_expense(&self, Parameters(a): Parameters<AddFlowArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
@@ -130,7 +130,7 @@ impl BudgetServer {
     }
 
     #[tool(
-        description = "Correct an existing transaction by id: date, account, amount, category or items, transfer accounts/amounts, description. Only the passed fields change. Confirm the change with the user first.",
+        description = "Correct an existing transaction by id: date, account, amount, category, receipt items (with id — change that item, without id — add one; remove_item_ids deletes), transfer accounts/amounts, description. Only the passed fields change. Confirm the change with the user first.",
         annotations(title = "Edit transaction", read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn update_transaction(&self, Parameters(a): Parameters<UpdateTransactionArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {

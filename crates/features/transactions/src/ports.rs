@@ -197,11 +197,20 @@ pub trait AccountsLookup: Send + Sync {
     async fn infos(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<AccountInfo>>;
 }
 
+/// Категория, на которую ссылается операция.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CategoryRef {
+    /// EXPENSE / INCOME
+    pub kind: String,
+    pub archived: bool,
+}
+
 /// Что этой фиче нужно от справочника `categories`.
 #[async_trait]
 pub trait CategoriesLookup: Send + Sync {
-    /// Тип активной категории (EXPENSE / INCOME) или `None`, если её нет или она в архиве.
-    async fn kind_of(&self, project_id: Uuid, code: &str) -> AppResult<Option<String>>;
+    /// Тип категории и признак архива (архивные — тоже: тип проверяется и у старых ссылок, техдолг #3);
+    /// `None` — такой категории нет.
+    async fn kind_of(&self, project_id: Uuid, code: &str) -> AppResult<Option<CategoryRef>>;
     /// Активные категории деревом; `tag` — тип.
     async fn choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>>;
     /// Названия всех категорий, включая архивные: (код, название).

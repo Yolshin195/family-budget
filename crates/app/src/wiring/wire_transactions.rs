@@ -61,8 +61,12 @@ pub struct CategoriesLookupAdapter(pub Arc<::categories::Service>);
 
 #[async_trait]
 impl ::transactions::CategoriesLookup for CategoriesLookupAdapter {
-    async fn kind_of(&self, project_id: Uuid, code: &str) -> AppResult<Option<String>> {
-        self.0.kind_of(project_id, code).await
+    async fn kind_of(&self, project_id: Uuid, code: &str) -> AppResult<Option<::transactions::CategoryRef>> {
+        match self.0.get(project_id, code).await {
+            Ok(c) => Ok(Some(::transactions::CategoryRef { kind: c.category_kind, archived: c.archived })),
+            Err(kernel::error::AppError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
     async fn choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>> {
         self.0.choices(project_id, lang).await

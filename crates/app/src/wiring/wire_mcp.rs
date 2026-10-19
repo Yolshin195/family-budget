@@ -17,7 +17,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use ::mcp::{
-    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxLine,
+    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem,
 };
 
 pub struct LedgerAdapter(pub Arc<::transactions::Service>);
@@ -30,7 +30,21 @@ fn tx_from(d: ::transactions::dto::TransactionDto) -> Tx {
         account_code: d.account_code,
         to_account_code: d.to_account_code,
         refund: d.refund,
-        lines: d.lines.into_iter().map(|l| TxLine { category_code: l.category_code, amount: l.amount, note: l.note }).collect(),
+        items: d
+            .items
+            .into_iter()
+            .map(|x| TxItem {
+                id: Some(x.id),
+                category_code: Some(x.category_code),
+                name: x.name,
+                quantity: Some(x.quantity),
+                unit: Some(x.unit),
+                price: x.price_per_unit,
+                discount: Some(x.discount),
+                amount: Some(x.amount),
+                note: x.note,
+            })
+            .collect(),
         total: d.total,
         currency: d.currency,
         to_amount: d.to_amount,
@@ -54,7 +68,25 @@ fn input_from(d: TxDraft) -> ::transactions::dto::TransactionInput {
         tx_kind: d.kind,
         account_code: d.account_code,
         refund: d.refund,
-        lines: d.lines.into_iter().map(|l| ::transactions::dto::LineDto { category_code: l.category_code, amount: l.amount, note: l.note }).collect(),
+        items: d
+            .items
+            .into_iter()
+            .map(|x| ::transactions::dto::ItemInput {
+                id: x.id,
+                category_code: x.category_code,
+                name: x.name,
+                quantity: x.quantity,
+                unit: x.unit,
+                price_per_unit: x.price,
+                discount: x.discount,
+                amount: x.amount,
+                note: x.note,
+            })
+            .collect(),
+        replace_items: d.replace_items,
+        remove_item_ids: d.remove_item_ids,
+        discount_total: d.discount_total,
+        lines: Vec::new(),
         to_account_code: d.to_account_code,
         amount: d.amount,
         to_amount: d.to_amount,

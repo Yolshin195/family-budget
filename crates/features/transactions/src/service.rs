@@ -3,15 +3,15 @@
 use std::sync::Arc;
 
 use chrono::NaiveDate;
-use kernel::code::{ensure_ref, normalize};
-use kernel::error::{AppError, AppResult};
+use kernel::code::normalize;
+use kernel::error::{AppError, AppResult, Problem, codes};
 use kernel::i18n::Lang;
 use kernel::pagination::{PagedResponse, Pagination};
 use kernel::web::Choice;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::{Body, Description, Line, RefKind, Transaction, TransactionData, TxKind};
+use crate::domain::{Body, Description, Draft, ItemDraft, ItemsDraft, RefKind, Transaction, TransactionData, TxKind};
 use crate::dto::{ListQuery, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, TransactionDto, TransactionInput, TranslationInput};
 use crate::ports::{CategoryInfo, Deps, ExchangeLine, FactLine, Filter, Payment, TransactionRepository, taken};
 
@@ -47,9 +47,9 @@ impl TransactionService {
 
     /// Создать транзакцию. `created_by` — текущий пользователь, не из тела запроса.
     pub async fn create(&self, project_id: Uuid, created_by: Uuid, input: TransactionInput) -> AppResult<TransactionDto> {
-        let data = input.into_domain().map_err(AppError::Validation)?;
+        let data = input.into_domain()?;
         let accounts = self.deps.accounts.currencies(project_id).await?;
-        let item = Transaction::create(project_id, created_by, data, &accounts).map_err(AppError::Validation)?;
+        let item = Transaction::create(project_id, created_by, data, &accounts)?;
         self.check_refs(project_id, &item, None).await?;
         self.check_plan(&item, None).await?;
         self.check_opening(&item).await?;
@@ -64,7 +64,7 @@ impl TransactionService {
     pub async fn list(&self, project_id: Uuid, query: ListQuery, pagination: Pagination) -> AppResult<PagedResponse<TransactionDto>> {
         let kind = match query.tx_kind.as_deref().filter(|v| !v.is_empty()) {
             None => None,
-            Some(k) => Some(TxKind::parse(k).ok_or_else(|| AppError::Validation(format!("tx_kind: недопустимое значение '{k}'")))?),
+            Some(k) => Some(TxKind::parse(k).ok_or_else(|| err("tx_kind", "err.kind_invalid", &[("value", &k)]))?),
         };
         let filter = Filter {
             from: query.from,
@@ -82,9 +82,9 @@ impl TransactionService {
     pub async fn update(&self, project_id: Uuid, id: Uuid, input: TransactionInput) -> AppResult<TransactionDto> {
         let mut item = self.load(project_id, id).await?;
         let before = item.clone();
-        let data = input.into_domain().map_err(AppError::Validation)?;
+        let data = input.into_domain()?;
         let accounts = self.deps.accounts.currencies(project_id).await?;
-        item.change(data, &accounts).map_err(AppError::Validation)?;
+        item.change(data, &accounts)?;
         self.check_refs(project_id, &item, Some(&before)).await?;
         self.check_plan(&item, Some(&before)).await?;
         self.check_opening(&item).await?;
@@ -96,7 +96,7 @@ impl TransactionService {
     pub async fn translate(&self, project_id: Uuid, id: Uuid, input: TranslationInput) -> AppResult<TransactionDto> {
         let mut item = self.load(project_id, id).await?;
         if item.description.text.is_none() {
-            return Err(AppError::Validation("description: у транзакции нет описания — переводить нечего".into()));
+            return Err(err("description", "err.no_description", &[]).into());
         }
         item.translate(input.description_ru, input.description_en, input.description_th);
         self.repo.update(&item).await?;
@@ -117,7 +117,7 @@ impl TransactionService {
 
     /// «Отменить»: вернуть операцию с тем же id и проводками.
     pub async fn undo_delete(&self, project_id: Uuid, token: Uuid) -> AppResult<TransactionDto> {
-        let item = self.undo.take(project_id, token).ok_or_else(|| AppError::NotFound("отменить уже нельзя".into()))?;
+        let item = self.undo.take(project_id, token).ok_or_else(|| AppError::NotFound(tr("err.undo_expired", &[])))?;
         self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
         Ok(item.into())
     }
@@ -152,7 +152,7 @@ impl TransactionService {
             return Ok(());
         }
         let accounts = self.deps.accounts.currencies(project_id).await?;
-        let body = Body::Opening { account: code.clone(), amount };
+        let body = Draft::Opening { account: code.clone(), amount };
         match existing {
             Some(mut t) => {
                 let data = TransactionData { occurred_on: date, description: t.description.clone(), plan: None, body };
@@ -219,13 +219,13 @@ impl TransactionService {
             return Ok(None);
         }
         let accounts = self.deps.accounts.currencies(project_id).await?;
-        let line = Line { category_code: category_code.to_string(), amount: diff.abs(), note: None };
-        let body = Body::Flow { income: diff > Decimal::ZERO, account: code, lines: vec![line], refund: false };
+        let items = ItemsDraft::replace(vec![ItemDraft::simple(category_code, diff.abs())]);
+        let body = Draft::Flow { income: diff > Decimal::ZERO, account: code, items, refund: false };
         let data = TransactionData { occurred_on: date, description, plan: None, body };
-        let item = Transaction::create(project_id, user_id, data, &accounts).map_err(AppError::Validation)?;
+        let item = Transaction::create(project_id, user_id, data, &accounts)?;
         self.check_refs(project_id, &item, None).await.map_err(|e| match e {
-            AppError::Validation(_) if diff > Decimal::ZERO => AppError::Validation("category_code: остаток больше — нужна категория дохода".into()),
-            AppError::Validation(_) => AppError::Validation("category_code: остаток меньше — нужна категория расхода".into()),
+            AppError::Invalid(_) | AppError::Validation(_) if diff > Decimal::ZERO => err("category_code", "err.reconcile_need_income", &[]).into(),
+            AppError::Invalid(_) | AppError::Validation(_) => err("category_code", "err.reconcile_need_expense", &[]).into(),
             other => other,
         })?;
         self.repo.insert(&item).await?;
@@ -306,6 +306,11 @@ impl TransactionService {
 
     // ---- Для страниц ----
 
+    /// Точность валюты каждого счёта (включая архивные): (счёт, знаков после запятой).
+    pub async fn minor_units(&self, project_id: Uuid) -> AppResult<Vec<(String, u32)>> {
+        Ok(self.deps.accounts.currencies(project_id).await?.into_iter().map(|a| (a.code, a.minor_units)).collect())
+    }
+
     pub async fn account_choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>> {
         self.deps.accounts.choices(project_id, lang).await
     }
@@ -340,13 +345,13 @@ impl TransactionService {
             return Ok(());
         }
         let Some(occ) = self.deps.plans.occurrence(item.project_id, plan_id, date).await? else {
-            return Err(AppError::Validation(format!("plan_date: у плана {plan_id} нет платежа на {date}")));
+            return Err(Problem::new(codes::NOT_FOUND, "plan_date", tr("err.plan_no_occurrence", &[("date", &date)])).into());
         };
         if occ.kind != item.tx_kind.as_str() {
-            return Err(AppError::Validation(format!("plan_id: плановая операция — {}, а эта — {}", occ.kind, item.tx_kind.as_str())));
+            return Err(Problem::new(codes::KIND_MISMATCH, "plan_id", tr("err.plan_kind", &[])).into());
         }
         if occ.skipped {
-            return Err(AppError::Validation(format!("plan_date: платёж {date} пропущен — сначала верните его в календаре")));
+            return Err(err("plan_date", "err.plan_skipped", &[("date", &date)]).into());
         }
         Ok(())
     }
@@ -358,14 +363,15 @@ impl TransactionService {
         }
         for code in item.accounts() {
             if self.repo.find_opening(item.project_id, code).await?.is_some_and(|t| t.id != item.id) {
-                return Err(AppError::Conflict(format!("у счёта {code} уже есть начальный остаток — измените его в форме счёта")));
+                return Err(AppError::Conflict(tr("err.opening_exists", &[("code", &code)])));
             }
         }
         Ok(())
     }
 
     /// Ссылки на счета и категории: активные записи нужного типа. Ссылки, которые уже были в
-    /// прежней версии транзакции, остаются валидными, даже если запись с тех пор в архиве.
+    /// прежней версии транзакции, остаются валидными, даже если запись с тех пор в архиве; тип категории
+    /// проверяется всегда (техдолг #3: правка не превращает доход в расход на категории дохода).
     async fn check_refs(&self, project_id: Uuid, item: &Transaction, before: Option<&Transaction>) -> AppResult<()> {
         let kept = |kind: RefKind, code: &str| before.is_some_and(|b| b.postings.iter().any(|p| p.ref_kind == kind && p.ref_code == code));
         let body = item.body();
@@ -375,23 +381,24 @@ impl TransactionService {
             Body::Opening { account, .. } => (vec![("account_code", account.clone())], "EXPENSE"),
         };
         for (field, code) in account_fields {
-            if !kept(RefKind::Account, &code) {
-                ensure_ref(self.deps.accounts.exists(project_id, &code).await?, field, &code)?;
+            if !kept(RefKind::Account, &code) && !self.deps.accounts.exists(project_id, &code).await? {
+                return Err(Problem::new(codes::NOT_FOUND, field, tr("err.account_not_found", &[("code", &code)])).into());
             }
         }
         let cat_fields: Vec<(String, String)> = match body {
-            Body::Flow { lines, .. } => lines.into_iter().enumerate().map(|(i, l)| (format!("lines[{}].category_code", i + 1), l.category_code)).collect(),
+            Body::Flow { items, .. } => items.into_iter().enumerate().map(|(i, x)| (format!("items[{}].category_code", i + 1), x.category_code)).collect(),
             Body::Transfer { fee, .. } => fee.into_iter().map(|f| ("fee_category_code".to_string(), f.category_code)).collect(),
             Body::Opening { .. } => Vec::new(),
         };
         for (field, code) in cat_fields {
-            if kept(RefKind::Category, &code) {
-                continue;
-            }
             match self.deps.categories.kind_of(project_id, &code).await? {
-                None => ensure_ref(false, &field, &code)?,
-                Some(kind) if kind != cat_kind => {
-                    return Err(AppError::Validation(format!("{field}: категория '{code}' — {kind}, а нужна {cat_kind}")));
+                Some(c) if c.archived && !kept(RefKind::Category, &code) => {
+                    return Err(Problem::new(codes::NOT_FOUND, &field, tr("err.category_not_found", &[("code", &code)])).into());
+                }
+                None => return Err(Problem::new(codes::NOT_FOUND, &field, tr("err.category_not_found", &[("code", &code)])).into()),
+                Some(c) if c.kind != cat_kind => {
+                    let key = if cat_kind == "INCOME" { "err.need_income_category" } else { "err.need_expense_category" };
+                    return Err(Problem::new(codes::KIND_MISMATCH, &field, tr(key, &[("code", &code)])).into());
                 }
                 Some(_) => {}
             }
@@ -400,23 +407,30 @@ impl TransactionService {
     }
 }
 
-fn not_found(id: Uuid) -> AppError {
-    AppError::NotFound(format!("Транзакции: запись {id} не найдена"))
+/// Строка словаря фичи на языке запроса.
+fn tr(key: &str, args: &[(&str, &dyn std::fmt::Display)]) -> String {
+    kernel::i18n::tr(Some(crate::i18n::dict), key, args)
 }
 
-/// Ошибка начального остатка — на поле формы счёта.
-fn opening_error(m: String) -> AppError {
-    AppError::Validation(m.replacen("amount:", "opening_balance:", 1))
+fn err(field: &str, key: &str, args: &[(&str, &dyn std::fmt::Display)]) -> Problem {
+    Problem::validation(field, tr(key, args))
+}
+
+fn not_found(id: Uuid) -> AppError {
+    AppError::NotFound(tr("err.not_found", &[("id", &id)]))
+}
+
+/// Ошибка начального остатка — на поле формы счёта (форма счёта разбирает `поле: текст`).
+fn opening_error(p: Problem) -> AppError {
+    let field = if p.field == "amount" { "opening_balance".to_string() } else { p.field };
+    AppError::Validation(Problem { field, ..p }.to_string())
 }
 
 /// Занятый уникальный ключ: вхождение плана уже оплачено или у счёта уже есть начальный остаток.
 fn conflict(e: AppError, item: &Transaction) -> AppError {
     match e {
-        AppError::Conflict(m) if m == taken::OPENING => AppError::Conflict(format!(
-            "у счёта {} уже есть начальный остаток — измените его в форме счёта",
-            item.opening_account().unwrap_or_default()
-        )),
-        AppError::Conflict(_) => AppError::Conflict("это вхождение плана уже оплачено другой транзакцией".into()),
+        AppError::Conflict(m) if m == taken::OPENING => AppError::Conflict(tr("err.opening_exists", &[("code", &item.opening_account().unwrap_or_default())])),
+        AppError::Conflict(_) => AppError::Conflict(tr("err.plan_paid", &[])),
         other => other,
     }
 }

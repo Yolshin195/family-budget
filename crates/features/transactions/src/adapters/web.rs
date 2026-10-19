@@ -10,16 +10,16 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 use axum_extra::extract::Form;
 use chrono::{Datelike, Months, NaiveDate};
-use kernel::error::AppError;
+use kernel::error::{AppError, Problem};
 use kernel::i18n::{Lang, month_name, weekdays};
 use kernel::pagination::Pagination;
-use kernel::web::{Choice, Flash, PageCtx, PageError, PageResult, money_in, parse_money, render, see_other, see_other_flash};
+use kernel::web::{Choice, Flash, FormError, PageCtx, PageError, PageResult, money_in, parse_money, render, see_other, see_other_flash};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::domain::Description;
-use crate::dto::{LineDto, ListQuery, TransactionDto, TransactionInput, TranslationInput};
+use crate::domain::{Description, Unit};
+use crate::dto::{ItemDto, ItemInput, ListQuery, TransactionDto, TransactionInput, TranslationInput};
 use crate::service::TransactionService;
 
 type Svc = State<Arc<TransactionService>>;
@@ -91,10 +91,12 @@ struct ListParams {
     untranslated: String,
 }
 
-struct LineView {
+/// Категория чека в ленте: сумма по категории и товары в порядке чека (docs/group-1.md, 3.3).
+struct GroupView {
     category: String,
     amount: String,
-    note: String,
+    /// «Круассан · 2 шт × 25 − 3 → 47», «Латте · 45».
+    items: Vec<String>,
 }
 
 struct TxView {
@@ -105,8 +107,9 @@ struct TxView {
     missing: bool,
     /// Счёт (у перевода — «откуда → куда») и автор.
     meta: String,
-    lines: Vec<LineView>,
-    /// Категория единственной позиции без уточнения.
+    /// Позиции по категориям — если операция не простая.
+    groups: Vec<GroupView>,
+    /// Категория простой операции (одна позиция без названия и цены).
     category: String,
     /// Главная сумма со знаком и её валюта.
     amount: String,
@@ -275,11 +278,8 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             "INCOME" => ("income", format!("{} · {author}", acc_title(&t.account_code)), String::new()),
             _ => ("expense", format!("{} · {author}", acc_title(&t.account_code)), String::new()),
         };
-        let lines: Vec<LineView> = t
-            .lines
-            .iter()
-            .map(|l| LineView { category: cat_title(&l.category_code), amount: money_in(lang, l.amount), note: l.note.clone().unwrap_or_default() })
-            .collect();
+        let simple = t.items.len() == 1 && t.items[0].is_simple();
+        let groups = if simple { Vec::new() } else { item_groups(lang, &t.items, &cat_title) };
         if t.refund {
             notes.push(page_t(&page, "refund"));
         }
@@ -291,7 +291,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
         }
         let desc = match t.title(lang) {
             "" if !desc_fallback.is_empty() => desc_fallback,
-            "" => lines.first().map(|l| l.category.clone()).unwrap_or_default(),
+            "" => t.items.first().map(|x| cat_title(&x.category_code)).unwrap_or_default(),
             s => s.to_string(),
         };
         // В выписке — как операция изменила этот счёт; иначе — сумма операции со знаком.
@@ -312,8 +312,8 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             desc,
             missing: t.missing_tr(lang),
             meta,
-            category: if t.lines.len() == 1 && t.lines[0].note.is_none() { lines[0].category.clone() } else { String::new() },
-            lines: if t.lines.len() > 1 || t.lines.first().is_some_and(|l| l.note.is_some()) { lines } else { Vec::new() },
+            category: if simple { cat_title(&t.items[0].category_code) } else { String::new() },
+            groups,
             amount: signed(lang, value),
             currency,
             positive: value > Decimal::ZERO && !t.is_transfer(),
@@ -360,6 +360,64 @@ fn page_t(page: &PageCtx, key: &str) -> String {
     kernel::i18n::t(page.lang, Some(crate::i18n::dict), key)
 }
 
+/// Число без лишних нулей и без разделителя тысяч: «2», «0,45» — количество и цена.
+fn num(lang: Lang, v: Decimal) -> String {
+    let s = v.normalize().to_string();
+    if lang == Lang::Ru { s.replace('.', ",") } else { s }
+}
+
+/// Сумма без «,00»: «47», «12 345», «5,03».
+fn money_short(lang: Lang, v: Decimal) -> String {
+    let s = money_in(lang, v);
+    s.strip_suffix(if lang == Lang::Ru { ",00" } else { ".00" }).map(str::to_string).unwrap_or(s)
+}
+
+/// Строка позиции в ленте: «Круассан · 2 шт × 25 − 3 → 47»; без цены — «Латте · 45».
+fn item_text(lang: Lang, x: &ItemDto) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(name) = &x.name {
+        parts.push(name.clone());
+    }
+    let unit = kernel::i18n::t(lang, Some(crate::i18n::dict), &format!("unit.{}", x.unit));
+    let plain = x.quantity == Decimal::ONE && x.unit == "pcs" && x.discount.is_zero();
+    let money = match x.price_per_unit {
+        // 1 шт по цене без скидки — цена и есть сумма.
+        Some(_) if plain => money_short(lang, x.amount),
+        Some(price) => {
+            let mut s = format!("{}\u{a0}{unit} × {}", num(lang, x.quantity), money_short(lang, price));
+            if !x.discount.is_zero() {
+                s.push_str(&format!(" − {}", money_short(lang, x.discount)));
+            }
+            format!("{s} → {}", money_short(lang, x.amount))
+        }
+        None if !x.discount.is_zero() => format!("{} − {} → {}", money_short(lang, x.amount + x.discount), money_short(lang, x.discount), money_short(lang, x.amount)),
+        None if x.quantity != Decimal::ONE || x.unit != "pcs" => format!("{}\u{a0}{unit} → {}", num(lang, x.quantity), money_short(lang, x.amount)),
+        None => money_short(lang, x.amount),
+    };
+    parts.push(money);
+    parts.join(" · ")
+}
+
+/// Позиции по категориям в порядке первого появления в чеке; внутри — в порядке чека.
+fn item_groups(lang: Lang, items: &[ItemDto], cat_title: &dyn Fn(&str) -> String) -> Vec<GroupView> {
+    let mut order: Vec<&str> = Vec::new();
+    for x in items {
+        if !order.contains(&x.category_code.as_str()) {
+            order.push(&x.category_code);
+        }
+    }
+    order
+        .into_iter()
+        .map(|code| {
+            let mine: Vec<&ItemDto> = items.iter().filter(|x| x.category_code == code).collect();
+            let total: Decimal = mine.iter().map(|x| x.amount).sum();
+            // Одна простая позиция в категории — достаточно строки категории.
+            let lines = if mine.len() == 1 && mine[0].is_simple() { Vec::new() } else { mine.iter().map(|x| item_text(lang, x)).collect() };
+            GroupView { category: cat_title(code), amount: money_in(lang, total), items: lines }
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------- форма
 
 #[derive(Debug, Default, Deserialize)]
@@ -382,9 +440,17 @@ struct TxForm {
     plan_id: String,
     plan_date: String,
     back: String,
-    line_category: Vec<String>,
-    line_amount: Vec<String>,
-    line_note: Vec<String>,
+    /// Скидка на чек (раздел 5.1): делится по позициям, не хранится — при правке поле пустое.
+    discount_total: String,
+    // Позиции — параллельные списки: каждая строка формы отправляет все поля, пустые тоже.
+    item_id: Vec<String>,
+    item_category: Vec<String>,
+    item_amount: Vec<String>,
+    item_name: Vec<String>,
+    item_qty: Vec<String>,
+    item_unit: Vec<String>,
+    item_price: Vec<String>,
+    item_discount: Vec<String>,
 }
 
 /// Предзаполнение формы (из календаря планов: «Оплатил»; со счёта: «Перевести»; из быстрого диалога).
@@ -400,16 +466,52 @@ struct Prefill {
     kind: String,
     desc: String,
     desc_lang: String,
-    /// Дата операции (из быстрого расхода: «Разбить на позиции»).
+    /// Дата операции (из быстрого ввода: «Подробная карточка»).
     date: String,
     back: String,
 }
 
-struct LineForm {
+/// Строка позиции в форме.
+#[derive(Debug, Default, Clone)]
+struct ItemForm {
+    /// Номер строки с 1 (`items[n]` в ошибках).
+    n: usize,
+    /// Пустая строка в запасе.
+    spare: bool,
+    /// Поля с ошибкой и тексты ошибок строки.
+    invalid: Vec<&'static str>,
+    errors: Vec<String>,
+    id: String,
     category: String,
     amount: String,
-    note: String,
+    name: String,
+    qty: String,
+    unit: String,
+    price: String,
+    discount: String,
 }
+
+impl ItemForm {
+    fn is_empty(&self) -> bool {
+        [&self.category, &self.amount, &self.name, &self.price].iter().all(|v| v.trim().is_empty())
+    }
+
+    /// «× цена» раскрыто: есть цена, количество не 1, единица не «шт» или скидка (раздел 3.2).
+    fn open(&self) -> bool {
+        let set = |v: &str, default: &str| !v.trim().is_empty() && v.trim() != default;
+        !self.price.trim().is_empty() || set(&self.qty, "1") || set(&self.unit, "pcs") || set(&self.discount, "0") || self.bad("quantity") || self.bad("unit")
+    }
+
+    fn bad(&self, field: &str) -> bool {
+        self.invalid.contains(&field)
+    }
+}
+
+/// Поля позиции, к которым бывает ошибка, в порядке строки формы.
+const ITEM_FIELDS: [&str; 7] = ["id", "category_code", "amount", "quantity", "unit", "price", "discount"];
+
+/// Пустых строк позиций в запасе — для ввода чека без JS (с JS они спрятаны до «Добавить позицию»).
+const SPARE_ITEMS: usize = 3;
 
 /// Проводка для блока «Проводки» в карточке транзакции.
 struct PostingView {
@@ -425,18 +527,48 @@ struct FormPage {
     page: PageCtx,
     id: Option<Uuid>,
     f: TxForm,
-    lines: Vec<LineForm>,
+    /// Заполненные позиции, затем пустые в запасе.
+    items: Vec<ItemForm>,
+    units: Vec<(&'static str, String)>,
     accounts: Vec<Choice>,
     categories: Vec<Choice>,
     /// Курс 1 единицы валюты к базовой на дату формы (для курса справочника рядом с курсом перевода).
     rates: HashMap<String, String>,
+    /// Знаков после запятой у валюты счёта — для суммы «количество × цена» в браузере.
+    minor: HashMap<String, u32>,
     postings: Vec<PostingView>,
     error: Option<String>,
 }
 
+/// Поля формы, у которых свой текст ошибки рядом с полем.
+const FIELDS: [&str; 11] = [
+    "occurred_on", "account_code", "tx_kind", "description", "to_account_code", "amount", "to_amount", "fee_category_code", "fee_amount", "discount_total", "items",
+];
+
 impl FormPage {
     fn rate_of(&self, currency: &str) -> String {
         self.rates.get(currency).cloned().unwrap_or_default()
+    }
+
+    fn minor_of(&self, account: &str) -> u32 {
+        self.minor.get(account).copied().unwrap_or(2)
+    }
+
+    /// Ошибка, не привязанная ни к одному полю формы, — общим блоком над формой.
+    fn general_error(&self) -> Option<String> {
+        let e = FormError::parse(self.error.as_deref()?);
+        let known = FIELDS.contains(&e.field.as_str()) || e.field.starts_with("items[");
+        if known { None } else { self.error.clone() }
+    }
+
+    /// Строка «Ещё» в свёрнутом виде: что внутри (раздел 3.2).
+    fn more_summary(&self) -> String {
+        self.page.t("discount_total").to_lowercase()
+    }
+
+    /// «Ещё» раскрыто: в нём есть введённое значение или ошибка.
+    fn more_open(&self) -> bool {
+        !self.f.discount_total.trim().is_empty() || kernel::web::field_error(&self.error, "discount_total").is_some()
     }
 }
 
@@ -449,20 +581,31 @@ fn back_or_list(back: &str) -> String {
     if back.starts_with('/') && !back.starts_with("//") { back.to_string() } else { "/transactions".to_string() }
 }
 
+/// Ошибка поля из словаря фичи на языке запроса.
+fn invalid(field: &str, key: &str) -> AppError {
+    Problem::validation(field, kernel::i18n::tr(Some(crate::i18n::dict), key, &[])).into()
+}
+
 impl TxForm {
-    fn lines(&self) -> Vec<LineForm> {
-        let n = self.line_category.len().max(self.line_amount.len());
-        let mut out: Vec<LineForm> = (0..n)
-            .map(|i| LineForm {
-                category: self.line_category.get(i).cloned().unwrap_or_default(),
-                amount: self.line_amount.get(i).cloned().unwrap_or_default(),
-                note: self.line_note.get(i).cloned().unwrap_or_default(),
+    /// Заполненные строки позиций в порядке формы: пустые строки (запас) пропускаются, и номер позиции в
+    /// ошибке — номер среди заполненных.
+    fn items(&self) -> Vec<ItemForm> {
+        let n = [self.item_category.len(), self.item_amount.len(), self.item_name.len(), self.item_price.len()].into_iter().max().unwrap_or(0);
+        let at = |v: &Vec<String>, i: usize| v.get(i).cloned().unwrap_or_default();
+        (0..n)
+            .map(|i| ItemForm {
+                id: at(&self.item_id, i),
+                category: at(&self.item_category, i),
+                amount: at(&self.item_amount, i),
+                name: at(&self.item_name, i),
+                qty: at(&self.item_qty, i),
+                unit: at(&self.item_unit, i),
+                price: at(&self.item_price, i),
+                discount: at(&self.item_discount, i),
+                ..Default::default()
             })
-            .collect();
-        if out.is_empty() {
-            out.push(LineForm { category: String::new(), amount: String::new(), note: String::new() });
-        }
-        out
+            .filter(|x| !x.is_empty())
+            .collect()
     }
 
     fn kind(&self) -> &str {
@@ -477,26 +620,33 @@ impl TxForm {
         let v = |m: String| AppError::Validation(m);
         let money = |field: &str, s: &str| opt(s).map(|s| parse_money(field, &s)).transpose().map_err(v);
         let transfer = self.kind() == "TRANSFER";
-        let mut lines = Vec::new();
+        let mut items = Vec::new();
         if !transfer {
-            for (i, l) in self.lines().into_iter().enumerate() {
-                // Полностью пустая строка формы просто пропускается.
-                if l.category.trim().is_empty() && l.amount.trim().is_empty() {
-                    continue;
-                }
-                lines.push(LineDto {
-                    category_code: l.category,
-                    amount: parse_money(&format!("lines[{}].amount", i + 1), &l.amount).map_err(v)?,
-                    note: opt(&l.note),
+            for (n, x) in self.items().into_iter().enumerate() {
+                let f = |name: &str| format!("items[{}].{name}", n + 1);
+                let price = money(&f("price"), &x.price)?;
+                items.push(ItemInput {
+                    id: opt(&x.id).map(|s| Uuid::parse_str(&s)).transpose().map_err(|_| invalid(&f("id"), "err.bad_id"))?,
+                    category_code: opt(&x.category),
+                    name: opt(&x.name),
+                    quantity: money(&f("quantity"), &x.qty)?,
+                    unit: opt(&x.unit),
+                    // С ценой сумму считает сервер (раздел 3.2): поле суммы в форме только для чтения.
+                    amount: if price.is_some() { None } else { money(&f("amount"), &x.amount)? },
+                    price_per_unit: price,
+                    discount: money(&f("discount"), &x.discount)?,
+                    note: None,
                 });
             }
         }
         Ok(TransactionInput {
-            occurred_on: self.occurred_on.parse().map_err(|_| v("occurred_on: неверная дата".into()))?,
+            occurred_on: self.occurred_on.parse().map_err(|_| invalid("occurred_on", "err.bad_date"))?,
             tx_kind: self.kind().to_string(),
             account_code: self.account_code.clone(),
             refund: !transfer && self.refund == "1",
-            lines,
+            items,
+            replace_items: true,
+            discount_total: if transfer { None } else { money("discount_total", &self.discount_total)? },
             to_account_code: if transfer { opt(&self.to_account_code) } else { None },
             amount: if transfer { money("amount", &self.amount)? } else { None },
             to_amount: if transfer { money("to_amount", &self.to_amount)? } else { None },
@@ -507,13 +657,15 @@ impl TxForm {
             description_ru: opt(&self.description_ru),
             description_en: opt(&self.description_en),
             description_th: opt(&self.description_th),
-            plan_id: opt(&self.plan_id).map(|s| Uuid::parse_str(&s)).transpose().map_err(|_| v("plan_id: неверный id".into()))?,
-            plan_date: opt(&self.plan_date).map(|s| s.parse()).transpose().map_err(|_| v("plan_date: неверная дата".into()))?,
+            plan_id: opt(&self.plan_id).map(|s| Uuid::parse_str(&s)).transpose().map_err(|_| invalid("plan_id", "err.bad_id"))?,
+            plan_date: opt(&self.plan_date).map(|s| s.parse()).transpose().map_err(|_| invalid("plan_date", "err.bad_date"))?,
+            ..Default::default()
         })
     }
 
     fn from_dto(t: &TransactionDto) -> Self {
         let num = |d: Option<Decimal>| d.map(|d| d.normalize().to_string()).unwrap_or_default();
+        let col = |f: &dyn Fn(&ItemDto) -> String| t.items.iter().map(f).collect::<Vec<String>>();
         Self {
             occurred_on: t.occurred_on.to_string(),
             tx_kind: t.tx_kind.clone(),
@@ -532,9 +684,15 @@ impl TxForm {
             plan_id: t.plan_id.map(|u| u.to_string()).unwrap_or_default(),
             plan_date: t.plan_date.map(|d| d.to_string()).unwrap_or_default(),
             back: String::new(),
-            line_category: t.lines.iter().map(|l| l.category_code.clone()).collect(),
-            line_amount: t.lines.iter().map(|l| l.amount.normalize().to_string()).collect(),
-            line_note: t.lines.iter().map(|l| l.note.clone().unwrap_or_default()).collect(),
+            discount_total: String::new(),
+            item_id: col(&|x| x.id.to_string()),
+            item_category: col(&|x| x.category_code.clone()),
+            item_amount: col(&|x| x.amount.normalize().to_string()),
+            item_name: col(&|x| x.name.clone().unwrap_or_default()),
+            item_qty: col(&|x| x.quantity.normalize().to_string()),
+            item_unit: col(&|x| x.unit.clone()),
+            item_price: col(&|x| num(x.price_per_unit)),
+            item_discount: col(&|x| x.discount.normalize().to_string()),
         }
     }
 }
@@ -569,8 +727,20 @@ async fn form_page(svc: &TransactionService, page: PageCtx, existing: Option<&Tr
                 .collect()
         }
     };
-    let lines = f.lines();
-    render(&FormPage { page: nested(page), id: existing.map(|t| t.id), f, lines, accounts, categories, rates, postings, error })
+    let mut items = f.items();
+    items.extend(std::iter::repeat_n(ItemForm { spare: true, ..Default::default() }, SPARE_ITEMS));
+    for (i, x) in items.iter_mut().enumerate() {
+        x.n = i + 1;
+        for name in ITEM_FIELDS {
+            if let Some(e) = kernel::web::field_error(&error, &format!("items[{}].{name}", x.n)) {
+                x.invalid.push(name);
+                x.errors.push(e);
+            }
+        }
+    }
+    let units = Unit::ALL.into_iter().map(|u| (u.as_str(), page_t(&page, &format!("unit.{}", u.as_str())))).collect();
+    let minor = svc.minor_units(p).await?.into_iter().collect();
+    render(&FormPage { page: nested(page), id: existing.map(|t| t.id), f, items, units, accounts, categories, rates, minor, postings, error })
 }
 
 async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Query<Prefill>) -> PageResult {
@@ -591,9 +761,8 @@ async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
         plan_id: q.plan_id,
         plan_date: q.plan_date,
         back: q.back,
-        line_category: vec![q.category],
-        line_amount: vec![if transfer { String::new() } else { q.amount }],
-        line_note: vec![String::new()],
+        item_category: vec![q.category],
+        item_amount: vec![if transfer { String::new() } else { q.amount }],
         ..Default::default()
     };
     form_page(&svc, page, None, f, None).await
@@ -604,7 +773,7 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): F
     let result = async { svc.create(s.project_id, s.user_id, f.to_input()?).await }.await;
     match result {
         Ok(_) => Ok(see_other_flash(&page.config, &back_or_list(&f.back), Flash::ok(page.t("toast.saved")))),
-        Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, None, f, Some(m)).await,
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_) | AppError::Conflict(_))) => form_page(&svc, page, None, f, Some(e.to_string())).await,
         Err(e) => Err(PageError(e)),
     }
 }
@@ -624,9 +793,9 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): 
     let result = async { svc.update(p, id, f.to_input()?).await }.await;
     match result {
         Ok(_) => Ok(see_other_flash(&page.config, &back_or_list(&f.back), Flash::ok(page.t("toast.saved")))),
-        Err(AppError::Validation(m) | AppError::Conflict(m)) => {
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_) | AppError::Conflict(_))) => {
             let t = svc.get(p, id).await?;
-            form_page(&svc, page, Some(&t), f, Some(m)).await
+            form_page(&svc, page, Some(&t), f, Some(e.to_string())).await
         }
         Err(e) => Err(PageError(e)),
     }
@@ -686,7 +855,10 @@ async fn reconcile_page(svc: &TransactionService, page: PageCtx, f: ReconcileFor
     let p = page.session.project_id;
     let lang = page.lang;
     let accounts = svc.account_choices(p, lang).await?;
-    let acc = accounts.iter().find(|a| a.code == f.account).ok_or_else(|| AppError::NotFound(format!("счёт {} не найден", f.account)))?;
+    let acc = accounts
+        .iter()
+        .find(|a| a.code == f.account)
+        .ok_or_else(|| AppError::NotFound(kernel::i18n::tr(Some(crate::i18n::dict), "err.account_not_found", &[("code", &f.account)])))?;
     let date = f.occurred_on.parse::<NaiveDate>().unwrap_or_else(|_| today());
     let book = svc.balance(p, &acc.code, date).await?;
     let categories = svc.category_choices(p, lang).await?;
@@ -715,7 +887,7 @@ async fn reconcile(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f)
     let s = page.session.scope();
     let lang = page.lang;
     let result = async {
-        let date: NaiveDate = f.occurred_on.parse().map_err(|_| AppError::Validation("occurred_on: неверная дата".into()))?;
+        let date: NaiveDate = f.occurred_on.parse().map_err(|_| invalid("occurred_on", "err.bad_date"))?;
         let actual = parse_money("actual", &f.actual).map_err(AppError::Validation)?;
         let text = crate::i18n::dict("reconcile_desc").map(|t| lang.pick(t).to_string());
         let description = Description { text, lang, ..Default::default() };
@@ -726,7 +898,7 @@ async fn reconcile(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f)
     match result {
         Ok(Some(_)) => see_other_flash(&page.config, &back, Flash::ok(page_t(&page, "reconcile_done"))),
         Ok(None) => see_other_flash(&page.config, &back, Flash::ok(page_t(&page, "reconcile_same"))),
-        Err(AppError::Validation(m)) => reconcile_page(&svc, page, f, Some(m)).await.into_response(),
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => reconcile_page(&svc, page, f, Some(e.to_string())).await.into_response(),
         Err(e) => PageError(e).into_response(),
     }
 }
@@ -769,9 +941,9 @@ async fn translate(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id
     let input = TranslationInput { description_ru: opt(&f.description_ru), description_en: opt(&f.description_en), description_th: opt(&f.description_th) };
     match svc.translate(page.session.project_id, id, input).await {
         Ok(_) => Ok(see_other_flash(&page.config, "/transactions", Flash::ok(page.t("toast.saved")))),
-        Err(AppError::Validation(m)) => {
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => {
             let t = svc.get(page.session.project_id, id).await?;
-            translate_page(page, t, Some(m))
+            translate_page(page, t, Some(e.to_string()))
         }
         Err(e) => Err(PageError(e)),
     }
@@ -781,6 +953,71 @@ async fn translate(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    fn form(rows: &[[&str; 8]]) -> TxForm {
+        let col = |i: usize| rows.iter().map(|r| r[i].to_string()).collect::<Vec<_>>();
+        TxForm {
+            occurred_on: "2026-10-18".into(),
+            tx_kind: "EXPENSE".into(),
+            account_code: "CARD".into(),
+            description_lang: "RU".into(),
+            item_id: col(0),
+            item_category: col(1),
+            item_amount: col(2),
+            item_name: col(3),
+            item_qty: col(4),
+            item_unit: col(5),
+            item_price: col(6),
+            item_discount: col(7),
+            ..Default::default()
+        }
+    }
+
+    /// Форма без JS: пустые строки в запасе пропускаются, с ценой сумму считает сервер, чек — целиком.
+    #[test]
+    fn form_items_to_input() {
+        let id = Uuid::new_v4().to_string();
+        let f = form(&[
+            [id.as_str(), "FOOD", "14", "Вода", "1", "pcs", "", "0"],
+            ["", "", "", "", "", "pcs", "", ""],
+            ["", "SNACKS", "50", "Круассан", "2", "pcs", "25", "3"],
+            ["", "", "", "", "1", "pcs", "", "0"],
+        ]);
+        let input = f.to_input().unwrap();
+        assert!(input.replace_items);
+        assert_eq!(input.items.len(), 2);
+        assert_eq!((input.items[0].id.map(|u| u.to_string()), input.items[0].amount), (Some(id), Some(Decimal::from(14))));
+        let x = &input.items[1];
+        assert_eq!((x.amount, x.price_per_unit, x.quantity, x.discount, x.name.as_deref()), (None, Some(Decimal::from(25)), Some(Decimal::from(2)), Some(Decimal::from(3)), Some("Круассан")));
+        let bad = form(&[["nope", "FOOD", "1", "", "", "pcs", "", ""]]).to_input().unwrap_err();
+        assert!(matches!(bad, AppError::Invalid(p) if p.field == "items[1].id"));
+        let bad = form(&[["", "FOOD", "abc", "", "", "pcs", "", ""]]).to_input().unwrap_err();
+        assert!(bad.to_string().starts_with("items[1].amount: "));
+    }
+
+    /// Строка позиции в ленте (раздел 3.3).
+    #[test]
+    fn item_line_in_feed() {
+        let d = |s: &str| Decimal::from_str(s).unwrap();
+        let item = |name: Option<&str>, qty: &str, unit: &str, price: Option<&str>, discount: &str, amount: &str| ItemDto {
+            id: Uuid::nil(),
+            category_code: "FOOD".into(),
+            name: name.map(Into::into),
+            quantity: d(qty),
+            unit: unit.into(),
+            price_per_unit: price.map(d),
+            discount: d(discount),
+            amount: d(amount),
+            note: None,
+        };
+        let ru = Lang::Ru;
+        assert_eq!(item_text(ru, &item(Some("Круассан"), "2", "pcs", Some("25"), "3", "47")), "Круассан · 2\u{a0}шт × 25 − 3 → 47");
+        assert_eq!(item_text(ru, &item(Some("Латте"), "1", "pcs", None, "0", "45")), "Латте · 45");
+        assert_eq!(item_text(ru, &item(Some("Бананы"), "0.45", "kg", Some("60"), "0", "27")), "Бананы · 0,45\u{a0}кг × 60 → 27");
+        assert_eq!(item_text(Lang::En, &item(None, "1", "pcs", None, "4.5", "40.5")), "45 − 4.50 → 40.50");
+        assert_eq!(item_text(Lang::Th, &item(Some("น้ำ"), "3", "l", None, "0", "30")), "น้ำ · 3\u{a0}ล. → 30");
+        assert_eq!(item_text(ru, &item(Some("Вода"), "1", "pcs", Some("14"), "0", "14")), "Вода · 14", "1 шт без скидки — только сумма");
+    }
 
     #[test]
     fn rate_is_shown_above_one() {
