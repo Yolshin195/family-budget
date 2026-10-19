@@ -12,7 +12,6 @@ use axum_extra::extract::Form;
 use chrono::{Datelike, Months, NaiveDate};
 use kernel::error::{AppError, Problem};
 use kernel::i18n::{Lang, month_name, weekdays};
-use kernel::pagination::Pagination;
 use kernel::web::{Choice, Flash, FormError, PageCtx, PageError, PageResult, money_in, parse_money, render, see_other, see_other_flash};
 use rust_decimal::Decimal;
 use serde::Deserialize;
@@ -155,28 +154,12 @@ struct ListPage {
     filtered: bool,
     /// Для «+ Перевод» из выписки.
     account_query: String,
+    /// Операций больше, чем показано (итоги — по всем).
+    truncated: bool,
 }
 
 fn month_start(s: &str) -> NaiveDate {
     NaiveDate::parse_from_str(&format!("{s}-01"), "%Y-%m-%d").unwrap_or_else(|_| today().with_day(1).unwrap_or(today()))
-}
-
-/// Итоги «Доходы / Расходы / Итог» по проводкам на категории, отдельно по каждой валюте.
-fn category_totals(items: &[TransactionDto]) -> Vec<(String, Decimal, Decimal)> {
-    let mut sums: Vec<(String, Decimal, Decimal)> = Vec::new();
-    for t in items {
-        for p in t.postings.iter().filter(|p| p.ref_kind == "CATEGORY") {
-            let i = match sums.iter().position(|x| x.0 == p.currency_code) {
-                Some(i) => i,
-                None => {
-                    sums.push((p.currency_code.clone(), Decimal::ZERO, Decimal::ZERO));
-                    sums.len() - 1
-                }
-            };
-            if t.is_income() { sums[i].1 -= p.amount } else { sums[i].2 += p.amount }
-        }
-    }
-    sums
 }
 
 async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params): Query<ListParams>) -> PageResult {
@@ -193,16 +176,9 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
         created_by: Uuid::parse_str(&params.member).ok(),
         untranslated: (params.untranslated == "1").then(|| lang.code().to_string()),
     };
-    // Месяц целиком: страницы API по 200 записей (предел 25 страниц — защита от бесконечного цикла).
-    let mut items = Vec::new();
-    for page_no in 0..25 {
-        let chunk = svc.list(p, query(), Pagination { page: page_no, size: kernel::pagination::MAX_PAGE }).await?;
-        let last = chunk.page.number + 1 >= chunk.page.total_pages;
-        items.extend(chunk.content);
-        if last {
-            break;
-        }
-    }
+    // Месяц целиком; итоги и выписка — по всем операциям фильтра, даже если лента обрезана (техдолг #25).
+    let feed = svc.feed(p, query()).await?;
+    let items = feed.items;
     let cats: HashMap<String, String> = svc.category_titles(p, lang).await?.into_iter().collect();
     let accs: HashMap<String, String> = svc.account_titles(p, lang).await?.into_iter().collect();
     let accounts = svc.account_choices(p, lang).await?;
@@ -214,7 +190,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
     let mut running: HashMap<Uuid, Decimal> = HashMap::new();
     let stats: Vec<Stat>;
     let mut statement = None;
-    if let Some(acc) = &account {
+    if let (Some(acc), Some(st)) = (&account, feed.statement) {
         let currency = items
             .iter()
             .flat_map(|t| t.postings.iter())
@@ -222,32 +198,21 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             .map(|x| x.currency_code.clone())
             .or_else(|| accounts.iter().find(|a| &a.code == acc).map(|a| a.tag.clone()))
             .unwrap_or_default();
-        let start = match from.pred_opt() {
-            Some(d) => svc.balance(p, acc, d).await?,
-            None => Decimal::ZERO,
-        };
-        let end = svc.balance(p, acc, to).await?;
-        let mut bal = start;
-        for t in items.iter().rev() {
-            bal += t.amount_on(acc);
-            running.insert(t.id, bal);
-        }
-        let inflow: Decimal = items.iter().map(|t| t.amount_on(acc)).filter(|v| *v > Decimal::ZERO).sum();
-        let outflow: Decimal = items.iter().map(|t| t.amount_on(acc)).filter(|v| *v < Decimal::ZERO).sum();
+        running.extend(st.running);
         let one = |label: &str, v: Decimal, income: bool| Stat {
             label: page_t(&page, label),
             values: vec![(money_in(lang, v), currency.clone(), v < Decimal::ZERO)],
             income,
         };
         stats = vec![
-            one("balance_start", start, false),
-            Stat { label: page_t(&page, "inflow"), values: vec![(signed(lang, inflow), currency.clone(), false)], income: true },
-            Stat { label: page_t(&page, "outflow"), values: vec![(signed(lang, outflow), currency.clone(), false)], income: false },
-            one("balance_end", end, false),
+            one("balance_start", st.start, false),
+            Stat { label: page_t(&page, "inflow"), values: vec![(signed(lang, st.inflow), currency.clone(), false)], income: true },
+            Stat { label: page_t(&page, "outflow"), values: vec![(signed(lang, st.outflow), currency.clone(), false)], income: false },
+            one("balance_end", st.end, false),
         ];
         statement = Some((acc_title(acc), currency));
     } else {
-        let mut sums = category_totals(&items);
+        let mut sums = feed.totals;
         if sums.is_empty() {
             sums.push((page.session.base_currency.clone(), Decimal::ZERO, Decimal::ZERO));
         }
@@ -339,6 +304,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
     let filtered = account.is_some() || !params.kind.is_empty() || !params.member.is_empty() || params.untranslated == "1";
     let kinds = ["EXPENSE", "INCOME", "TRANSFER", "OPENING"].into_iter().map(|k| (k, page_t(&page, &format!("kinds.{k}")))).collect();
     render(&ListPage {
+        truncated: feed.truncated,
         filtered,
         month_title: format!("{} {}", month_name(lang, from.month()), from.year()),
         month: fmt(from),

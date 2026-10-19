@@ -62,21 +62,43 @@ impl TransactionService {
     }
 
     pub async fn list(&self, project_id: Uuid, query: ListQuery, pagination: Pagination) -> AppResult<PagedResponse<TransactionDto>> {
-        let kind = match query.tx_kind.as_deref().filter(|v| !v.is_empty()) {
-            None => None,
-            Some(k) => Some(TxKind::parse(k).ok_or_else(|| err("tx_kind", "err.kind_invalid", &[("value", &k)]))?),
-        };
-        let filter = Filter {
-            from: query.from,
-            to: query.to,
-            account_code: query.account_code.filter(|v| !v.is_empty()),
-            kind,
-            created_by: query.created_by,
-            untranslated: query.untranslated.as_deref().and_then(Lang::parse),
-        };
+        let filter = filter_of(query)?;
         let items = self.repo.list(project_id, &filter, pagination.limit(), pagination.offset()).await?;
         let total = self.repo.count(project_id, &filter).await?;
         Ok(PagedResponse::new(items.into_iter().map(Into::into).collect(), &pagination, total))
+    }
+
+    /// Лента страницы за период (техдолги #25, #26): операции — не больше [`MAX_FEED`], и тогда `truncated`;
+    /// итоги и выписка считаются по всем операциям фильтра, а не по показанным.
+    pub async fn feed(&self, project_id: Uuid, query: ListQuery) -> AppResult<Feed> {
+        let filter = filter_of(query)?;
+        let mut items = self.repo.list(project_id, &filter, MAX_FEED as i64 + 1, 0).await?;
+        let truncated = items.len() > MAX_FEED;
+        items.truncate(MAX_FEED);
+        let totals = self.repo.category_totals(project_id, &filter).await?;
+        let statement = match &filter.account_code {
+            None => None,
+            Some(acc) => {
+                let start = match filter.from.and_then(|d| d.pred_opt()) {
+                    Some(d) => self.balance(project_id, acc, d).await?,
+                    None => Decimal::ZERO,
+                };
+                let end = match filter.to {
+                    Some(d) => self.balance(project_id, acc, d).await?,
+                    None => self.balances(project_id, NaiveDate::MAX).await?.into_iter().find(|b| &b.0 == acc).map(|b| b.1).unwrap_or_default(),
+                };
+                let (inflow, outflow) = self.repo.account_flows(project_id, &filter, acc).await?;
+                // От остатка на конец назад: верно и для показанной части обрезанной ленты.
+                let mut running = Vec::with_capacity(items.len());
+                let mut bal = end;
+                for t in &items {
+                    running.push((t.id, bal));
+                    bal -= t.amount_on(acc);
+                }
+                Some(Statement { start, end, inflow, outflow, running })
+            }
+        };
+        Ok(Feed { items: items.into_iter().map(Into::into).collect(), truncated, totals, statement })
     }
 
     pub async fn update(&self, project_id: Uuid, id: Uuid, input: TransactionInput) -> AppResult<TransactionDto> {
@@ -405,6 +427,46 @@ impl TransactionService {
         }
         Ok(())
     }
+}
+
+/// Операций в ленте страницы — не больше (защита от огромных периодов; сверх — признак `truncated`).
+pub const MAX_FEED: usize = 5000;
+
+/// Лента страницы.
+pub struct Feed {
+    /// Новые сначала, не больше [`MAX_FEED`].
+    pub items: Vec<TransactionDto>,
+    /// Операций в периоде больше, чем показано.
+    pub truncated: bool,
+    /// Итоги по категориям всех операций фильтра: (валюта, доходы, расходы).
+    pub totals: Vec<(String, Decimal, Decimal)>,
+    /// Выписка — если фильтр по счёту.
+    pub statement: Option<Statement>,
+}
+
+/// Выписка по счёту за период.
+pub struct Statement {
+    pub start: Decimal,
+    pub end: Decimal,
+    pub inflow: Decimal,
+    pub outflow: Decimal,
+    /// Остаток после каждой показанной операции.
+    pub running: Vec<(Uuid, Decimal)>,
+}
+
+fn filter_of(query: ListQuery) -> AppResult<Filter> {
+    let kind = match query.tx_kind.as_deref().filter(|v| !v.is_empty()) {
+        None => None,
+        Some(k) => Some(TxKind::parse(k).ok_or_else(|| err("tx_kind", "err.kind_invalid", &[("value", &k)]))?),
+    };
+    Ok(Filter {
+        from: query.from,
+        to: query.to,
+        account_code: query.account_code.filter(|v| !v.is_empty()),
+        kind,
+        created_by: query.created_by,
+        untranslated: query.untranslated.as_deref().and_then(Lang::parse),
+    })
 }
 
 /// Строка словаря фичи на языке запроса.

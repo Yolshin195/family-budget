@@ -33,7 +33,7 @@ sha2 = "0.10"
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "migrate", "chrono", "uuid", "rust_decimal"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["trace", "cors", "limit", "timeout", "compression-gzip", "compression-br"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "limit", "timeout", "compression-gzip", "compression-br", "catch-panic"] }
 utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid", "decimal"] }
 utoipa-swagger-ui = { version = "9", features = ["axum", "vendored"] }
 uuid = { version = "1", features = ["serde", "v4"] }

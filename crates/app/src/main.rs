@@ -24,6 +24,7 @@ use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::routing::get;
 use axum::{Router, middleware};
 use sqlx::postgres::PgPoolOptions;
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -199,6 +200,8 @@ async fn main() -> anyhow::Result<()> {
 
     let app = app
         .fallback(not_found)
+        // Паника в обработчике — ответ 500 со страницей ошибки, а не оборванное соединение (техдолг #20).
+        .layer(CatchPanicLayer::new())
         .layer(middleware::from_fn_with_state(config.clone(), error_pages))
         .layer(middleware::from_fn_with_state(config.clone(), security_headers))
         .layer(middleware::from_fn_with_state(config.clone(), attach_meta))

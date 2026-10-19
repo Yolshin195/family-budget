@@ -49,6 +49,7 @@
 {% if statement.is_some() && page.can_write() %}
 <p class="mb-4 -mt-2 text-sm"><a class="link" href="/transactions/reconcile?account={{ params.account }}">{{ page.t("reconcile") }}</a></p>
 {% endif %}
+{% if truncated %}<p class="alert alert-warn mb-4" role="status">{{ page.t("feed_truncated") }}</p>{% endif %}
 {% for g in days %}
   <h2 class="day-title">{{ g.label }}</h2>
   <ul class="card divide-y divide-line" role="list">

@@ -81,6 +81,31 @@ impl TransactionRepository for InMemoryTransactionRepository {
         Ok(self.rows.lock().unwrap().iter().filter(|r| matches(r, project_id, filter)).count() as i64)
     }
 
+    async fn category_totals(&self, project_id: Uuid, filter: &Filter) -> AppResult<Vec<(String, Decimal, Decimal)>> {
+        let rows = self.rows.lock().unwrap();
+        let mut sums: Vec<(String, Decimal, Decimal)> = Vec::new();
+        for r in rows.iter().filter(|r| matches(r, project_id, filter)) {
+            for p in r.postings.iter().filter(|p| p.ref_kind == RefKind::Category) {
+                let i = match sums.iter().position(|x| x.0 == p.currency) {
+                    Some(i) => i,
+                    None => {
+                        sums.push((p.currency.clone(), Decimal::ZERO, Decimal::ZERO));
+                        sums.len() - 1
+                    }
+                };
+                if r.tx_kind == TxKind::Income { sums[i].1 -= p.amount } else { sums[i].2 += p.amount }
+            }
+        }
+        sums.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(sums)
+    }
+
+    async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)> {
+        let rows = self.rows.lock().unwrap();
+        let amounts = rows.iter().filter(|r| matches(r, project_id, filter)).map(|r| r.amount_on(account));
+        Ok(amounts.fold((Decimal::ZERO, Decimal::ZERO), |(i, o), v| if v > Decimal::ZERO { (i + v, o) } else { (i, o + v) }))
+    }
+
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool> {
         let mut rows = self.rows.lock().unwrap();
         let before = rows.len();

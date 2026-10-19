@@ -325,6 +325,28 @@ impl TransactionRepository for PostgresTransactionRepository {
         Ok(n)
     }
 
+    async fn category_totals(&self, project_id: Uuid, filter: &Filter) -> AppResult<Vec<(String, Decimal, Decimal)>> {
+        // Доход — проводка на категорию со знаком «−», расход — «+»; возврат — обратный знак, он и уменьшает итог.
+        let sql = format!(
+            "SELECT p.currency_code, \
+                    COALESCE(SUM(CASE WHEN t.tx_kind = 'INCOME' THEN -p.amount END), 0), \
+                    COALESCE(SUM(CASE WHEN t.tx_kind <> 'INCOME' THEN p.amount END), 0) \
+             FROM fb_postings p JOIN fb_transactions t ON t.id = p.transaction_id \
+             WHERE p.ref_kind = 'CATEGORY' AND p.transaction_id IN (SELECT id FROM fb_transactions WHERE {FILTER}) \
+             GROUP BY p.currency_code ORDER BY p.currency_code"
+        );
+        Ok(bind_filter(sqlx::query_as(&sql), project_id, filter).fetch_all(&self.pool).await?)
+    }
+
+    async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)> {
+        let sql = format!(
+            "SELECT COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0), COALESCE(SUM(amount) FILTER (WHERE amount < 0), 0) \
+             FROM fb_postings WHERE ref_kind = 'ACCOUNT' AND ref_code = $8 \
+             AND transaction_id IN (SELECT id FROM fb_transactions WHERE {FILTER})"
+        );
+        Ok(bind_filter(sqlx::query_as(&sql), project_id, filter).bind(account).fetch_one(&self.pool).await?)
+    }
+
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool> {
         let res = sqlx::query("DELETE FROM fb_transactions WHERE project_id = $1 AND id = $2").bind(project_id).bind(id).execute(&self.pool).await?;
         Ok(res.rows_affected() > 0)

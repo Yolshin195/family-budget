@@ -777,3 +777,29 @@ fn no_russian_literals_in_code() {
         }
     }
 }
+
+on_each_repo! {
+    /// Техдолги #25, #26: итоги ленты и выписка считает сервис по всем операциям фильтра; нарастающий остаток —
+    /// от остатка на конец, поэтому верен и для обрезанной ленты.
+    async fn feed_totals_and_statement(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        svc.set_opening(p, u, "card", d("1000"), day(1)).await.unwrap();
+        svc.create(p, u, receipt(&[("food", "300"), ("cafe", "50")])).await.unwrap();
+        svc.create(p, u, TransactionInput { refund: true, ..receipt(&[("food", "100")]) }).await.unwrap();
+        svc.create(p, u, TransactionInput { lines: vec![LineDto { category_code: "salary".into(), amount: d("5000"), note: None }], ..input("INCOME", "card") }).await.unwrap();
+        svc.create(p, u, transfer("card", "cash", "500", None, Some(("fees", "10")))).await.unwrap();
+        let month = || ListQuery { from: Some(day(2)), to: Some(day(31)), ..Default::default() };
+        let feed = svc.feed(p, month()).await.unwrap();
+        assert!(!feed.truncated);
+        assert_eq!(feed.items.len(), 4);
+        // Расходы: 300 + 50 − 100 (возврат) + 10 (комиссия) = 260; доходы 5000.
+        assert_eq!(feed.totals, vec![("THB".into(), d("5000"), d("260"))]);
+        let st = svc.feed(p, ListQuery { account_code: Some("CARD".into()), ..month() }).await.unwrap().statement.unwrap();
+        assert_eq!((st.start, st.end, st.inflow, st.outflow), (d("1000"), d("5250"), d("5100"), d("-850")));
+        let feed = svc.feed(p, ListQuery { account_code: Some("CARD".into()), ..month() }).await.unwrap();
+        let newest = feed.items[0].id;
+        assert_eq!(st.running.first().map(|r| r.1), Some(d("5250")), "после самой новой операции — остаток на конец");
+        assert_eq!(st.running.first().map(|r| r.0), Some(newest));
+        assert_eq!(st.running.last().map(|r| r.1), Some(d("650")), "после самой старой: 1000 − 350");
+    }
+}

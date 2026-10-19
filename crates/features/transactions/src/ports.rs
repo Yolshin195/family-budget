@@ -81,6 +81,10 @@ pub trait TransactionRepository: Send + Sync {
     /// Новые сначала.
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>>;
     async fn count(&self, project_id: Uuid, filter: &Filter) -> AppResult<i64>;
+    /// Итоги по проводкам на категории всех операций фильтра: (валюта, доходы, расходы); возврат уменьшает итог.
+    async fn category_totals(&self, project_id: Uuid, filter: &Filter) -> AppResult<Vec<(String, Decimal, Decimal)>>;
+    /// Поступления и списания по счёту `account` у операций фильтра: (сумма «+», сумма «−»).
+    async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)>;
     /// `true`, если запись была удалена.
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool>;
     /// Проводки на категории за период (для бюджета).
