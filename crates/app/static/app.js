@@ -799,5 +799,7 @@
   });
 
   // Префетч данных формы, пока пользователь думает: открытие диалога — мгновенное.
-  if (dlg && canWrite && 'requestIdleCallback' in window) window.requestIdleCallback(function () { if (!Q.loading) load().then(function () { qState('ready'); }); });
+  // В Safari нет requestIdleCallback — там просто чуть позже загрузки страницы.
+  var idle = window.requestIdleCallback || function (f) { setTimeout(f, 500); };
+  if (dlg && canWrite) idle(function () { if (!Q.loading) load().then(function () { qState('ready'); }); });
 })();
