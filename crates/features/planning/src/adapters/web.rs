@@ -461,6 +461,11 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): 
     let p = page.session.project_id;
     let result = async { svc.update(p, id, f.to_input()?).await }.await;
     match result {
+        // Сменили правило дат при прошедших вхождениях: план продолжен новым (этап 0, Ц4).
+        Ok(next) if next.id != id => {
+            let from = page.date(&next.effective_from.unwrap_or(next.start_on));
+            Ok(see_other_flash(&page.config, "/planning/plans", Flash::ok(tr(&page, "series_toast").replace("{date}", &from))))
+        }
         Ok(_) => Ok(see_other_flash(&page.config, "/planning/plans", Flash::ok(page.t("toast.saved")))),
         Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, Some(id), f, Some(m)).await,
         Err(e) => Err(PageError(e)),

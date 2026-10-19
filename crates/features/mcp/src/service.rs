@@ -1274,11 +1274,15 @@ impl McpService {
         }
         let plan = self.deps.plans.update(caller.project_id, id, &d).await?;
         self.audit_write(caller, "update_plan", &[("plan", plan.id.to_string())]).await;
-        let state = match (old.draft.active, plan.draft.active) {
-            (true, false) => " It is paused now: no more expected payments.",
-            (false, true) => " It is active again.",
-            _ => "",
+        let mut state = match (old.draft.active, plan.draft.active) {
+            (true, false) => " It is paused now: no more expected payments.".to_string(),
+            (false, true) => " It is active again.".to_string(),
+            _ => String::new(),
         };
+        if plan.id != id {
+            // Сменили правило дат при прошедших вхождениях: прежний план закрыт и хранит историю.
+            state.push_str(&format!(" The date rule changed after past occurrences: plan {id} keeps their history and is closed; the new rule continues as plan {}.", plan.id));
+        }
         Ok(ToolOutput { summary: format!("Updated plan '{}' (id {}).{state}", plan.draft.name.show(caller.lang), plan.id), data: json!({"plan": plan_json(&plan, caller.lang)}) })
     }
 }

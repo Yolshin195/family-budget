@@ -38,6 +38,11 @@ pub fn dict(key: &str) -> Option<Tr> {
                        "“ชำระแล้ว” จะเปิดแบบฟอร์มที่กรอกจากแผนไว้แล้ว — แก้ไขจำนวนเงินและบัญชีได้"),
         "manage" => ("Плановые операции", "Planned items", "รายการตามแผน"),
         "skipped_toast" => ("Вхождение пропущено", "Occurrence skipped", "ข้ามรายการแล้ว"),
+        "series_toast" => (
+            "Новое правило действует с {date}, прошлые платежи остались в истории плана",
+            "The new rule applies from {date}; past payments stay in the plan's history",
+            "กฎใหม่มีผลตั้งแต่ {date} การชำระที่ผ่านมายังอยู่ในประวัติของแผน",
+        ),
         "unskipped_toast" => ("Пропуск снят — снова ожидается", "Skip removed — expected again", "ยกเลิกการข้าม — รอชำระอีกครั้ง"),
         "stop" => ("Остановить", "Stop", "หยุด"),
         "resume" => ("Возобновить", "Resume", "เริ่มใหม่"),
