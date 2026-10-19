@@ -309,6 +309,7 @@ impl ProjectService {
             last_used_at: None,
             revoked_at: None,
             created_at: now,
+            mfa: session_mfa,
         };
         self.access.insert_token(&token).await?;
         self.audit(audit_event(Some(user_id), Some(project_id), action::TOKEN_CREATED, meta, &[("name", token.name.clone()), ("scopes", token.scopes.join(" "))])).await;
@@ -820,8 +821,9 @@ impl Authenticator for ProjectService {
                 if t.last_used_at.is_none_or(|at| now - at >= Duration::minutes(1)) {
                     self.access.touch_token(t.id, now).await?;
                 }
-                // Токен на проект с 2FA выпускается только из сессии со вторым фактором.
-                Ok(Some(Identity { user_id: t.user_id, mfa: true, via: Via::Token { token_id: t.id, project_id: t.project_id, scopes: t.scopes } }))
+                // Второй фактор — тот, что был у сессии при выпуске: если проект позже потребовал 2FA,
+                // токен без него перестаёт открывать данные (как и такая сессия).
+                Ok(Some(Identity { user_id: t.user_id, mfa: t.mfa, via: Via::Token { token_id: t.id, project_id: t.project_id, scopes: t.scopes } }))
             }
         }
     }

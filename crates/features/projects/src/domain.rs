@@ -322,6 +322,8 @@ pub struct ApiToken {
     pub last_used_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// Выпущен из сессии со вторым фактором: в проекте с обязательной 2FA токен без него не действует.
+    pub mfa: bool,
 }
 
 impl ApiToken {

@@ -213,6 +213,19 @@ async fn api_tokens_are_shown_once_scoped_and_revocable() {
     assert!(actions.contains(&"api_token_created".to_string()) && actions.contains(&"api_token_revoked".to_string()));
 }
 
+/// Б1: токен помнит, был ли второй фактор у сессии, из которой его выпустили. Включили
+/// «Требовать 2FA» — токен без него закрывается так же, как такая сессия.
+#[tokio::test]
+async fn token_keeps_mfa_of_its_session() {
+    let e = env();
+    let (me, _, personal) = signed_up(&e, "sub-me").await;
+    let (plain, _) = e.svc.create_token(me, personal, "bot", &["read".into()], 30, false, &meta()).await.unwrap();
+    let (strong, _) = e.svc.create_token(me, personal, "bot", &["read".into()], 30, true, &meta()).await.unwrap();
+    e.svc.set_require_2fa(me, personal, true, &meta()).await.unwrap();
+    assert!(!e.svc.authenticate(&Credential::ApiToken(plain)).await.unwrap().unwrap().mfa, "выпущен без 2FA");
+    assert!(e.svc.authenticate(&Credential::ApiToken(strong)).await.unwrap().unwrap().mfa);
+}
+
 #[tokio::test]
 async fn require_2fa_is_reported_and_blocks_tokens_without_mfa() {
     let e = env();

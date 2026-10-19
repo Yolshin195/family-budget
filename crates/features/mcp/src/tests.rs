@@ -347,7 +347,7 @@ impl Accounts for Arc<FakeAccounts> {
     }
 }
 
-/// Личные токены: `fbt_<user>_<project>_<scope,...>`.
+/// Личные токены: `fbt_<user>_<project>_<scope,...>`; с хвостом `_nomfa` — выпущен из сессии без 2FA.
 struct FakeAuthenticator;
 
 #[async_trait]
@@ -355,10 +355,14 @@ impl Authenticator for FakeAuthenticator {
     async fn authenticate(&self, credential: &Credential) -> AppResult<Option<Identity>> {
         let Credential::ApiToken(raw) = credential else { return Ok(None) };
         let parts: Vec<&str> = raw.trim_start_matches("fbt_").split('_').collect();
-        let [user, project, scopes] = parts[..] else { return Ok(None) };
+        let (user, project, scopes, mfa) = match parts[..] {
+            [user, project, scopes] => (user, project, scopes, true),
+            [user, project, scopes, "nomfa"] => (user, project, scopes, false),
+            _ => return Ok(None),
+        };
         Ok(Some(Identity {
             user_id: Uuid::parse_str(user).unwrap(),
-            mfa: true,
+            mfa,
             via: AuthVia::Token { token_id: Uuid::new_v4(), project_id: Uuid::parse_str(project).unwrap(), scopes: scopes.split(',').map(String::from).collect() },
         }))
     }
@@ -459,6 +463,18 @@ fn expense(amount: &str, category: &str) -> AddFlowArgs {
 }
 
 // ---------------------------------------------------------------- вход
+
+/// Б1: токен, выпущенный до «Требовать 2FA» из сессии без второго фактора, больше не открывает проект.
+#[tokio::test]
+async fn token_without_mfa_stops_working_when_project_requires_2fa() {
+    let e = env();
+    let without = format!("fbt_{}_{}_read_nomfa", e.user, e.project);
+    let with = format!("fbt_{}_{}_read", e.user, e.project);
+    assert!(matches!(e.svc.authenticate(Some(&without), RequestMeta::default()).await.unwrap(), Auth::Ok(_)), "2FA не требуется — работает");
+    e.set_role(Role::Owner, true);
+    assert!(matches!(e.svc.authenticate(Some(&without), RequestMeta::default()).await.unwrap(), Auth::Invalid));
+    assert!(matches!(e.svc.authenticate(Some(&with), RequestMeta::default()).await.unwrap(), Auth::Ok(_)), "токен из сессии с 2FA");
+}
 
 #[tokio::test]
 async fn missing_and_foreign_tokens_are_rejected() {

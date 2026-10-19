@@ -331,11 +331,11 @@ fn session(r: SessionRow) -> SessionRecord {
     SessionRecord { id_hash: r.0, user_id: r.1, created_at: r.2, last_seen_at: r.3, expires_at: r.4, mfa: r.5, ip: r.6, user_agent: r.7, revoked_at: r.8 }
 }
 
-type TokenRow = (Uuid, Uuid, Uuid, String, String, Vec<String>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, DateTime<Utc>);
-const TOKEN_COLS: &str = "id, user_id, project_id, name, token_hash, scopes, expires_at, last_used_at, revoked_at, created_at";
+type TokenRow = (Uuid, Uuid, Uuid, String, String, Vec<String>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, Option<DateTime<Utc>>, DateTime<Utc>, bool);
+const TOKEN_COLS: &str = "id, user_id, project_id, name, token_hash, scopes, expires_at, last_used_at, revoked_at, created_at, mfa";
 
 fn token(r: TokenRow) -> ApiToken {
-    ApiToken { id: r.0, user_id: r.1, project_id: r.2, name: r.3, token_hash: r.4, scopes: r.5, expires_at: r.6, last_used_at: r.7, revoked_at: r.8, created_at: r.9 }
+    ApiToken { id: r.0, user_id: r.1, project_id: r.2, name: r.3, token_hash: r.4, scopes: r.5, expires_at: r.6, last_used_at: r.7, revoked_at: r.8, created_at: r.9, mfa: r.10 }
 }
 
 fn details_json(d: &[(String, String)]) -> String {
@@ -416,7 +416,7 @@ impl AccessRepository for PostgresProjectRepository {
     }
 
     async fn insert_token(&self, t: &ApiToken) -> AppResult<()> {
-        sqlx::query(&format!("INSERT INTO fb_api_tokens ({TOKEN_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"))
+        sqlx::query(&format!("INSERT INTO fb_api_tokens ({TOKEN_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"))
             .bind(t.id)
             .bind(t.user_id)
             .bind(t.project_id)
@@ -427,6 +427,7 @@ impl AccessRepository for PostgresProjectRepository {
             .bind(t.last_used_at)
             .bind(t.revoked_at)
             .bind(t.created_at)
+            .bind(t.mfa)
             .execute(&self.pool)
             .await?;
         Ok(())

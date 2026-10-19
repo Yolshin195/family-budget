@@ -188,6 +188,10 @@ impl McpService {
         let Some(info) = self.deps.memberships.session(identity.user_id, Some(project_id)).await?.filter(|i| i.project_id == project_id) else {
             return Ok(None);
         };
+        // Проект требует 2FA, а токен выпущен из сессии без второго фактора — как и сессия, не действует.
+        if info.require_2fa && !identity.mfa {
+            return Ok(None);
+        }
         Ok(Some(Caller {
             user_id: identity.user_id,
             project_id,
