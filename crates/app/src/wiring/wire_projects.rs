@@ -164,6 +164,7 @@ purge_one!("transactions", ::transactions::Service);
 purge_one!("planning", ::planning::Service);
 purge_one!("limits", ::limits::Service);
 purge_one!("rates", ::rates::Service);
+purge_one!("places", ::places::Service);
 purge_one!("accounts", ::accounts::Service);
 purge_one!("categories", ::categories::Service);
 purge_one!("currencies", ::currencies::Service);
