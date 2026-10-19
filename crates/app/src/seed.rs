@@ -200,6 +200,7 @@ async fn tx(s: &Services, p: Uuid, t: Tx<'_>) -> AppResult<()> {
 
 /// Чек с ценами (группа 1, шаг 2): позиции (категория, название, количество, единица, цена, скидка).
 /// Названия позиций — данные пользователя, без переводов.
+#[allow(clippy::too_many_arguments)]
 async fn receipt(s: &Services, p: Uuid, date: NaiveDate, place: &str, desc: (&str, Lang), tr: (Option<&str>, Option<&str>, Option<&str>), items: &[(&str, &str, &str, &str, &str, &str)], by: Uuid) -> AppResult<()> {
     if date > chrono::Local::now().date_naive() {
         return Ok(());
