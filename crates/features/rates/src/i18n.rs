@@ -17,7 +17,11 @@ pub fn dict(key: &str) -> Option<Tr> {
         "warn_check" => ("Может, перепутано направление?", "Is the direction mixed up?", "อาจสลับทิศทางผิดหรือไม่?"),
         "base_is" => ("Базовая валюта проекта —", "The project's base currency is", "สกุลเงินหลักของโปรเจกต์คือ"),
         "empty_title" => ("Курсов пока нет", "No rates yet", "ยังไม่มีอัตราแลกเปลี่ยน"),
-        "empty_text" => ("Добавьте курс для каждой валюты счетов, кроме базовой. Без курса суммы считаются 1:1.", "Add a rate for each account currency except the base one. Without a rate, amounts count 1:1.", "เพิ่มอัตราสำหรับทุกสกุลเงินของบัญชี ยกเว้นสกุลหลัก หากไม่มีอัตราจะคิด 1:1"),
+        "empty_text" => (
+            "Добавьте курс для каждой валюты счетов, кроме базовой. Без курса суммы не входят в итоги бюджета.",
+            "Add a rate for each account currency except the base one. Without a rate, amounts are left out of the budget totals.",
+            "เพิ่มอัตราสำหรับทุกสกุลเงินของบัญชี ยกเว้นสกุลหลัก หากไม่มีอัตรา ยอดจะไม่รวมในยอดรวมของงบ",
+        ),
         _ => return None,
     })
 }

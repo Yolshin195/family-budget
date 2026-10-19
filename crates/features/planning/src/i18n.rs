@@ -61,7 +61,11 @@ pub fn dict(key: &str) -> Option<Tr> {
         "transfer_plan_hint" => ("Например, в копилку каждый месяц. Перевод не меняет доходы и расходы бюджета.",
                                  "E.g. to savings every month. A transfer doesn't change the budget's income or expenses.",
                                  "เช่น โอนเข้าบัญชีออมทุกเดือน การโอนไม่เปลี่ยนรายรับรายจ่ายของงบประมาณ"),
-        "missing_rates" => ("Нет курса к базовой валюте — суммы посчитаны 1:1:", "No rate to base currency — counted 1:1:", "ไม่มีอัตราแลกเปลี่ยน — คิด 1:1:"),
+        "missing_rates" => (
+            "Нет курса к базовой валюте — эти суммы не вошли в итоги месяца:",
+            "No rate to the base currency — these amounts are left out of the month's totals:",
+            "ไม่มีอัตราแลกเปลี่ยนเป็นสกุลหลัก — ยอดเหล่านี้ไม่รวมในยอดรวมของเดือน:",
+        ),
         "nav_rates" => ("Курсы валют", "Exchange rates", "อัตราแลกเปลี่ยน"),
         _ => return None,
     })

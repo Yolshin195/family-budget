@@ -22,7 +22,7 @@ Categories answer the questions "where did the money go?" and "where did it come
 
 Click "Add", or "+ subcategory" next to the right branch — then the parent is filled in for you. In the form:
 - "Code" — Latin letters without spaces, such as FOOD_CAFE; Claude and the API find the category by it, and it can't be changed after saving;
-- "Type" — expense or income;
+- "Type" — expense or income; once a category has transactions, plans or limits, its type can't be changed — otherwise past amounts would move to the other budget tree;
 - "Name" and "Original language", with translations in "Translations";
 - "Parent" — the place in the tree; "— top level —" is the top;
 - "Order" — the smaller the number, the higher the category among its siblings.
