@@ -613,10 +613,10 @@ pub async fn limit_by_ip(State(auth): State<AuthState>, req: Request, next: Next
     let path = req.uri().path();
     let exempt = IP_LIMIT_EXEMPT.iter().any(|p| path.starts_with(p));
     let ip = req.extensions().get::<RequestMeta>().and_then(|m| m.ip.clone());
-    if let (false, Some(ip)) = (exempt, ip) {
-        if !auth.limiter.allow(&format!("ip:{ip}"), auth.config.public_rate_limit) {
-            return AppError::TooManyRequests("слишком много запросов, повторите через минуту".into()).into_response();
-        }
+    if let (false, Some(ip)) = (exempt, ip)
+        && !auth.limiter.allow(&format!("ip:{ip}"), auth.config.public_rate_limit)
+    {
+        return AppError::TooManyRequests("слишком много запросов, повторите через минуту".into()).into_response();
     }
     next.run(req).await
 }
