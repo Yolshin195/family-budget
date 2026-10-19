@@ -265,7 +265,7 @@ impl BudgetServer {
     }
 
     #[tool(
-        description = "Set a spending limit for a category (covers its subcategories): amount in the base currency per week, month or year, valid from a date (default: the start of the current period). A rule of the same category from the same date is replaced.",
+        description = "Set a spending limit for a category (covers its subcategories): amount in the base currency per week, month or year, valid from a date (default: the start of the current period); a rule applies to the whole period containing that date. Amount 0 is a real zero limit (no spending allowed). To stop limiting, pass remove: true — no limit from that date on, earlier periods keep theirs. A rule of the same category from the same date is replaced.",
         annotations(title = "Set limit", read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = false)
     )]
     async fn set_limit(&self, Parameters(a): Parameters<SetLimitArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {

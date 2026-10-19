@@ -761,7 +761,7 @@ async fn viewer_cannot_write_directories() {
             assert!(!e.svc.visible(&c, t), "{t} не виден VIEWER");
         }
         assert!(e.svc.add_currency(&c, AddCurrencyArgs { code: "GBP".into(), name: "Фунт".into(), symbol: "£".into(), ..Default::default() }).await.is_err());
-        assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: "100".into(), ..Default::default() }).await.is_err());
+        assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("100".into()), ..Default::default() }).await.is_err());
         assert!(e.svc.list_limits(&c).await.is_ok(), "просмотр остаётся");
     }
     assert_eq!(e.dirs.currencies.lock().unwrap().len(), 3);
@@ -779,7 +779,7 @@ async fn personal_write_token_can_do_everything() {
     e.svc.add_account(&c, AddAccountArgs { opening_balance: Some("500".into()), ..add_account("KBANK", "THB") }).await.unwrap();
     e.svc.add_category(&c, AddCategoryArgs { code: "PETS".into(), name: "Питомцы".into(), kind: Some("expense".into()), ..Default::default() }).await.unwrap();
     e.svc.set_rate(&c, SetRateArgs { currency: "GBP".into(), rate: Some("45".into()), ..Default::default() }).await.unwrap();
-    e.svc.set_limit(&c, SetLimitArgs { category: "PETS".into(), amount: "3000".into(), ..Default::default() }).await.unwrap();
+    e.svc.set_limit(&c, SetLimitArgs { category: "PETS".into(), amount: Some("3000".into()), ..Default::default() }).await.unwrap();
     let plan = AddPlanArgs { name: "Корм".into(), kind: "expense".into(), account: "KBANK".into(), category: Some("PETS".into()), amount: "900".into(), recurrence: "monthly".into(), ..Default::default() };
     e.svc.add_plan(&c, plan).await.unwrap();
     assert_eq!(e.dirs.currencies.lock().unwrap().last().unwrap().code, "GBP", "код — в верхнем регистре");
@@ -857,7 +857,7 @@ async fn references_by_name_in_ru_en_th() {
     // Валюта — по-английски, лимит — по-русски.
     e.svc.set_rate(&c, SetRateArgs { currency: "us dollar".into(), rate: Some("36.5".into()), ..Default::default() }).await.unwrap();
     assert_eq!(e.rates.rates.lock().unwrap()[0].currency, "USD");
-    e.svc.set_limit(&c, SetLimitArgs { category: "кафе".into(), amount: "3000".into(), ..Default::default() }).await.unwrap();
+    e.svc.set_limit(&c, SetLimitArgs { category: "кафе".into(), amount: Some("3000".into()), ..Default::default() }).await.unwrap();
     assert_eq!(e.limits.limits.lock().unwrap()[0].category_code, "CAFE");
     // Доходную категорию в расходный план не подставить.
     let bad = AddPlanArgs { name: "x".into(), kind: "expense".into(), account: "CARD".into(), category: Some("Salary".into()), amount: "1".into(), recurrence: "once".into(), ..Default::default() };
@@ -935,24 +935,46 @@ async fn limit_is_upserted_by_category_period_and_valid_from() {
     let e = env();
     e.grant(&["read", "limits:write"]).await;
     let c = e.caller(&e.oauth()).await;
-    let out = e.svc.set_limit(&c, SetLimitArgs { category: "Food".into(), amount: "12000".into(), ..Default::default() }).await.unwrap();
+    let out = e.svc.set_limit(&c, SetLimitArgs { category: "Food".into(), amount: Some("12000".into()), ..Default::default() }).await.unwrap();
     let month_start = period_start("MONTH", today());
     assert_eq!(e.limits.limits.lock().unwrap()[0].valid_from, month_start, "по умолчанию — с начала текущего месяца");
     assert!(out.summary.contains("12000 THB per month"), "{}", out.summary);
-    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: "15000".into(), period: Some("month".into()), valid_from: Some(month_start.to_string()) }).await.unwrap();
+    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("15000".into()), period: Some("month".into()), valid_from: Some(month_start.to_string()), remove: None }).await.unwrap();
     assert!(out.summary.contains("Replaced 12000"), "{}", out.summary);
     assert_eq!(e.limits.limits.lock().unwrap().len(), 1);
-    assert_eq!(e.limits.limits.lock().unwrap()[0].amount, d("15000"));
+    assert_eq!(e.limits.limits.lock().unwrap()[0].amount, Some(d("15000")));
     // Недельный лимит с явной даты — новое правило; более позднее правило упомянуто в итоге.
-    e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: "3000".into(), period: Some("week".into()), valid_from: Some("2099-01-05".into()) }).await.unwrap();
-    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: "16000".into(), period: None, valid_from: Some(month_start.to_string()) }).await.unwrap();
+    e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("3000".into()), period: Some("week".into()), valid_from: Some("2099-01-05".into()), remove: None }).await.unwrap();
+    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("16000".into()), period: None, valid_from: Some(month_start.to_string()), remove: None }).await.unwrap();
     assert!(out.summary.contains("later rule from 2099-01-05"), "{}", out.summary);
     assert_eq!(e.limits.limits.lock().unwrap().len(), 2);
     let list = e.svc.list_limits(&c).await.unwrap();
     let rows = list.data["limits"].as_array().unwrap().clone();
     assert_eq!(rows.iter().filter(|r| r["current"] == true).count(), 1, "действует одно правило категории");
     assert_eq!(rows.iter().find(|r| r["current"] == true).unwrap()["amount"], "16000");
-    assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: "100".into(), period: Some("day".into()), valid_from: None }).await.is_err());
+    assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("100".into()), period: Some("day".into()), valid_from: None, remove: None }).await.is_err());
+}
+
+/// Ц5: 0 — настоящий нулевой лимит; remove: true — «лимит снят» с даты, без суммы; одно из двух обязательно.
+#[tokio::test]
+async fn zero_limit_and_removed_limit() {
+    let e = env();
+    e.grant(&["read", "limits:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("0".into()), period: Some("week".into()), ..Default::default() }).await.unwrap();
+    assert!(out.summary.contains("no spending allowed"), "{}", out.summary);
+    // 07.01.2099 — среда: снятие в периоде действующего (недельного) правила — с понедельника 05.01.
+    let out = e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), remove: Some(true), valid_from: Some("2099-01-07".into()), ..Default::default() }).await.unwrap();
+    assert!(out.summary.contains("removed from 2099-01-05"), "{}", out.summary);
+    let removed = e.limits.limits.lock().unwrap().iter().find(|l| l.amount.is_none()).cloned().unwrap();
+    assert_eq!(removed.period, "WEEK");
+    assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("1".into()), remove: Some(true), ..Default::default() }).await.is_err());
+    assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), ..Default::default() }).await.is_err(), "ни суммы, ни снятия");
+    assert!(e.svc.set_limit(&c, SetLimitArgs { category: "FOOD".into(), amount: Some("-1".into()), ..Default::default() }).await.is_err());
+    let list = e.svc.list_limits(&c).await.unwrap();
+    let rows = list.data["limits"].as_array().unwrap().clone();
+    assert!(rows.iter().any(|r| r["removed"] == true && r["amount"].is_null()));
+    assert!(rows.iter().any(|r| r["current"] == true && r["amount"] == "0"), "нулевой лимит действует сегодня");
 }
 
 #[test]

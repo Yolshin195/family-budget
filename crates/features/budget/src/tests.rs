@@ -92,7 +92,7 @@ impl LimitsSource for Fake {
         if p != P {
             return Ok(vec![]);
         }
-        Ok(vec![LimitRule { category_code: "FOOD".into(), period: View::Month, amount: dec("2000"), valid_from: d(1, 1) }])
+        Ok(vec![LimitRule { category_code: "FOOD".into(), period: View::Month, amount: Some(dec("2000")), valid_from: d(1, 1) }])
     }
 }
 

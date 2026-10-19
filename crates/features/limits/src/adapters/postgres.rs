@@ -31,7 +31,8 @@ struct Row {
     valid_from: chrono::NaiveDate,
     category_code: String,
     limit_period: String,
-    amount: rust_decimal::Decimal,
+    /// NULL — «лимит снят».
+    amount: Option<rust_decimal::Decimal>,
 }
 
 impl TryFrom<Row> for Limit {

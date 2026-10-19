@@ -31,6 +31,16 @@ impl LimitLimitPeriod {
             _ => None,
         }
     }
+
+    /// Начало периода, в который попадает дата (неделя — с понедельника).
+    pub fn start(&self, d: chrono::NaiveDate) -> chrono::NaiveDate {
+        use chrono::Datelike;
+        match self {
+            Self::Week => d - chrono::Days::new(d.weekday().num_days_from_monday() as u64),
+            Self::Month => d.with_day(1).unwrap_or(d),
+            Self::Year => d.with_ordinal(1).unwrap_or(d),
+        }
+    }
 }
 
 /// Запись журнала.
@@ -41,7 +51,17 @@ pub struct Limit {
     pub valid_from: chrono::NaiveDate,
     pub category_code: String,
     pub limit_period: LimitLimitPeriod,
-    pub amount: rust_decimal::Decimal,
+    /// Сумма за период в базовой валюте; 0 — тратить нельзя совсем. `None` — «лимит снят» с этой даты:
+    /// дальше лимита нет, прошлые периоды его сохраняют.
+    pub amount: Option<rust_decimal::Decimal>,
+}
+
+impl Limit {
+    /// С какого дня правило действует на деле: с начала периода, в который попал `valid_from`
+    /// (месячный лимит, заведённый 20.10, — на весь октябрь).
+    pub fn effective_from(&self) -> chrono::NaiveDate {
+        self.limit_period.start(self.valid_from)
+    }
 }
 
 /// Данные записи, которые задаёт пользователь (для создания и изменения).
@@ -50,12 +70,12 @@ pub struct LimitData {
     pub valid_from: chrono::NaiveDate,
     pub category_code: String,
     pub limit_period: LimitLimitPeriod,
-    pub amount: rust_decimal::Decimal,
+    pub amount: Option<rust_decimal::Decimal>,
 }
 
 impl Limit {
     pub fn create(project_id: Uuid, data: LimitData) -> Result<Self, String> {
-        positive(data.amount)?;
+        not_negative(data.amount)?;
         let mut item = Self {
             id: Uuid::new_v4(),
             project_id,
@@ -69,7 +89,7 @@ impl Limit {
     }
 
     pub fn change(&mut self, data: LimitData) -> Result<(), String> {
-        positive(data.amount)?;
+        not_negative(data.amount)?;
         self.valid_from = data.valid_from;
         self.category_code = normalize("category_code", &data.category_code)?;
         self.limit_period = data.limit_period;
@@ -78,19 +98,39 @@ impl Limit {
     }
 }
 
-fn positive(amount: rust_decimal::Decimal) -> Result<(), String> {
-    if amount <= rust_decimal::Decimal::ZERO {
-        return Err("amount: лимит должен быть больше нуля".into());
+fn not_negative(amount: Option<rust_decimal::Decimal>) -> Result<(), String> {
+    if amount.is_some_and(|a| a < rust_decimal::Decimal::ZERO) {
+        return Err("amount: лимит не может быть отрицательным (0 — тратить нельзя совсем)".into());
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    /// Ц5: «сумма 0» закрывает лимит с даты — сейчас такое правило не создать.
+    use super::*;
+    use rust_decimal::Decimal;
+
+    fn data(amount: Option<Decimal>) -> LimitData {
+        let d = chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap();
+        LimitData { valid_from: d, category_code: "delivery".into(), limit_period: LimitLimitPeriod::Month, amount }
+    }
+
+    /// Ц5: 0 — настоящий нулевой лимит, «снять лимит» — отдельное правило без суммы.
     #[test]
-    #[ignore = "Ц5: исправление ждёт утверждения разбора (docs/stage-0.md)"]
-    fn zero_amount_ends_limit() {
-        assert!(super::positive(rust_decimal::Decimal::ZERO).is_ok(), "лимит 0 = «лимита нет» с этой даты");
+    fn zero_limit_and_removed_limit() {
+        let zero = Limit::create(Uuid::nil(), data(Some(Decimal::ZERO))).unwrap();
+        assert_eq!((zero.amount, zero.category_code.as_str()), (Some(Decimal::ZERO), "DELIVERY"));
+        assert_eq!(Limit::create(Uuid::nil(), data(None)).unwrap().amount, None);
+        assert!(Limit::create(Uuid::nil(), data(Some(-Decimal::ONE))).is_err());
+    }
+
+    #[test]
+    fn effective_from_is_period_start() {
+        let mut l = Limit::create(Uuid::nil(), data(Some(Decimal::ONE))).unwrap();
+        assert_eq!(l.effective_from().to_string(), "2026-10-01");
+        l.limit_period = LimitLimitPeriod::Week;
+        assert_eq!(l.effective_from().to_string(), "2026-10-19", "20.10.2026 — вторник");
+        l.limit_period = LimitLimitPeriod::Year;
+        assert_eq!(l.effective_from().to_string(), "2026-01-01");
     }
 }

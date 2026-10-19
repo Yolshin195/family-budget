@@ -468,7 +468,8 @@ pub struct Limit {
     /// WEEK / MONTH / YEAR
     pub period: String,
     pub valid_from: NaiveDate,
-    pub amount: Decimal,
+    /// 0 — тратить нельзя совсем; `None` — «лимит снят» с `valid_from`.
+    pub amount: Option<Decimal>,
 }
 
 /// Плановая операция для создания или изменения (фича `planning`).

@@ -418,7 +418,7 @@ fn limit_from(l: ::limits::dto::LimitDto) -> Limit {
 }
 
 fn limit_input(l: &Limit) -> ::limits::dto::LimitInput {
-    ::limits::dto::LimitInput { valid_from: l.valid_from, category_code: l.category_code.clone(), limit_period: l.period.clone(), amount: l.amount }
+    ::limits::dto::LimitInput { valid_from: l.valid_from, category_code: l.category_code.clone(), limit_period: l.period.clone(), amount: l.amount, removed: l.amount.is_none() }
 }
 
 #[async_trait]

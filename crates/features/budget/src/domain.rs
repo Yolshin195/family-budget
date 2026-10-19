@@ -80,25 +80,48 @@ impl Period {
 pub struct LimitRule {
     pub category_code: String,
     pub period: View,
-    pub amount: Decimal,
+    /// `None` — «лимит снят» с `valid_from`; 0 — настоящий нулевой лимит (тратить нельзя совсем).
+    pub amount: Option<Decimal>,
     pub valid_from: NaiveDate,
 }
 
 /// Лимит, приведённый к периоду отчёта.
 ///
-/// Берётся лимит категории, действующий на конец периода (последний с `valid_from ≤ to`).
-/// Если вид лимита не совпадает с видом отчёта, сумма пересчитывается по дням:
-/// месячный 31 000 в недельном отчёте за октябрь = 31 000 × 7 / 31 = 7 000.
+/// Правило действует с начала своего периода, в который попал `valid_from` (месячный лимит, заведённый
+/// 20.10, — на весь октябрь), до начала периода следующего правила этой категории. Вклад правила — его
+/// сумма × доля каждого его периода, попавшая в отчёт и в срок правила: месячный 31 000 в недельном отчёте
+/// за 05.10–11.10 = 31 000 × 7/31 = 7 000, в годовом — 12 × 31 000. Округление — один раз, у итога.
+/// «Лимит снят» вклада не даёт; если в отчёт не попало ни одного действующего правила — лимита нет.
 pub fn effective_limit(rules: &[LimitRule], category: &str, period: &Period) -> Option<Decimal> {
-    let rule = rules
-        .iter()
-        .filter(|r| r.category_code == category && r.valid_from <= period.to)
-        .max_by_key(|r| r.valid_from)?;
-    if rule.period == period.view {
-        return Some(rule.amount);
+    let start = |r: &LimitRule| Period::containing(r.period, r.valid_from).from;
+    let mut mine: Vec<&LimitRule> = rules.iter().filter(|r| r.category_code == category).collect();
+    mine.sort_by_key(|r| (start(r), r.valid_from));
+    let mut total: Option<Decimal> = None;
+    for (i, r) in mine.iter().enumerate() {
+        let Some(amount) = r.amount else { continue };
+        let from = start(r).max(period.from);
+        // Срок правила кончается накануне периода следующего; следующее с тем же началом заменяет его целиком.
+        let to = match mine.get(i + 1).map(|next| start(next).pred_opt()) {
+            Some(Some(end)) => end.min(period.to),
+            Some(None) => continue,
+            None => period.to,
+        };
+        if from > to {
+            continue;
+        }
+        let mut sum = Decimal::ZERO;
+        let mut p = Period::containing(r.period, from);
+        loop {
+            let days = (p.to.min(to) - p.from.max(from)).num_days() + 1;
+            sum += amount * Decimal::from(days) / Decimal::from(p.days());
+            if p.to >= to {
+                break;
+            }
+            p = p.next();
+        }
+        *total.get_or_insert(Decimal::ZERO) += sum;
     }
-    let base = Period::containing(rule.period, period.from);
-    Some((rule.amount * Decimal::from(period.days()) / Decimal::from(base.days())).round_dp(2))
+    total.map(|t| t.round_dp(2))
 }
 
 /// Узел дерева категорий (порядок — обход в глубину).
@@ -216,7 +239,8 @@ pub fn compute(nodes: &[Node], facts: &[Amount], planned: &[Amount], limits: &[L
         let percent = limit[i].filter(|l| *l > Decimal::ZERO).and_then(|l| (forecast * Decimal::from(100) / l).round().to_u32());
         let level = match (limit[i], available[i]) {
             (Some(l), _) if forecast > l => Level::Over,
-            (Some(l), _) if forecast * Decimal::from(10) >= l * Decimal::from(8) => Level::Warn,
+            // У нулевого лимита «почти исчерпан» не бывает: любая трата — сразу перерасход.
+            (Some(l), _) if l > Decimal::ZERO && forecast * Decimal::from(10) >= l * Decimal::from(8) => Level::Warn,
             (Some(_), _) => Level::Ok,
             (None, Some(a)) if a < Decimal::ZERO => Level::Over,
             (None, Some(_)) => Level::Ok,
@@ -399,7 +423,7 @@ mod tests {
         Amount { category_code: c.into(), amount: dec(a) }
     }
     fn lim(c: &str, v: View, a: &str) -> LimitRule {
-        LimitRule { category_code: c.into(), period: v, amount: dec(a), valid_from: d(2026, 1, 1) }
+        LimitRule { category_code: c.into(), period: v, amount: Some(dec(a)), valid_from: d(2026, 1, 1) }
     }
 
     #[test]
@@ -567,22 +591,69 @@ mod tests {
     }
 
     fn coffee(valid_from: NaiveDate) -> Vec<LimitRule> {
-        vec![LimitRule { category_code: "FOOD_COFFEE".into(), period: View::Month, amount: dec("1500"), valid_from }]
+        vec![LimitRule { category_code: "FOOD_COFFEE".into(), period: View::Month, amount: Some(dec("1500")), valid_from }]
     }
 
     /// Ц1: месячный лимит в годовом отчёте — 12 месяцев, а не 365/31.
     #[test]
-    #[ignore = "Ц1: исправление ждёт утверждения разбора (docs/stage-0.md)"]
     fn monthly_limit_in_year_report_is_twelve_months() {
         let year = Period::containing(View::Year, d(2026, 10, 19));
         assert_eq!(effective_limit(&coffee(d(2026, 1, 1)), "FOOD_COFFEE", &year), Some(dec("18000")));
     }
 
-    /// Ц5: лимит, заведённый 20.10, не действует на январь–сентябрь.
+    /// Ц5: лимит, заведённый 20.10, не действует на январь–сентябрь, но действует на весь октябрь.
     #[test]
-    #[ignore = "Ц5: исправление ждёт утверждения разбора (docs/stage-0.md)"]
     fn limit_counts_from_its_month_only() {
         let year = Period::containing(View::Year, d(2026, 10, 19));
         assert_eq!(effective_limit(&coffee(d(2026, 10, 20)), "FOOD_COFFEE", &year), Some(dec("4500")));
+        let oct = Period::containing(View::Month, d(2026, 10, 1));
+        assert_eq!(effective_limit(&coffee(d(2026, 10, 20)), "FOOD_COFFEE", &oct), Some(dec("1500")));
+        let sep = Period::containing(View::Month, d(2026, 9, 1));
+        assert_eq!(effective_limit(&coffee(d(2026, 10, 20)), "FOOD_COFFEE", &sep), None);
+    }
+
+    /// Неделя 28.09–04.10 — 3 дня сентября и 4 дня октября: 1 500 × 3/30 + 1 500 × 4/31.
+    #[test]
+    fn week_across_months_takes_both_months() {
+        let week = Period::containing(View::Week, d(2026, 10, 1));
+        assert_eq!((week.from, week.to), (d(2026, 9, 28), d(2026, 10, 4)));
+        assert_eq!(effective_limit(&coffee(d(2026, 1, 1)), "FOOD_COFFEE", &week), Some(dec("343.55")));
+    }
+
+    /// 3 000 с января, 4 000 с 20.10: январь–сентябрь по старому правилу, октябрь–декабрь — по новому.
+    #[test]
+    fn rule_change_inside_year() {
+        let mut rules = vec![lim("FOOD", View::Month, "3000")];
+        rules.push(LimitRule { valid_from: d(2026, 10, 20), ..lim("FOOD", View::Month, "4000") });
+        let year = Period::containing(View::Year, d(2026, 5, 5));
+        assert_eq!(effective_limit(&rules, "FOOD", &year), Some(dec("39000")));
+        // Недельный со среды 21.10 действует с понедельника 19.10: месячный — 18 дней октября, недельный — 7 + 6.
+        rules.push(LimitRule { valid_from: d(2026, 10, 21), ..lim("FOOD", View::Week, "700") });
+        let oct = Period::containing(View::Month, d(2026, 10, 1));
+        assert_eq!(effective_limit(&rules, "FOOD", &oct), Some(dec("3622.58")), "4 000 × 18/31 + 700 + 700 × 6/7");
+    }
+
+    /// Лимит 0 — тратить нельзя совсем: любая трата — перерасход, без трат — в норме.
+    #[test]
+    fn zero_limit_means_no_spending() {
+        let nodes = vec![node("DELIVERY", None, 0)];
+        let rules = vec![lim("DELIVERY", View::Month, "0")];
+        let oct = Period::containing(View::Month, d(2026, 10, 1));
+        let spent = compute(&nodes, &[amt("DELIVERY", "1")], &[], &rules, &oct);
+        assert_eq!((spent[0].limit, spent[0].level, spent[0].percent), (Some(Decimal::ZERO), Level::Over, None));
+        let clean = compute(&nodes, &[], &[], &rules, &oct);
+        assert_eq!((clean[0].level, clean[0].available), (Level::Ok, Some(Decimal::ZERO)));
+    }
+
+    /// «Лимит снят» с 01.11: октябрь его сохраняет, ноябрь без лимита, год — только действующие месяцы.
+    #[test]
+    fn removed_limit_keeps_the_past() {
+        let mut rules = coffee(d(2026, 1, 1));
+        rules.push(LimitRule { category_code: "FOOD_COFFEE".into(), period: View::Month, amount: None, valid_from: d(2026, 11, 1) });
+        let at = |v: View, day: NaiveDate| effective_limit(&rules, "FOOD_COFFEE", &Period::containing(v, day));
+        assert_eq!(at(View::Month, d(2026, 10, 1)), Some(dec("1500")));
+        assert_eq!(at(View::Month, d(2026, 11, 1)), None);
+        assert_eq!(at(View::Year, d(2026, 1, 1)), Some(dec("15000")));
+        assert_eq!(at(View::Year, d(2027, 1, 1)), None, "снятый лимит не возвращается сам");
     }
 }

@@ -346,14 +346,16 @@ pub struct ListRatesArgs {
 pub struct SetLimitArgs {
     /// Category code or name; the limit covers its subcategories too
     pub category: String,
-    /// Limit amount in the base currency of the project
-    #[serde(deserialize_with = "amount")]
-    #[schemars(with = "String")]
-    pub amount: String,
-    /// week | month | year (default: month)
+    /// Limit amount in the base currency of the project; 0 is a real zero limit (no spending allowed). Omit when `remove` is true
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub amount: Option<String>,
+    /// week | month | year (default: month; when removing — the period of the rule in force)
     pub period: Option<String>,
-    /// Valid from date YYYY-MM-DD (default: the start of the current period — Monday, the 1st or January 1)
+    /// Valid from date YYYY-MM-DD (default: the start of the current period — Monday, the 1st or January 1). A rule applies to the whole period containing this date
     pub valid_from: Option<String>,
+    /// true: remove the limit from `valid_from` on — no limit after that, earlier periods keep theirs (this adds a rule, nothing is deleted)
+    pub remove: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]

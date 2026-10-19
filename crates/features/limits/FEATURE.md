@@ -15,7 +15,7 @@
 | valid_from | date | да | Действует с даты |
 | category_code | ref → `categories` | да | Категория (лимит на всё поддерево) |
 | limit_period | enum (WEEK, MONTH, YEAR) | да | Период лимита |
-| amount | decimal | да | Сумма лимита в базовой валюте проекта |
+| amount | decimal ≥ 0 | нет | Сумма лимита в базовой валюте проекта; 0 — тратить нельзя совсем; NULL — «лимит снят» с `valid_from` (REST: `removed: true`) |
 
 ## Эндпоинты (под JWT)
 

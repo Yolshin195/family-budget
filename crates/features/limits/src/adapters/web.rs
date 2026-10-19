@@ -18,7 +18,7 @@ type Svc = State<Arc<LimitService>>;
 
 pub fn router(service: Arc<LimitService>) -> Router {
     Router::new()
-        .route("/", get(list).post(create)).route("/{id}/delete", post(delete))
+        .route("/", get(list).post(create)).route("/remove", post(remove)).route("/{id}/delete", post(delete))
         .route("/undo/{token}", post(undo)).with_state(service)
 }
 
@@ -29,6 +29,8 @@ struct Row {
     depth: usize,
     /// Есть более поздний лимит этой категории, уже вступивший в силу.
     superseded: bool,
+    /// Правило вступает в силу раньше `valid_from` — с начала своего периода.
+    early: bool,
 }
 
 #[derive(Template)]
@@ -59,19 +61,17 @@ async fn show(svc: &LimitService, page: PageCtx, error: Option<String>) -> PageR
     let mut rows = Vec::new();
     for c in &categories {
         let mut mine: Vec<&LimitDto> = all.iter().filter(|l| l.category_code == c.code).collect();
-        mine.sort_by(|a, b| b.valid_from.cmp(&a.valid_from));
-        let current = mine.iter().find(|l| l.valid_from <= today).map(|l| l.id);
+        // Правило действует с начала своего периода; при одинаковом начале — более позднее по дате.
+        mine.sort_by(|a, b| (b.effective_from, b.valid_from).cmp(&(a.effective_from, a.valid_from)));
+        let current = mine.iter().find(|l| l.effective_from <= today).map(|l| l.id);
         for l in mine {
-            let superseded = l.valid_from <= today && Some(l.id) != current;
-            rows.push(Row { dto: clone(l), category: c.label.clone(), depth: c.depth.min(5), superseded });
+            let superseded = l.effective_from <= today && Some(l.id) != current;
+            let early = l.effective_from < l.valid_from;
+            rows.push(Row { dto: l.clone(), category: c.label.clone(), depth: c.depth.min(5), superseded, early });
         }
     }
     let page = page.for_feature(crate::NAME, crate::i18n::dict);
     render(&ListPage { page, rows, categories, today, error })
-}
-
-fn clone(l: &LimitDto) -> LimitDto {
-    LimitDto { id: l.id, valid_from: l.valid_from, category_code: l.category_code.clone(), limit_period: l.limit_period.clone(), amount: l.amount }
 }
 
 async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
@@ -79,12 +79,22 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResul
 }
 
 async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): Form<LimitForm>) -> PageResult {
+    save(svc, page, f, false).await
+}
+
+/// «Снять лимит с даты»: правило без суммы — дальше лимита нет, прошлые периоды его сохраняют.
+async fn remove(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): Form<LimitForm>) -> PageResult {
+    save(svc, page, f, true).await
+}
+
+async fn save(svc: Arc<LimitService>, page: PageCtx, f: LimitForm, removed: bool) -> PageResult {
     let result = async {
         let input = LimitInput {
             valid_from: f.valid_from.parse().map_err(|_| AppError::Validation("valid_from: неверная дата".into()))?,
             category_code: f.category_code.clone(),
             limit_period: f.limit_period.clone(),
-            amount: parse_money("amount", &f.amount).map_err(AppError::Validation)?,
+            amount: if removed { None } else { Some(parse_money("amount", &f.amount).map_err(AppError::Validation)?) },
+            removed,
         };
         svc.create(page.session.project_id, input).await
     }

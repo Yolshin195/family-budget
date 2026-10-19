@@ -257,7 +257,7 @@ async fn plan(s: &Services, p: Uuid, by: Uuid, lang: Lang, names: (&str, &str, &
 
 async fn limit(s: &Services, p: Uuid, cat: &str, period: &str, amount: &str, from: NaiveDate) -> AppResult<()> {
     s.limits
-        .create(p, limits::dto::LimitInput { valid_from: from, category_code: cat.into(), limit_period: period.into(), amount: dec(amount) })
+        .create(p, limits::dto::LimitInput { valid_from: from, category_code: cat.into(), limit_period: period.into(), amount: Some(dec(amount)), removed: false })
         .await
         .map(|_| ())
 }

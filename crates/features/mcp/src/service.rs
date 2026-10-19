@@ -1087,16 +1087,33 @@ impl McpService {
 
     pub async fn set_limit(&self, caller: &Caller, a: SetLimitArgs) -> ToolResult {
         self.check(caller, Right::write("limits"))?;
-        let amount = parse_amount("amount", &a.amount)?;
-        let period = clean(a.period).map(|p| parse_choice("period", &p, &LIMIT_PERIODS)).transpose()?.unwrap_or_else(|| "MONTH".into());
+        let remove = a.remove.unwrap_or(false);
+        let amount = match (remove, a.amount.as_deref()) {
+            (true, Some(_)) => return Err(ToolError("pass either amount or remove: true, not both".into())),
+            (true, None) => None,
+            (false, None) => return Err(ToolError("amount: required (0 = no spending allowed); to remove the limit pass remove: true".into())),
+            (false, Some(v)) => {
+                let v = parse_signed_amount("amount", v)?;
+                if v < rust_decimal::Decimal::ZERO {
+                    return Err(ToolError("amount: a limit cannot be negative (0 = no spending allowed)".into()));
+                }
+                Some(v)
+            }
+        };
         let today = today();
+        let categories = self.deps.directories.categories(caller.project_id).await?;
+        let cat = find_ref("category", &a.category, &categories)?;
+        let rules = self.deps.limits.list(caller.project_id).await?;
+        // Снять лимит — по умолчанию в периоде действующего правила.
+        let period = match clean(a.period) {
+            Some(p) => parse_choice("period", &p, &LIMIT_PERIODS)?,
+            None if remove => in_force(&rules, &cat.code, today).map_or_else(|| "MONTH".to_string(), |l| l.period.clone()),
+            None => "MONTH".into(),
+        };
         let valid_from = match clean(a.valid_from) {
             Some(v) => parse_date("valid_from", Some(&v), today)?,
             None => period_start(&period, today),
         };
-        let categories = self.deps.directories.categories(caller.project_id).await?;
-        let cat = find_ref("category", &a.category, &categories)?;
-        let rules = self.deps.limits.list(caller.project_id).await?;
         // У категории одно правило на дату начала: правило с тем же valid_from заменяется (и период тоже).
         let old = rules.iter().find(|l| l.category_code == cat.code && l.valid_from == valid_from);
         let draft = Limit { id: old.map(|l| l.id).unwrap_or_default(), category_code: cat.code.clone(), period, valid_from, amount };
@@ -1106,19 +1123,31 @@ impl McpService {
         };
         self.audit_write(caller, "set_limit", &[("limit", saved.id.to_string()), ("category", saved.category_code.clone())]).await;
         let base = &caller.base_currency;
-        let mut summary = format!(
-            "Limit for '{}' ({}, with subcategories): {} {base} per {} from {}.",
-            cat.name.show(caller.lang),
-            cat.code,
-            saved.amount.normalize(),
-            saved.period.to_lowercase(),
-            saved.valid_from
-        );
+        let from = period_start(&saved.period, saved.valid_from);
+        let mut summary = match saved.amount {
+            Some(x) => format!(
+                "Limit for '{}' ({}, with subcategories): {} {base} per {} from {} — it applies to the whole {} from {from}{}.",
+                cat.name.show(caller.lang),
+                cat.code,
+                x.normalize(),
+                saved.period.to_lowercase(),
+                saved.valid_from,
+                saved.period.to_lowercase(),
+                if x.is_zero() { "; 0 means no spending allowed, any expense is over the limit" } else { "" }
+            ),
+            None => format!(
+                "Limit for '{}' ({}) removed from {from} (the whole {} containing {}): no limit after that, earlier periods keep theirs.",
+                cat.name.show(caller.lang),
+                cat.code,
+                saved.period.to_lowercase(),
+                saved.valid_from
+            ),
+        };
         if let Some(o) = old {
-            summary.push_str(&format!(" Replaced {} per {} from the same date.", o.amount.normalize(), o.period.to_lowercase()));
+            summary.push_str(&format!(" Replaced {} from the same date.", limit_text(o, base)));
         }
         if let Some(later) = rules.iter().filter(|l| l.category_code == cat.code && l.valid_from > saved.valid_from).min_by_key(|l| l.valid_from) {
-            summary.push_str(&format!(" Note: a later rule from {} ({} per {}) takes over from that date.", later.valid_from, later.amount.normalize(), later.period.to_lowercase()));
+            summary.push_str(&format!(" Note: a later rule from {} ({}) takes over from that date.", later.valid_from, limit_text(later, base)));
         }
         Ok(ToolOutput { summary, data: json!({"base_currency": base, "limit": limit_json(&saved, cat.name.show(caller.lang), None), "replaced": old.is_some()}) })
     }
@@ -1127,23 +1156,19 @@ impl McpService {
         self.check(caller, Right::read("limits"))?;
         let today = today();
         let mut rules = self.deps.limits.list(caller.project_id).await?;
-        rules.sort_by(|x, y| x.category_code.cmp(&y.category_code).then(y.valid_from.cmp(&x.valid_from)));
+        let key = |l: &Limit| (period_start(&l.period, l.valid_from), l.valid_from);
+        rules.sort_by(|x, y| x.category_code.cmp(&y.category_code).then(key(y).cmp(&key(x))));
         let categories = self.deps.directories.categories(caller.project_id).await?;
         let title = |code: &str| categories.iter().find(|c| c.code == code).map(|c| c.name.show(caller.lang).to_string()).unwrap_or_default();
-        // Действует последнее правило категории с valid_from ≤ сегодня (правила отсортированы: новые сначала).
-        let mut seen: HashSet<&str> = HashSet::new();
-        let rows: Vec<Value> = rules
-            .iter()
-            .map(|l| {
-                let current = l.valid_from <= today && seen.insert(l.category_code.as_str());
-                limit_json(l, &title(&l.category_code), Some(current))
-            })
-            .collect();
+        let current = |l: &Limit| in_force(&rules, &l.category_code, today).is_some_and(|c| c.id == l.id);
+        let rows: Vec<Value> = rules.iter().map(|l| limit_json(l, &title(&l.category_code), Some(current(l)))).collect();
+        // «Лимит снят» тоже действует, но лимита по нему нет.
+        let in_force_now = rules.iter().filter(|l| current(l) && l.amount.is_some()).count();
         Ok(ToolOutput {
             summary: format!(
-                "{} limit rules, {} in force today; amounts in {}. For a category the rule in force is the latest with valid_from ≤ today, and it covers subcategories.",
+                "{} limit rules, {} in force today; amounts in {}. A rule applies from the start of the period containing valid_from until the next rule of its category, and covers subcategories. Amount 0 = no spending allowed; removed = no limit from that date.",
                 rules.len(),
-                seen.len(),
+                in_force_now,
                 caller.base_currency
             ),
             data: json!({"base_currency": caller.base_currency, "today": today, "limits": rows}),
@@ -1401,8 +1426,33 @@ fn show_rate(v: Decimal) -> Decimal {
     v.round_dp(6).normalize()
 }
 
+/// Правило категории, действующее на дату: последнее по началу своего периода (при равном — по `valid_from`).
+fn in_force<'a>(rules: &'a [Limit], category: &str, date: NaiveDate) -> Option<&'a Limit> {
+    rules
+        .iter()
+        .filter(|l| l.category_code == category && period_start(&l.period, l.valid_from) <= date)
+        .max_by_key(|l| (period_start(&l.period, l.valid_from), l.valid_from))
+}
+
+/// «12000 THB per month» или «limit removed».
+fn limit_text(l: &Limit, base: &str) -> String {
+    match l.amount {
+        Some(x) => format!("{} {base} per {}", x.normalize(), l.period.to_lowercase()),
+        None => "limit removed".into(),
+    }
+}
+
 fn limit_json(l: &Limit, title: &str, current: Option<bool>) -> Value {
-    let mut v = json!({"id": l.id, "category": l.category_code, "title": title, "period": l.period, "valid_from": l.valid_from, "amount": l.amount});
+    let mut v = json!({
+        "id": l.id,
+        "category": l.category_code,
+        "title": title,
+        "period": l.period,
+        "valid_from": l.valid_from,
+        "effective_from": period_start(&l.period, l.valid_from),
+        "amount": l.amount,
+        "removed": l.amount.is_none(),
+    });
     if let Some(c) = current {
         v["current"] = json!(c);
     }
