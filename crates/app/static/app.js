@@ -277,7 +277,9 @@
       var amount = $('[data-amount]', row), price = evalAmount(($('[data-price]', row) || {}).value);
       if (isNaN(price)) { amount.readOnly = false; return evalAmount(amount.value); }
       var q = evalAmount(($('[data-qty]', row) || {}).value), d = evalAmount(($('[data-discount]', row) || {}).value), k = Math.pow(10, minor());
-      var v = Math.round((isNaN(q) ? 1 : q) * price * k) / k - (isNaN(d) ? 0 : d);
+      // Половина — вверх, как на сервере; округление до 1e-8 убирает погрешность float (0,335 × 15 = 5,03).
+      var raw = Math.round((isNaN(q) ? 1 : q) * price * 1e8) / 1e8;
+      var v = Math.round(raw * k + 1e-7) / k - (isNaN(d) ? 0 : d);
       amount.readOnly = true;
       amount.value = v > 0 ? String(Math.round(v * k) / k) : '';
       return v;

@@ -160,9 +160,9 @@ impl Item {
     }
 }
 
-/// Позиция из формы или запроса. Пустые поля — значения по умолчанию (1 шт, без цены и скидки). У позиции с
-/// `id` пустые категория и название берутся из записанной позиции; если пусты все денежные поля
-/// (количество, единица, цена, скидка, сумма) — они тоже остаются прежними.
+/// Позиция из формы или запроса. Пустые поля — значения по умолчанию (1 шт, без цены и скидки). При правке по `id`
+/// через API (`ItemsDraft::replace == false`) пустые поля остаются прежними, а сумма без цены убирает цену; форма
+/// присылает строку целиком: пустое название — без названия.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ItemDraft {
     pub id: Option<Uuid>,
@@ -379,24 +379,33 @@ fn sum(field: &str, values: impl Iterator<Item = Decimal>) -> Result<Decimal, Pr
     Ok(total)
 }
 
-/// Количество, единица, цена, скидка и сумма позиции по правилам раздела 5.1.
-fn money(i: usize, d: &ItemDraft, cur: &AccountCurrency) -> Result<(Decimal, Unit, Option<Decimal>, Decimal, Decimal), Problem> {
+/// Количество, единица, цена, скидка и сумма позиции по правилам раздела 5.1. `old` — записанная позиция при правке
+/// по `id` через API: пустые поля берутся из неё, а сумма без цены убирает цену («передана только сумма — цена
+/// пустая»). Без `old` пустые поля — значения по умолчанию: 1 шт, без цены и скидки.
+fn money(i: usize, d: &ItemDraft, old: Option<&Item>, cur: &AccountCurrency) -> Result<(Decimal, Unit, Option<Decimal>, Decimal, Decimal), Problem> {
     let f = |name: &str| format!("items[{i}].{name}");
-    let quantity = d.quantity.unwrap_or(Decimal::ONE);
+    let quantity = d.quantity.or(old.map(|o| o.quantity)).unwrap_or(Decimal::ONE);
     if quantity <= Decimal::ZERO {
         return Err(err(&f("quantity"), "err.quantity_positive", &[]));
     }
     check_qty(&f("quantity"), quantity)?;
     let unit = match d.unit.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
-        None => Unit::Pcs,
+        None => old.map(|o| o.unit).unwrap_or_default(),
         Some(u) => Unit::parse(u).ok_or_else(|| err(&f("unit"), "err.unit_invalid", &[]))?,
     };
-    let discount = d.discount.unwrap_or_default();
+    let discount = d.discount.or(old.map(|o| o.discount)).unwrap_or_default();
     if discount < Decimal::ZERO {
         return Err(err(&f("discount"), "err.discount_negative", &[]));
     }
     check_amount(&f("discount"), discount, cur)?;
-    let amount = match (d.price, d.amount) {
+    let price = match (d.price, d.amount) {
+        (Some(p), _) => Some(p),
+        (None, Some(_)) => None,
+        (None, None) => old.and_then(|o| o.price),
+    };
+    // Без цены сумма — введённая; при правке без новой суммы — прежняя.
+    let given = d.amount.or(if price.is_none() { old.map(|o| o.amount) } else { None });
+    let amount = match (price, given) {
         (Some(price), given) => {
             if price < Decimal::ZERO {
                 return Err(err(&f("price"), "err.price_negative", &[]));
@@ -427,33 +436,41 @@ fn money(i: usize, d: &ItemDraft, cur: &AccountCurrency) -> Result<(Decimal, Uni
         }
         (None, None) => return Err(err(&f("amount"), "err.amount_or_price", &[])),
     };
-    Ok((quantity, unit, d.price, discount, amount))
+    Ok((quantity, unit, price, discount, amount))
 }
 
-/// Позиция из черновика; `old` — записанная позиция с тем же `id`.
-fn item(i: usize, d: ItemDraft, old: Option<&Item>, cur: &AccountCurrency) -> Result<Item, Problem> {
-    let category = d.category_code.as_deref().map(str::trim).filter(|c| !c.is_empty()).map(str::to_string).or_else(|| old.map(|o| o.category_code.clone()));
+/// Позиция из черновика; `i` — её номер в чеке после правки, `old` — записанная позиция с тем же `id`.
+/// `patch` — правка по `id` через API: пустые поля остаются прежними. Иначе черновик — вся строка формы:
+/// пустое название — без названия, пустая категория — ошибка.
+fn item(i: usize, d: ItemDraft, old: Option<&Item>, patch: bool, cur: &AccountCurrency) -> Result<Item, Problem> {
+    let field = format!("items[{i}].category_code");
+    let base = if patch { old } else { None };
     // Категория места по умолчанию появится со справочником мест (шаг 5); пока — обязательна.
-    let category = category.ok_or_else(|| err(&format!("items[{i}].category_code"), "err.category_required", &[]))?;
-    let category_code = kernel::code::code(&format!("items[{i}].category_code"), &category)?;
-    let (quantity, unit, price, discount, amount) = match old {
-        Some(o) if !d.money_given() => (o.quantity, o.unit, o.price, o.discount, o.amount),
-        _ => money(i, &d, cur)?,
+    let category = match d.category_code.as_deref().map(str::trim) {
+        Some(c) if !c.is_empty() => c.to_string(),
+        Some(_) => return Err(err(&field, "err.category_required", &[])),
+        None => base.map(|o| o.category_code.clone()).ok_or_else(|| err(&field, "err.category_required", &[]))?,
     };
-    let name = match d.name {
-        Some(n) => kernel::i18n::clean(Some(n)),
-        None => old.and_then(|o| o.name.clone()),
+    let category_code = kernel::code::code(&field, &category)?;
+    let (quantity, unit, price, discount, amount) = match base {
+        // Ничего из денег не прислали — прежние значения как есть, без пересчёта.
+        Some(o) if !d.money_given() => (o.quantity, o.unit, o.price, o.discount, o.amount),
+        _ => money(i, &d, base, cur)?,
+    };
+    let keep = |v: Option<String>, prev: Option<&Option<String>>| match v {
+        Some(v) => kernel::i18n::clean(Some(v)),
+        None => prev.cloned().flatten(),
     };
     Ok(Item {
         id: d.id.or(old.map(|o| o.id)).unwrap_or_else(Uuid::new_v4),
         category_code,
-        name,
+        name: keep(d.name, base.map(|o| &o.name)),
         quantity,
         unit,
         price,
         discount,
         amount,
-        note: kernel::i18n::clean(d.note).or_else(|| old.and_then(|o| o.note.clone())),
+        note: keep(d.note, base.map(|o| &o.note)),
     })
 }
 
@@ -488,30 +505,34 @@ fn split_discount(items: &mut [Item], total_discount: Decimal, cur: &AccountCurr
     Ok(())
 }
 
-/// Позиции после правки: записанные `existing` + черновик (раздел 5.6).
+/// Позиции после правки: записанные `existing` + черновик (раздел 5.6). Чек после правки: при правке по `id`
+/// (REST, MCP) — записанные позиции без удалённых на своих местах, новые в конце; форма присылает весь чек — в её
+/// порядке. Номер позиции в ошибках — номер в этом чеке (в ошибках `id` — номер в запросе).
 fn resolve_items(d: ItemsDraft, existing: &[Item], cur: &AccountCurrency) -> Result<Vec<Item>, Problem> {
     for id in &d.remove {
         if !existing.iter().any(|x| x.id == *id) {
             return Err(err("remove_item_ids", "err.item_unknown", &[("id", id)]));
         }
     }
-    let mut out: Vec<Item> = if d.replace { Vec::new() } else { existing.iter().filter(|x| !d.remove.contains(&x.id)).cloned().collect() };
+    let patch = !d.replace;
+    let mut out: Vec<Item> = if patch { existing.iter().filter(|x| !d.remove.contains(&x.id)).cloned().collect() } else { Vec::new() };
     let mut seen: Vec<Uuid> = Vec::new();
     for (n, draft) in d.items.into_iter().enumerate() {
-        let i = n + 1;
         let old = match draft.id {
             None => None,
             Some(id) => {
+                let field = format!("items[{}].id", n + 1);
                 if seen.contains(&id) || d.remove.contains(&id) {
-                    return Err(err(&format!("items[{i}].id"), "err.item_twice", &[("id", &id)]));
+                    return Err(err(&field, "err.item_twice", &[("id", &id)]));
                 }
                 seen.push(id);
-                Some(existing.iter().find(|x| x.id == id).ok_or_else(|| err(&format!("items[{i}].id"), "err.item_unknown", &[("id", &id)]))?)
+                Some(existing.iter().find(|x| x.id == id).ok_or_else(|| err(&field, "err.item_unknown", &[("id", &id)]))?)
             }
         };
-        let new = item(i, draft, old, cur)?;
-        match out.iter_mut().find(|x| x.id == new.id) {
-            Some(slot) => *slot = new,
+        let slot = if patch { old.and_then(|o| out.iter().position(|x| x.id == o.id)) } else { None };
+        let new = item(slot.map_or(out.len(), |s| s) + 1, draft, old, patch, cur)?;
+        match slot {
+            Some(s) => out[s] = new,
             None => out.push(new),
         }
     }
@@ -520,6 +541,11 @@ fn resolve_items(d: ItemsDraft, existing: &[Item], cur: &AccountCurrency) -> Res
     }
     if out.len() > MAX_LINES {
         return Err(err("items", "err.items_max", &[("n", &MAX_LINES)]));
+    }
+    // Оставшиеся как были позиции — тоже в валюте счёта: счёт могли сменить на валюту с другой точностью.
+    for (i, x) in out.iter().enumerate() {
+        positive(&format!("items[{}].amount", i + 1), x.amount, cur)?;
+        check_amount(&format!("items[{}].discount", i + 1), x.discount, cur)?;
     }
     if let Some(dt) = d.discount_total.filter(|v| !v.is_zero()) {
         split_discount(&mut out, dt, cur)?;
@@ -933,12 +959,39 @@ mod tests {
         assert_eq!(t.clone().change(edit(foreign), &accounts()).unwrap_err().field, "items[1].id");
         let twice = ItemsDraft { items: vec![ItemDraft { id: Some(food), ..Default::default() }, ItemDraft { id: Some(food), ..Default::default() }], ..Default::default() };
         assert_eq!(t.clone().change(edit(twice), &accounts()).unwrap_err().field, "items[2].id");
-        // Форма — весь чек: не названная позиция удаляется.
-        let form = ItemsDraft::replace(vec![ItemDraft { id: Some(food), ..Default::default() }]);
+        // Форма — весь чек: не названная позиция удаляется, пустое название — без названия.
+        let form = ItemsDraft::replace(vec![ItemDraft { id: Some(food), name: Some(String::new()), ..ItemDraft::simple("food", dec("100")) }]);
         t.change(edit(form), &accounts()).unwrap();
-        assert_eq!((t.items.len(), t.items[0].id, t.total()), (1, food, dec("100")));
+        assert_eq!((t.items.len(), t.items[0].id, t.total(), t.items[0].name.as_deref()), (1, food, dec("100"), None));
+        let no_category = ItemsDraft::replace(vec![ItemDraft { id: Some(food), amount: Some(dec("1")), ..Default::default() }]);
+        assert_eq!(t.clone().change(edit(no_category), &accounts()).unwrap_err().field, "items[1].category_code", "в форме категория обязательна");
         let none_left = ItemsDraft { remove: vec![food], ..Default::default() };
         assert_eq!(t.clone().change(edit(none_left), &accounts()).unwrap_err().field, "items");
+    }
+
+    /// Правка по id через API: пустые поля остаются прежними; новое количество пересчитывает сумму по прежней цене,
+    /// сумма без цены убирает цену; номер позиции в ошибке — номер в чеке после правки.
+    #[test]
+    fn item_patch_keeps_omitted_fields() {
+        let mut t = create(flow_items(false, false, "card", vec![ItemDraft::simple("food", dec("10")), priced("snacks", "Круассан", "2", "pcs", "25", "3")])).unwrap();
+        let id = t.items[1].id;
+        let patch = |x: ItemDraft| data(Draft::Flow { income: false, account: "card".into(), items: ItemsDraft { items: vec![ItemDraft { id: Some(id), ..x }], ..Default::default() }, refund: false });
+        t.change(patch(ItemDraft { quantity: Some(dec("3")), ..Default::default() }), &accounts()).unwrap();
+        assert_eq!((t.items[1].amount, t.items[1].price, t.items[1].discount, t.items[1].name.as_deref()), (dec("72"), Some(dec("25")), dec("3"), Some("Круассан")));
+        t.change(patch(ItemDraft { amount: Some(dec("60")), ..Default::default() }), &accounts()).unwrap();
+        assert_eq!((t.items[1].amount, t.items[1].price, t.items[1].quantity), (dec("60"), None, dec("3")), "сумма без цены — цена пустая");
+        let e = t.clone().change(patch(ItemDraft { amount: Some(dec("0")), ..Default::default() }), &accounts()).unwrap_err();
+        assert_eq!(e.field, "items[2].amount", "номер — в чеке, а не в запросе");
+        t.change(patch(ItemDraft { name: Some(String::new()), ..Default::default() }), &accounts()).unwrap();
+        assert_eq!(t.items[1].name, None, "пустая строка стирает название");
+    }
+
+    /// Счёт сменили на валюту без копеек — оставшиеся позиции проверяются по её точности.
+    #[test]
+    fn kept_items_follow_account_currency() {
+        let mut t = create(receipt(vec![("food", "45.50")])).unwrap();
+        let to_vnd = data(Draft::Flow { income: false, account: "vcb".into(), items: ItemsDraft::default(), refund: false });
+        assert_eq!(t.change(to_vnd, &accounts()).unwrap_err().field, "items[1].amount");
     }
 
     /// Техдолг #9: ошибки домена — на языке запроса.

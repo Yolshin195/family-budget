@@ -588,7 +588,7 @@ impl McpService {
         draft.items = items;
         draft.discount_total = a.discount_total.as_deref().map(|v| parse_money("discount_total", v)).transpose()?;
         self.describe(caller, &mut draft, a.description, a.description_lang, a.translations)?;
-        let tx = kernel::i18n::scope(caller.lang, self.deps.ledger.create(caller.project_id, caller.user_id, draft)).await?;
+        let tx = self.deps.ledger.create(caller.project_id, caller.user_id, draft).await?;
         self.audit_write(caller, tool, &[("transaction", tx.id.to_string())]).await;
         let mut data = json!({"transaction": tx_json(&tx, caller.lang)});
         let mut summary = format!("Saved {} {} {} on {} from account {}.", kind.to_lowercase(), tx.total.normalize(), tx.currency, tx.occurred_on, tx.account_code);
@@ -655,7 +655,7 @@ impl McpService {
         draft.fee_amount = a.fee_amount.as_deref().map(|v| parse_amount("fee_amount", v)).transpose()?;
         draft.fee_category_code = a.fee_category.as_deref().map(|c| category_code(&q, "EXPENSE", "fee_category", c)).transpose()?;
         self.describe(caller, &mut draft, a.description, a.description_lang, a.translations)?;
-        let tx = kernel::i18n::scope(caller.lang, self.deps.ledger.create(caller.project_id, caller.user_id, draft)).await?;
+        let tx = self.deps.ledger.create(caller.project_id, caller.user_id, draft).await?;
         self.audit_write(caller, "add_transfer", &[("transaction", tx.id.to_string())]).await;
         let received = match (&tx.to_amount, &tx.to_currency) {
             (Some(x), Some(c)) => format!(", received {x} {c}"),
@@ -733,7 +733,7 @@ impl McpService {
             let lang = a.description_lang.or_else(|| Some(old.description_lang.code().to_string()));
             self.describe(caller, &mut draft, description, lang, a.translations)?;
         }
-        let tx = kernel::i18n::scope(caller.lang, self.deps.ledger.update(caller.project_id, id, draft)).await?;
+        let tx = self.deps.ledger.update(caller.project_id, id, draft).await?;
         self.audit_write(caller, "update_transaction", &[("transaction", tx.id.to_string())]).await;
         Ok(ToolOutput { summary: format!("Updated transaction {} ({} {} on {}).", tx.id, tx.total, tx.currency, tx.occurred_on), data: json!({"transaction": tx_json(&tx, caller.lang)}) })
     }
@@ -775,7 +775,7 @@ impl McpService {
         draft.description = Some(occ.name.clone());
         draft.plan_id = Some(plan_id);
         draft.plan_date = Some(date);
-        let tx = kernel::i18n::scope(caller.lang, self.deps.ledger.create(caller.project_id, caller.user_id, draft)).await?;
+        let tx = self.deps.ledger.create(caller.project_id, caller.user_id, draft).await?;
         self.audit_write(caller, "pay_planned", &[("transaction", tx.id.to_string())]).await;
         Ok(ToolOutput {
             summary: format!("Paid '{}' scheduled for {date}: {} {} on {}.", occ.name, tx.total, tx.currency, tx.occurred_on),
@@ -1573,16 +1573,19 @@ fn item_json(x: &TxItem) -> Value {
 fn item_from(q: &QuickInfo, kind: &str, i: usize, it: ItemArgs) -> Result<TxItem, ToolError> {
     let f = |name: &str| format!("items[{i}].{name}");
     let num = |name: &str, v: Option<String>| v.map(|v| parse_money(&f(name), &v)).transpose();
+    // Количество и цена — до 6 знаков, без округления до 4.
+    let qty = |name: &str, v: Option<String>| v.map(|v| kernel::web::parse_number(&f(name), &v)).transpose();
     Ok(TxItem {
         id: it.id.map(|id| Uuid::parse_str(id.trim()).map_err(|_| ToolError(format!("{}: not an item id: '{id}'", f("id"))))).transpose()?,
         category_code: it.category.map(|c| category_code(q, kind, &f("category"), &c)).transpose()?,
-        name: clean(it.name),
-        quantity: num("quantity", it.quantity)?,
+        // Пустая строка стирает название позиции, отсутствие — оставляет прежнее.
+        name: it.name.map(|n| n.trim().to_string()),
+        quantity: qty("quantity", it.quantity)?,
         unit: clean(it.unit),
-        price: num("price", it.price)?,
+        price: qty("price", it.price)?,
         discount: num("discount", it.discount)?,
         amount: it.amount.map(|v| parse_amount(&f("amount"), &v)).transpose()?,
-        note: clean(it.note),
+        note: it.note.map(|n| n.trim().to_string()),
     })
 }
 

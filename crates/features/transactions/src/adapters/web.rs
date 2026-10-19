@@ -585,17 +585,18 @@ impl TxForm {
     fn to_input(&self) -> Result<TransactionInput, AppError> {
         let v = |m: String| AppError::Validation(m);
         let money = |field: &str, s: &str| opt(s).map(|s| parse_money(field, &s)).transpose().map_err(v);
+        let number = |field: &str, s: &str| opt(s).map(|s| kernel::web::parse_number(field, &s)).transpose().map_err(v);
         let transfer = self.kind() == "TRANSFER";
         let mut items = Vec::new();
         if !transfer {
             for (n, x) in self.items().into_iter().enumerate() {
                 let f = |name: &str| format!("items[{}].{name}", n + 1);
-                let price = money(&f("price"), &x.price)?;
+                let price = number(&f("price"), &x.price)?;
                 items.push(ItemInput {
                     id: opt(&x.id).map(|s| Uuid::parse_str(&s)).transpose().map_err(|_| invalid(&f("id"), "err.bad_id"))?,
                     category_code: opt(&x.category),
                     name: opt(&x.name),
-                    quantity: money(&f("quantity"), &x.qty)?,
+                    quantity: number(&f("quantity"), &x.qty)?,
                     unit: opt(&x.unit),
                     // С ценой сумму считает сервер (раздел 3.2): поле суммы в форме только для чтения.
                     amount: if price.is_some() { None } else { money(&f("amount"), &x.amount)? },

@@ -1,6 +1,8 @@
 //! Исходящий адаптер: порт на PostgreSQL (таблицы `fb_transactions`, `fb_transaction_items`, `fb_postings`).
 //! Сумму проводок по каждой валюте дополнительно проверяет отложенный триггер БД.
 
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use chrono::NaiveDate;
 use kernel::error::{AppError, AppResult};
@@ -61,10 +63,17 @@ impl PostgresTransactionRepository {
         .bind(&ids)
         .fetch_all(&self.pool)
         .await?;
+        // По операции за один проход: в ленте месяца — тысячи операций.
+        let mut by_tx: HashMap<Uuid, (Vec<Item>, Vec<Posting>)> = HashMap::with_capacity(rows.len());
+        for p in &postings {
+            by_tx.entry(p.transaction_id).or_default().1.push(p.to_domain()?);
+        }
+        for x in &items {
+            by_tx.entry(x.transaction_id).or_default().0.push(x.to_domain()?);
+        }
         rows.into_iter()
             .map(|r| {
-                let mine = postings.iter().filter(|p| p.transaction_id == r.id).map(PostingRow::to_domain).collect::<AppResult<Vec<_>>>()?;
-                let lines = items.iter().filter(|x| x.transaction_id == r.id).map(ItemRow::to_domain).collect::<AppResult<Vec<_>>>()?;
+                let (lines, mine) = by_tx.remove(&r.id).unwrap_or_default();
                 r.into_domain(lines, mine)
             })
             .collect()

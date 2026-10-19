@@ -79,7 +79,9 @@ pub struct UpcomingArgs {
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ItemArgs {
     /// update_transaction only: id of an existing item of this transaction (from list_transactions) to change;
-    /// omit to add a new item. Omitted fields of an existing item keep their values
+    /// omit to add a new item. Omitted fields of an existing item keep their values; a new quantity, price or
+    /// discount recomputes the amount, an amount without a price removes the price. Error fields like
+    /// items[3].amount count items in the receipt after the edit
     pub id: Option<String>,
     /// Category code or name (expense category for expenses, income category for income); required for new items
     pub category: Option<String>,

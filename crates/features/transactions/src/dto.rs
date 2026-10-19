@@ -234,6 +234,8 @@ pub struct TransactionDto {
     pub refund: bool,
     /// Позиции чека (расход и доход)
     pub items: Vec<ItemDto>,
+    /// Старый формат позиций — для прежних клиентов API: категория, сумма, название в `note`. Новое — `items`
+    pub lines: Vec<LineDto>,
     /// Сумма транзакции: сумма позиций; у перевода — списано всего; у начального остатка — остаток
     #[schema(value_type = String)]
     pub total: Decimal,
@@ -292,6 +294,7 @@ impl From<Transaction> for TransactionDto {
             account_code,
             to_account_code,
             refund,
+            lines: items.iter().map(|x| LineDto { category_code: x.category_code.clone(), amount: x.amount, note: x.name.clone() }).collect(),
             items: items.into_iter().map(Into::into).collect(),
             total,
             to_amount,

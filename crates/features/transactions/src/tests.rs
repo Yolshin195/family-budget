@@ -648,6 +648,7 @@ on_each_repo! {
         assert_eq!((x.quantity, x.unit.as_str(), x.price_per_unit, x.discount, x.amount, x.is_simple()), (d("1"), "pcs", None, d("0"), d("55"), true));
         let legacy = svc.create(p, u, receipt(&[("food", "10")])).await.unwrap();
         assert!(legacy.items[0].is_simple());
+        assert_eq!((legacy.lines[0].category_code.as_str(), legacy.lines[0].amount), ("FOOD", d("10")), "прежние клиенты API читают lines, как раньше");
         let both = TransactionInput { items: vec![ItemInput::default()], ..receipt(&[("food", "10")]) };
         assert_eq!(problem(svc.create(p, u, both).await.unwrap_err()).1, "items");
     }

@@ -642,6 +642,11 @@ impl<T: AsDecimal + ?Sized> AsDecimal for &T {
 /// Разбор суммы из формы: пробелы, запятая или точка как разделитель дроби и простая арифметика
 /// `120+45`, `3*40`, `500-120` (как в быстром расходе — работает и без JS).
 pub fn parse_money(field: &str, value: &str) -> Result<Decimal, String> {
+    Ok(parse_number(field, value)?.round_dp(4))
+}
+
+/// [`parse_money`] без округления до 4 знаков — для количества и цены (до 6 знаков, проверяет домен).
+pub fn parse_number(field: &str, value: &str) -> Result<Decimal, String> {
     let bad = || crate::error::Problem::validation(field, crate::i18n::tr(None, "err.not_a_number", &[("value", &value)])).to_string();
     // Переполнение `Decimal` — ошибка ввода, а не паника (техдолг #20).
     let too_big = || crate::error::Problem::validation(field, crate::i18n::tr(None, "err.too_big", &[])).to_string();
@@ -684,7 +689,7 @@ pub fn parse_money(field: &str, value: &str) -> Result<Decimal, String> {
         }
     }
     total = total.checked_add(flush(&term, sign)?).ok_or_else(too_big)?;
-    Ok(total.round_dp(4))
+    Ok(total)
 }
 
 /// Пункт выпадающего списка: запись справочника с названием на языке интерфейса.
@@ -789,6 +794,8 @@ mod tests {
         // Техдолг #20: переполнение — ошибка поля, а не паника сервера.
         assert_eq!(parse_money("a", "79228162514264337593543950335*10").unwrap_err(), "a: слишком большое число");
         assert!(parse_money("a", "79228162514264337593543950335+79228162514264337593543950335").is_err());
+        assert_eq!(parse_number("q", "0,123456").unwrap(), d("0.123456"), "количество — до 6 знаков, без округления");
+        assert_eq!(parse_money("a", "0,123456").unwrap(), d("0.1235"));
     }
 
     #[test]
