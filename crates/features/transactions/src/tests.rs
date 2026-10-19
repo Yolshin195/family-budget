@@ -429,23 +429,24 @@ async fn unknown_plan_occurrence_is_rejected() {
     assert!(svc.create(Uuid::new_v4(), Uuid::new_v4(), input).await.is_err(), "оплачено вхождение несуществующего плана");
 }
 
-/// Ц10: двойной клик «Сохранить» в форме счёта — два начальных остатка. Нужен `TEST_DATABASE_URL`.
+/// Ц10: у счёта один начальный остаток — это держит уникальный индекс БД, а не только проверка в сервисе.
+/// Двойной клик «Сохранить» в форме счёта больше не удваивает остаток. Нужен `TEST_DATABASE_URL`, без него
+/// тест пропускается; всё выполняется во временной схеме и удаляется.
 #[tokio::test]
-#[ignore = "Ц10: исправление ждёт утверждения разбора (docs/stage-0.md)"]
 async fn second_opening_is_rejected_by_db() {
+    use crate::domain::{Body, Transaction, TransactionData};
+    use crate::ports::TransactionRepository;
     let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
         eprintln!("TEST_DATABASE_URL не задан — тест пропущен");
         return;
     };
-    let schema = format!("tx_c10_{}", Uuid::new_v4().simple());
+    let schema = format!("tx_opening_{}", Uuid::new_v4().simple());
     let admin = sqlx::PgPool::connect(&url).await.unwrap();
     sqlx::raw_sql(&format!("CREATE SCHEMA {schema}")).execute(&admin).await.unwrap();
     let opts: sqlx::postgres::PgConnectOptions = url.parse().unwrap();
     let pool = sqlx::PgPool::connect_with(opts.options([("search_path", schema.as_str())])).await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    use crate::domain::{Body, Transaction, TransactionData};
-    use crate::ports::TransactionRepository;
-    let repo = crate::adapters::postgres::PostgresTransactionRepository::new(pool.clone());
+    let repo = Arc::new(crate::adapters::postgres::PostgresTransactionRepository::new(pool.clone()));
     let accounts = [AccountCurrency { code: "CARD".into(), currency: "THB".into(), minor_units: 2 }];
     let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
     // Оба запроса прошли проверку «остатка ещё нет» до того, как другой записал свой.
@@ -455,9 +456,33 @@ async fn second_opening_is_rejected_by_db() {
     };
     repo.insert(&opening()).await.unwrap();
     let second = repo.insert(&opening()).await;
-    let (n,): (i64,) = sqlx::query_as("SELECT count(*) FROM fb_transactions WHERE tx_kind = 'OPENING'").fetch_one(&pool).await.unwrap();
+    // Два одновременных сохранения из формы счёта: оба успешны, остаток один — последний.
+    let svc = TransactionService::new(repo, Deps { accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), budget: Arc::new(FakeBudget) });
+    let q = Uuid::new_v4();
+    let (a, b) = tokio::join!(svc.set_opening(q, u, "card", d("500"), day(15)), svc.set_opening(q, u, "card", d("500"), day(15)));
+    let count = |project: Uuid| {
+        sqlx::query_as::<_, (i64,)>("SELECT count(*) FROM fb_transactions WHERE tx_kind = 'OPENING' AND project_id = $1").bind(project).fetch_one(&pool)
+    };
+    let (n, m) = (count(p).await.unwrap().0, count(q).await.unwrap().0);
+    let balance = svc.balance(q, "CARD", day(31)).await;
     pool.close().await;
     sqlx::raw_sql(&format!("DROP SCHEMA {schema} CASCADE")).execute(&admin).await.unwrap();
     assert!(matches!(second, Err(AppError::Conflict(_))), "второй начальный остаток принят: {second:?}");
     assert_eq!(n, 1, "два начальных остатка у одного счёта — остаток удвоен");
+    assert!(a.is_ok() && b.is_ok(), "{a:?} {b:?}");
+    assert_eq!((m, balance.unwrap()), (1, d("500")));
+}
+
+/// Ц10 на in-memory адаптере: он повторяет уникальность БД, и сервис отвечает понятной ошибкой.
+#[tokio::test]
+async fn opening_is_one_per_account() {
+    let svc = service();
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    svc.set_opening(p, u, "card", d("1000"), day(1)).await.unwrap();
+    svc.set_opening(p, u, "card", d("1200"), day(1)).await.unwrap();
+    assert_eq!(balance(&svc, p, "CARD").await, d("1200"), "повторное сохранение меняет остаток, а не добавляет второй");
+    let mut again = input("OPENING", "card");
+    again.amount = Some(d("1"));
+    let err = svc.create(p, u, again).await.unwrap_err();
+    assert!(matches!(err, AppError::Conflict(m) if m.contains("CARD")), "второй остаток через API");
 }

@@ -407,6 +407,14 @@ impl Transaction {
         self.postings.iter().filter(|p| p.is_account(account)).map(|p| p.amount).sum()
     }
 
+    /// Счёт начального остатка (только у `OPENING`) — по нему БД держит «один остаток на счёт».
+    pub fn opening_account(&self) -> Option<&str> {
+        if self.tx_kind != TxKind::Opening {
+            return None;
+        }
+        self.accounts().next()
+    }
+
     /// Счета, которых касается транзакция.
     pub fn accounts(&self) -> impl Iterator<Item = &str> {
         self.postings.iter().filter(|p| p.ref_kind == RefKind::Account).map(|p| p.ref_code.as_str())

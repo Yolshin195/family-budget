@@ -10,7 +10,7 @@ use sqlx::{PgPool, Postgres, Transaction as SqlTx};
 use uuid::Uuid;
 
 use crate::domain::{Description, Posting, RefKind, Transaction, TxKind, system};
-use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository};
+use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
 const COLUMNS: &str = "id, project_id, occurred_on, tx_kind, description, description_lang, \
                        description_ru, description_en, description_th, created_by, plan_id, plan_date";
@@ -122,6 +122,18 @@ impl Row {
     }
 }
 
+/// Нарушение уникального индекса шапки → какой ключ занят (план или начальный остаток).
+fn unique(e: sqlx::Error) -> AppError {
+    if let sqlx::Error::Database(db) = &e {
+        match db.constraint() {
+            Some("fb_transactions_plan_uniq") => return AppError::Conflict(taken::PLAN.into()),
+            Some("fb_transactions_opening_uniq") => return AppError::Conflict(taken::OPENING.into()),
+            _ => {}
+        }
+    }
+    e.into()
+}
+
 fn bad_value(column: &str, value: &str) -> AppError {
     AppError::Internal(anyhow::anyhow!("{column}: неизвестное значение '{value}'"))
 }
@@ -166,8 +178,8 @@ impl TransactionRepository for PostgresTransactionRepository {
         let mut tx = self.pool.begin().await?;
         sqlx::query(
             "INSERT INTO fb_transactions (id, project_id, occurred_on, tx_kind, description, description_lang, \
-             description_ru, description_en, description_th, created_by, plan_id, plan_date) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+             description_ru, description_en, description_th, created_by, plan_id, plan_date, opening_account) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
         )
         .bind(item.id)
         .bind(item.project_id)
@@ -181,8 +193,10 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(item.created_by)
         .bind(item.plan.map(|p| p.0))
         .bind(item.plan.map(|p| p.1))
+        .bind(item.opening_account())
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(unique)?;
         write_postings(&mut tx, item).await?;
         tx.commit().await?;
         Ok(())
@@ -192,8 +206,8 @@ impl TransactionRepository for PostgresTransactionRepository {
         let mut tx = self.pool.begin().await?;
         let res = sqlx::query(
             "UPDATE fb_transactions SET occurred_on = $3, tx_kind = $4, description = $5, description_lang = $6, \
-             description_ru = $7, description_en = $8, description_th = $9, plan_id = $10, plan_date = $11 \
-             WHERE project_id = $1 AND id = $2",
+             description_ru = $7, description_en = $8, description_th = $9, plan_id = $10, plan_date = $11, \
+             opening_account = $12 WHERE project_id = $1 AND id = $2",
         )
         .bind(item.project_id)
         .bind(item.id)
@@ -206,8 +220,10 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(&item.description.th)
         .bind(item.plan.map(|p| p.0))
         .bind(item.plan.map(|p| p.1))
+        .bind(item.opening_account())
         .execute(&mut *tx)
-        .await?;
+        .await
+        .map_err(unique)?;
         if res.rows_affected() == 0 {
             return Err(AppError::NotFound(item.id.to_string()));
         }

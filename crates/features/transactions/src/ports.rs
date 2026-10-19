@@ -12,6 +12,14 @@ use uuid::Uuid;
 
 use crate::domain::{AccountCurrency, Transaction, TxKind};
 
+/// Чем занят уникальный ключ, если хранилище вернуло `Conflict`.
+pub mod taken {
+    /// Вхождение плана уже оплачено другой транзакцией.
+    pub const PLAN: &str = "plan";
+    /// У счёта уже есть начальный остаток.
+    pub const OPENING: &str = "opening";
+}
+
 /// Фильтр списка: период по `occurred_on` (включительно) + необязательные условия.
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
@@ -63,9 +71,9 @@ pub struct Payment {
 
 #[async_trait]
 pub trait TransactionRepository: Send + Sync {
-    /// Шапка + проводки в одной SQL-транзакции.
+    /// Шапка + проводки в одной SQL-транзакции. Занятый ключ — `Conflict` с одним из [`taken`].
     async fn insert(&self, item: &Transaction) -> AppResult<()>;
-    /// Шапка + замена набора проводок в одной SQL-транзакции.
+    /// Шапка + замена набора проводок в одной SQL-транзакции. Занятый ключ — как у `insert`.
     async fn update(&self, item: &Transaction) -> AppResult<()>;
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Transaction>>;
     /// Новые сначала.

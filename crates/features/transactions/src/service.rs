@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::domain::{Body, Description, Line, RefKind, Transaction, TransactionData, TxKind};
 use crate::dto::{ListQuery, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, TransactionDto, TransactionInput, TranslationInput};
-use crate::ports::{CategoryInfo, Deps, ExchangeLine, FactLine, Filter, Payment, TransactionRepository};
+use crate::ports::{CategoryInfo, Deps, ExchangeLine, FactLine, Filter, Payment, TransactionRepository, taken};
 
 /// Частых категорий в форме быстрого расхода.
 pub const FREQUENT: usize = 6;
@@ -52,7 +52,7 @@ impl TransactionService {
         let item = Transaction::create(project_id, created_by, data, &accounts).map_err(AppError::Validation)?;
         self.check_refs(project_id, &item, None).await?;
         self.check_opening(&item).await?;
-        self.repo.insert(&item).await.map_err(plan_conflict)?;
+        self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
         Ok(item.into())
     }
 
@@ -86,7 +86,7 @@ impl TransactionService {
         item.change(data, &accounts).map_err(AppError::Validation)?;
         self.check_refs(project_id, &item, Some(&before)).await?;
         self.check_opening(&item).await?;
-        self.repo.update(&item).await.map_err(plan_conflict)?;
+        self.repo.update(&item).await.map_err(|e| conflict(e, &item))?;
         Ok(item.into())
     }
 
@@ -116,7 +116,7 @@ impl TransactionService {
     /// «Отменить»: вернуть операцию с тем же id и проводками.
     pub async fn undo_delete(&self, project_id: Uuid, token: Uuid) -> AppResult<TransactionDto> {
         let item = self.undo.take(project_id, token).ok_or_else(|| AppError::NotFound("отменить уже нельзя".into()))?;
-        self.repo.insert(&item).await.map_err(plan_conflict)?;
+        self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
         Ok(item.into())
     }
 
@@ -150,7 +150,7 @@ impl TransactionService {
             return Ok(());
         }
         let accounts = self.deps.accounts.currencies(project_id).await?;
-        let body = Body::Opening { account: code, amount };
+        let body = Body::Opening { account: code.clone(), amount };
         match existing {
             Some(mut t) => {
                 let data = TransactionData { occurred_on: date, description: t.description.clone(), plan: None, body };
@@ -158,9 +158,18 @@ impl TransactionService {
                 self.repo.update(&t).await
             }
             None => {
-                let data = TransactionData { occurred_on: date, description: Description::default(), plan: None, body };
+                let data = TransactionData { occurred_on: date, description: Description::default(), plan: None, body: body.clone() };
                 let t = Transaction::create(project_id, user_id, data, &accounts).map_err(opening_error)?;
-                self.repo.insert(&t).await
+                match self.repo.insert(&t).await {
+                    // Повторное нажатие «Сохранить»: остаток успел записать параллельный запрос — обновляем его.
+                    Err(AppError::Conflict(m)) if m == taken::OPENING => {
+                        let mut t = self.repo.find_opening(project_id, &code).await?.ok_or_else(|| AppError::Conflict(m))?;
+                        let data = TransactionData { occurred_on: date, description: t.description.clone(), plan: None, body };
+                        t.change(data, &accounts).map_err(opening_error)?;
+                        self.repo.update(&t).await
+                    }
+                    other => other,
+                }
             }
         }
     }
@@ -372,9 +381,13 @@ fn opening_error(m: String) -> AppError {
     AppError::Validation(m.replacen("amount:", "opening_balance:", 1))
 }
 
-/// Уникальный индекс по (plan_id, plan_date): это вхождение уже оплачено.
-fn plan_conflict(e: AppError) -> AppError {
+/// Занятый уникальный ключ: вхождение плана уже оплачено или у счёта уже есть начальный остаток.
+fn conflict(e: AppError, item: &Transaction) -> AppError {
     match e {
+        AppError::Conflict(m) if m == taken::OPENING => AppError::Conflict(format!(
+            "у счёта {} уже есть начальный остаток — измените его в форме счёта",
+            item.opening_account().unwrap_or_default()
+        )),
         AppError::Conflict(_) => AppError::Conflict("это вхождение плана уже оплачено другой транзакцией".into()),
         other => other,
     }
