@@ -3,9 +3,11 @@
 #
 #   sudo ./deploy-vds.sh install vds.conf   чистый сервер → приложение по HTTPS (шаги 3–13, 14.3). Повторный запуск
 #                                          безопасен: готовое пропускается, .env не перезаписывается. Образец: deploy/vds.conf.example
-#   ./deploy-vds.sh update [ТЕГ]            копия БД → git pull → новый образ → перезапуск (шаг 14.1)
-#   ./deploy-vds.sh rollback [ТЕГ]          откат на образ, работавший до последнего update, или на ТЕГ (шаг 14.2)
-#   ./deploy-vds.sh auto-update             в ghcr.io новый образ → update; не поднялся → rollback; уведомление (шаг 14.3).
+#   ./deploy-vds.sh update [ТЕГ]            копия и снимок БД → git pull → новый образ → проверка; не прошёл проверку —
+#                                          сам возвращает прежние образ, код и базу (шаг 14.1)
+#   ./deploy-vds.sh rollback [ТЕГ] [--with-db]  откат на образ и код до последнего update или на ТЕГ; --with-db — ещё и
+#                                          база из снимка перед обновлением (шаг 14.2)
+#   ./deploy-vds.sh auto-update             в ghcr.io новый образ → update (с автооткатом); уведомление (шаг 14.3).
 #                                          Раз в 5 минут это делает таймер systemd
 #   sudo ./deploy-vds.sh auto-update on|off включить или выключить таймер
 #   ./deploy-vds.sh auto-update status|test состояние таймера и последние запуски | пробное уведомление
@@ -277,7 +279,7 @@ install_repo() {
   cd "$APP_DIR"
   # Серверные файлы — мимо git, чтобы git pull не мешал (шаг 8.3).
   local f
-  for f in compose.override.yaml deploy/rauthy/bootstrap-prod/ backups/ .previous-image-tag .auto-update-failed; do
+  for f in compose.override.yaml deploy/rauthy/bootstrap-prod/ backups/ .previous-image-tag .previous-rev .db-snapshot-at .auto-update-failed; do
     git_exclude "$f"
   done
   ok "$(as_app git log -1 --format='%h %s')"
@@ -704,15 +706,134 @@ cmd_check() {
   [ "$CHECK_FAILS" -eq 0 ]
 }
 
+# ---------------------------------------------------------------- снимок базы, проверка и откат (шаги 14.1–14.2)
+
+# Снимок базы перед обновлением — копия средствами PostgreSQL (CREATE DATABASE … TEMPLATE). Её сервер возвращает сам:
+# зашифрованные копии make backup без приватного ключа age не открыть, а ключ на сервере не хранится (шаг 13). Копия
+# make backup — защита от потери сервера, снимок — от сломанного обновления. Хранится один, до следующего update.
+DB_NAME=family_budget
+DB_SNAPSHOT=family_budget_before_update
+# Сломанная база при откате не удаляется — остаётся для разбора до следующего отката.
+DB_FAILED=family_budget_failed
+
+psql_su() { compose exec -T -e PGOPTIONS='-c client_min_messages=warning' db psql -U budget -d postgres -v ON_ERROR_STOP=1 -qAt "$@"; }
+db_exists() { [ "$(psql_su -c "SELECT 1 FROM pg_database WHERE datname = '$1'")" = 1 ]; }
+# Отключить всех от базы (app уже остановлен; на случай ручного psql).
+db_kick() { psql_su -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$1' AND pid <> pg_backend_pid()" >/dev/null; }
+
+# Останавливает app (копировать можно только базу без подключений) и снимает копию.
+db_snapshot() {
+  compose stop app >/dev/null
+  if db_kick "$DB_NAME" && psql_su -c "DROP DATABASE IF EXISTS $DB_SNAPSHOT" -c "CREATE DATABASE $DB_SNAPSHOT TEMPLATE $DB_NAME"; then
+    date -u '+%F %T UTC' | as_app tee .db-snapshot-at >/dev/null
+    ok "снимок базы: $DB_SNAPSHOT"
+    return
+  fi
+  compose up -d app >/dev/null || true
+  die "не удалось снять снимок базы (место на диске?) — обновление не начато, приложение запущено снова"
+}
+
+# Вернуть базу из снимка: текущая (сломанная) переименовывается в $DB_FAILED, новая копируется из снимка — снимок
+# остаётся, откат можно повторить. Владелец базы — прежний (пользователь приложения).
+db_restore() {
+  db_exists "$DB_SNAPSHOT" || { warn "снимка $DB_SNAPSHOT нет — база остаётся как есть"; return 1; }
+  local owner=''
+  compose stop app >/dev/null || return 1
+  if db_exists "$DB_NAME"; then
+    owner=$(psql_su -c "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '$DB_NAME'") || return 1
+    db_kick "$DB_NAME" || return 1
+    psql_su -c "DROP DATABASE IF EXISTS $DB_FAILED WITH (FORCE)" -c "ALTER DATABASE $DB_NAME RENAME TO $DB_FAILED" || return 1
+  fi
+  [[ ${owner:-} =~ ^[a-z_][a-z0-9_]*$ ]] || owner=fb_app
+  psql_su -c "CREATE DATABASE $DB_NAME TEMPLATE $DB_SNAPSHOT OWNER $owner" || return 1
+  ok "база — на момент обновления ($(cat .db-snapshot-at 2>/dev/null || echo '?')); прежняя — в $DB_FAILED"
+}
+
+# Репозиторий образа app без тега (ghcr.io/yolshin195/family-budget) — из итоговой конфигурации compose.
+app_repo() { local i; i=$(compose config --format json | jq -r '.services.app.image // empty'); echo "${i%:*}"; }
+
+# Прежний образ — на диске под своим тегом sha-…: откат не зависит от ghcr.io, а prune не удалит образ с тегом.
+# Остальные sha-теги снимаются — на диске остаются только работающий и прежний образы.
+keep_previous_image() {
+  local tag=$1 id repo t
+  id=$(compose ps -q app) && [ -n "$id" ] || return 1
+  id=$(as_app docker inspect -f '{{.Image}}' "$id") || return 1
+  repo=$(app_repo)
+  [ -n "$repo" ] || return 1
+  for t in $(as_app docker images --format '{{.Tag}}' "$repo"); do
+    [[ $t != sha-* || $t == "$tag" ]] || as_app docker rmi "$repo:$t" >/dev/null 2>&1 || true
+  done
+  as_app docker tag "$id" "$repo:$tag"
+}
+
+# Код ответа (000 — нет ответа).
+http_code() { curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$1" 2>/dev/null || true; }
+# База отвечает (/ready); у образов, где /ready ещё нет (404), достаточно /health.
+ready_ok() { case $(http_code "$1/ready") in 200 | 404) return 0 ;; *) return 1 ;; esac; }
+app_restarts() { local id; id=$(compose ps -q app) && [ -n "$id" ] && as_app docker inspect -f '{{.RestartCount}}' "$id"; }
+
+# Проверка после обновления и отката: /health, база (/ready), главная страница без 5xx и окно стабильности —
+# за UPDATE_STABLE_SECONDS (60) app не перезапускался. Падение в первую минуту — тоже неудача обновления.
+verify_app() {
+  local url code restarts wait=${UPDATE_STABLE_SECONDS:-60}
+  url=$(local_app_url)
+  wait_for "${UPDATE_HEALTH_TIMEOUT:-120}" "ответ приложения на /health" http_ok "$url/health" || return 1
+  wait_for "${UPDATE_READY_TIMEOUT:-30}" "базу через /ready" ready_ok "$url" || return 1
+  code=$(http_code "$url/")
+  [[ $code =~ ^[1-4][0-9][0-9]$ ]] || { warn "главная страница: ответ $code"; return 1; }
+  restarts=$(app_restarts) || { warn "контейнер app не найден"; return 1; }
+  sleep "$wait"
+  [ "$(app_restarts)" = "$restarts" ] || { warn "app перезапускался за $wait с после старта"; return 1; }
+  http_ok "$url/health" && ready_ok "$url" || { warn "через $wait с приложение не отвечает"; return 1; }
+  ok "приложение и база отвечают, за $wait с без перезапусков"
+}
+
+# Новая версия: код, образ, запуск, проверка. В подоболочке: die и ошибки ведут к откату, а не к выходу.
+update_apply() {
+  local tag=$1
+  as_app git pull --ff-only --quiet || return 1
+  ok "код: $(as_app git log -1 --format='%h %s')"
+  [ -z "$tag" ] || env_set APP_IMAGE_TAG "$tag"
+  info "образ: ghcr.io/yolshin195/family-budget:$(env_get APP_IMAGE_TAG)"
+  compose pull --quiet || return 1
+  compose up -d || return 1
+  verify_app
+}
+
+# Откат: база из снимка (with-db), код на REV (если задан), образ TAG — с диска, иначе из ghcr.io; проверка.
+rollback_to() {
+  local tag=$1 rev=${2:-} db=${3:-}
+  compose stop app >/dev/null || return 1
+  if [ "$db" = with-db ]; then db_restore || return 1; fi
+  if [ -n "$rev" ] && [ "$(as_app git rev-parse HEAD)" != "$rev" ]; then
+    as_app git reset --keep --quiet "$rev" || return 1
+    ok "код: $(as_app git log -1 --format='%h %s')"
+  fi
+  env_set APP_IMAGE_TAG "$tag"
+  if as_app docker image inspect "$(app_repo):$tag" >/dev/null 2>&1; then
+    info "образ $tag — с диска"
+  else
+    compose pull --quiet app || return 1
+  fi
+  compose up -d app || return 1
+  verify_app
+}
+
+# Коды выхода: 0 — обновлено; 3 — новая версия не прошла проверку, вернулись прежние образ, код и база;
+# 1 — не обновлено и откатить не удалось (или обновление не начиналось).
 cmd_update() {
   app_context
-  local tag=${1:-} prev=''
+  local tag=${1:-} prev='' prev_rev
   [ -z "$tag" ] || valid_tag "$tag"
   deploy_lock -w 900 || die "другое обновление или откат не закончились за 15 минут"
   step "Обновление (шаг 14.1)"
   if prev=$(running_tag); then
     printf '%s\n' "$prev" | as_app tee .previous-image-tag >/dev/null
-    info "сейчас работает $prev"
+    if keep_previous_image "$prev"; then info "сейчас работает $prev — образ сохранён на диске для отката"
+    else warn "не удалось сохранить образ $prev на диске — откат скачает его из ghcr.io"; fi
+  else
+    prev=''
+    warn "неизвестно, какой образ работает сейчас — при неудаче откатить автоматически не получится"
   fi
   if [ -n "$(env_get BACKUP_AGE_RECIPIENT)" ]; then
     as_app env ENGINE=docker make --no-print-directory backup
@@ -721,33 +842,51 @@ cmd_update() {
   else
     die "резервные копии не настроены (BACKUP_AGE_RECIPIENT в .env, шаг 13). Обновить без копии: SKIP_BACKUP=1 $0 update"
   fi
-  as_app git pull --ff-only --quiet
-  ok "код: $(as_app git log -1 --format='%h %s')"
-  [ -z "$tag" ] || env_set APP_IMAGE_TAG "$tag"
-  info "образ: ghcr.io/yolshin195/family-budget:$(env_get APP_IMAGE_TAG)"
-  compose pull --quiet
-  compose up -d
-  wait_app
-  as_app docker image prune -f >/dev/null
-  rm -f .auto-update-failed
-  ok "работает $(running_tag || env_get APP_IMAGE_TAG)"
-  [ -z "$prev" ] || info "откат на $prev: $0 rollback"
+  prev_rev=$(as_app git rev-parse HEAD)
+  printf '%s\n' "$prev_rev" | as_app tee .previous-rev >/dev/null
+  db_snapshot
+  # Дальше app остановлен: любая неудача — возврат на прежние образ, код и базу.
+  if (update_apply "$tag"); then
+    as_app docker image prune -f >/dev/null
+    rm -f .auto-update-failed
+    ok "работает $(running_tag || env_get APP_IMAGE_TAG)"
+    [ -z "$prev" ] || info "откат на $prev: $0 rollback (с базой на момент обновления: $0 rollback --with-db)"
+    return 0
+  fi
+  compose logs --tail 40 app >&2 || true
+  [ "${NO_AUTO_ROLLBACK:-0}" != 1 ] || die "обновление не прошло проверку; автооткат выключен (NO_AUTO_ROLLBACK=1): $0 rollback --with-db"
+  [ -n "$prev" ] || die "обновление не прошло проверку, а прежний образ неизвестен — приложение НЕ работает. docs/deploy-vds.md, шаги 14.2, 15"
+  step "Обновление не прошло проверку — возвращаю $prev, код и базу на момент обновления"
+  if (rollback_to "$prev" "$prev_rev" with-db); then
+    warn "вернул $prev и базу на $(cat .db-snapshot-at); сломанная база — в $DB_FAILED. APP_IMAGE_TAG=$prev закреплён: после исправления — $0 update latest"
+    exit 3
+  fi
+  compose logs --tail 40 app >&2 || true
+  die "обновление не прошло проверку, и откат тоже — приложение НЕ работает. docs/deploy-vds.md, шаги 14.2, 15, 16"
 }
 
 cmd_rollback() {
   app_context
-  local tag=${1:-}
-  [ -n "$tag" ] || tag=$(cat .previous-image-tag 2>/dev/null) || true
+  local tag='' rev='' db='' a
+  for a in "$@"; do
+    case $a in --with-db) db=with-db ;; -*) usage >&2; exit 2 ;; *) tag=$a ;; esac
+  done
+  # Без тега — отменить последний update целиком: его прежние образ и код.
+  if [ -z "$tag" ]; then
+    tag=$(cat .previous-image-tag 2>/dev/null) || true
+    rev=$(cat .previous-rev 2>/dev/null) || true
+  fi
   [ -n "$tag" ] || die "укажите тег: $0 rollback sha-<коммит> (теги — GitHub → Packages → family-budget)"
   valid_tag "$tag"
   deploy_lock -w 900 || die "другое обновление или откат не закончились за 15 минут"
   step "Откат приложения на $tag (шаг 14.2)"
-  env_set APP_IMAGE_TAG "$tag"
-  compose pull --quiet app
-  compose up -d app
-  wait_app
+  [ -z "$db" ] || warn "база вернётся на момент обновления ($(cat .db-snapshot-at 2>/dev/null || echo '?')); записи после него останутся только в $DB_FAILED"
+  if ! (rollback_to "$tag" "$rev" "$db"); then
+    compose logs --tail 40 app >&2 || true
+    die "откат не удался — docs/deploy-vds.md, шаги 15, 16"
+  fi
   info "APP_IMAGE_TAG=$tag зафиксирован в .env; вернуться на свежие версии: $0 update latest"
-  info "Миграции БД идут только вперёд: если старый образ не работает с новой схемой — восстановите копию (шаг 15)."
+  [ -n "$db" ] || info "База не менялась. Если старый образ не работает с новой схемой: $0 rollback --with-db (записи после обновления пропадут) или шаг 15."
 }
 
 # ---------------------------------------------------------------- автообновление (шаг 14.3)
@@ -814,7 +953,7 @@ notify() {
 auto_update_run() {
   app_context
   deploy_lock -n || { info "идёт update или rollback — проверю в следующий раз"; return 0; }
-  local id running image fresh prev log result
+  local id running image fresh prev log result status
   id=$(compose ps -q app 2>/dev/null) || true
   [ -n "$id" ] || { info "app не запущен — пропускаю (запуск: docker compose up -d)"; return 0; }
   running=$(as_app docker inspect -f '{{.Image}}' "$id")
@@ -831,20 +970,22 @@ auto_update_run() {
   prev=$(running_tag) || prev=''
   step "Новая сборка $image (${fresh:7:12}), сейчас ${prev:-неизвестная версия}"
   log=$(mktemp)
-  if FB_DEPLOY_LOCKED=1 "$BASH" "$SELF" update 2>&1 | tee "$log"; then
+  status=0
+  FB_DEPLOY_LOCKED=1 "$BASH" "$SELF" update 2>&1 | tee "$log" || status=$?
+  if [ "$status" -eq 0 ]; then
     rm -f "$log"
     notify "обновлено до $(running_tag || echo "${fresh:7:12}")" \
       "$(env_get APP_BASE_URL) обновлён${prev:+ (было $prev)}. Код: $(as_app git log -1 --format='%h %s')" || true
     return 0
   fi
 
-  # Сборку, которая не встала, не повторяем каждые 5 минут — до следующей сборки или ручного update.
+  # Сборку, которая не прошла проверку, не повторяем каждые 5 минут — до следующей сборки или ручного update.
   printf '%s\n' "$fresh" | as_app tee .auto-update-failed >/dev/null
-  if http_ok "$(local_app_url)/health"; then
+  if [ "$status" -eq 3 ]; then
+    result="Новая версия не прошла проверку: update сам вернул $prev, код и базу на момент обновления (сломанная база — в $DB_FAILED).
+Автообновление на паузе (APP_IMAGE_TAG=$prev); после исправления: $APP_DIR/scripts/deploy-vds.sh update latest"
+  elif http_ok "$(local_app_url)/health"; then
     result="Обновление не выполнено, приложение работает на прежней версии${prev:+ $prev}."
-  elif [ -n "$prev" ] && FB_DEPLOY_LOCKED=1 "$BASH" "$SELF" rollback "$prev" 2>&1 | tee -a "$log"; then
-    result="Новая версия не поднялась, вернул $prev. Автообновление на паузе (APP_IMAGE_TAG=$prev);
-после исправления: $APP_DIR/scripts/deploy-vds.sh update latest"
   else
     result="Новая версия не поднялась, откатить не удалось — приложение НЕ работает. docs/deploy-vds.md, шаги 14.2, 15, 16."
   fi

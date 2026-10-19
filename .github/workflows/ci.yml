@@ -1,4 +1,4 @@
-# Проверки на каждый PR (ТЗ, раздел 13): тесты, уязвимые зависимости (cargo audit, cargo deny),
+# Проверки на каждый PR (ТЗ, раздел 13): тесты, сценарии отката deploy-vds.sh, уязвимые зависимости (cargo audit, cargo deny),
 # сканирование образа (Trivy), OWASP ZAP baseline — без предупреждений уровней High и Medium.
 #
 # - На main не запускается: тесты и сборку образа там делает docker-publish.yml (теги — только при зелёных тестах),
@@ -37,6 +37,16 @@ jobs:
           shared-key: test
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked
+
+  deploy-script:
+    name: Deploy script rollback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      # Сценарии сломанного обновления (issue #43): docker, curl и make — фейки, Docker и сервер не нужны.
+      - run: shellcheck -S warning scripts/*.sh scripts/tests/*.sh
+      - run: bash scripts/tests/deploy-vds-rollback.sh
 
   audit:
     name: Dependency audit

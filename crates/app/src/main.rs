@@ -176,8 +176,22 @@ async fn main() -> anyhow::Result<()> {
         .layer(middleware::from_fn_with_state(auth.clone(), require_identity))
         .layer(middleware::from_fn(no_index));
     // Публичное: лендинг, вход, демо, приглашения, MCP. Лимит по IP — до сессии (статика и MCP — без него).
+    // /health — процесс жив; /ready — ещё и база отвечает (проверка после обновления, deploy-vds.sh).
+    let db = ctx.pool.clone();
     let public = Router::new()
         .route("/health", get(|| async { "ok" }))
+        .route(
+            "/ready",
+            get(move || {
+                let db = db.clone();
+                async move {
+                    match sqlx::query("SELECT 1").execute(&db).await {
+                        Ok(_) => (StatusCode::OK, "ok"),
+                        Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "db"),
+                    }
+                }
+            }),
+        )
         .route("/static/{file}", get(static_file))
         .merge(feats.public)
         .layer(middleware::from_fn_with_state(auth.clone(), maybe_user))

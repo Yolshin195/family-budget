@@ -603,9 +603,9 @@ pub async fn maybe_user(State(auth): State<AuthState>, mut req: Request, next: N
     next.run(req).await
 }
 
-/// Публичные адреса без лимита по IP: статика, проверка живости и MCP (у него свой лимит на
+/// Публичные адреса без лимита по IP: статика, проверки живости и готовности и MCP (у него свой лимит на
 /// вызывающего; запросы claude.ai приходят с общих адресов).
-const IP_LIMIT_EXEMPT: [&str; 4] = ["/static/", "/health", "/mcp", "/.well-known/"];
+const IP_LIMIT_EXEMPT: [&str; 5] = ["/static/", "/health", "/ready", "/mcp", "/.well-known/"];
 
 /// Middleware для публичных страниц (лендинг, вход, `/demo`, приглашения): лимит запросов в минуту
 /// на IP — до сессии лимита на пользователя ещё нет. Нужен [`RequestMeta`] (`attach_meta` снаружи).
