@@ -62,6 +62,8 @@ pub struct Config {
     pub swagger: bool,
     /// Запросов в минуту на сессию / API-токен.
     pub rate_limit: u32,
+    /// Запросов в минуту с одного IP к публичным страницам (лендинг, вход, демо).
+    pub public_rate_limit: u32,
     /// Брать IP клиента из `X-Forwarded-For` (приложение за обратным прокси).
     pub trust_proxy: bool,
     /// Адрес для связи на лендинге и правовых страницах.
@@ -120,6 +122,7 @@ impl Config {
             guest_demo: flag("GUEST_DEMO", true),
             swagger: flag("SWAGGER", !prod),
             rate_limit: env::var("RATE_LIMIT_PER_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(600),
+            public_rate_limit: env::var("PUBLIC_RATE_LIMIT_PER_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(120),
             trust_proxy: flag("TRUST_PROXY", false),
             contact_email: env::var("CONTACT_EMAIL").unwrap_or_else(|_| format!("hello@{}", base_url.split("://").nth(1).unwrap_or("localhost").split([':', '/']).next().unwrap_or("localhost"))),
             oidc,
@@ -189,6 +192,7 @@ impl Config {
             guest_demo: true,
             swagger: false,
             rate_limit: 600,
+            public_rate_limit: 120,
             trust_proxy: false,
             contact_email: "hello@localhost".into(),
         }

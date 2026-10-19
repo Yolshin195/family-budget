@@ -520,3 +520,38 @@ async fn login_error_details_go_to_journal_not_to_page() {
     assert!(failed[0].details.iter().any(|(k, v)| k == "description" && v.contains("upstream github")), "{:?}", failed[0].details);
 }
 
+/// Б4: «Посмотреть демо» — только со своего сайта (без `Origin`/`Referer` — отказ), сессия гостя
+/// живёт сутки, а не 30 дней.
+#[tokio::test]
+async fn demo_needs_origin_and_guest_session_lasts_a_day() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let e = env();
+    let (me, _, _) = signed_up(&e, "sub-me").await;
+    e.svc.ensure_user(crate::service::GUEST_SUB, "guest@demo.local", "Guest", Lang::En).await.unwrap();
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    e.svc.add_guest(me, family).await.unwrap();
+    let repo = e.repo.clone();
+    let app = crate::adapters::web::public(Arc::new(e.svc)).layer(axum::Extension(meta()));
+    let post = |origin: Option<&'static str>| {
+        let app = app.clone();
+        async move {
+            let mut req = Request::builder().method("POST").uri("/demo");
+            if let Some(o) = origin {
+                req = req.header("origin", o);
+            }
+            app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap().status()
+        }
+    };
+    let before = repo.sessions.lock().unwrap().len();
+    assert_eq!(post(None).await, StatusCode::FORBIDDEN, "без Origin");
+    assert_eq!(post(Some("https://evil.example")).await, StatusCode::FORBIDDEN);
+    assert_eq!(repo.sessions.lock().unwrap().len(), before, "сессии не созданы");
+    assert_eq!(post(Some("http://localhost:8080")).await, StatusCode::SEE_OTHER);
+    let sessions = repo.sessions.lock().unwrap().clone();
+    let guest = sessions.last().unwrap();
+    assert_eq!(guest.expires_at - guest.created_at, Duration::hours(24));
+}
+

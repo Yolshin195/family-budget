@@ -274,6 +274,8 @@ pub fn safe_next(next: &str) -> String {
 pub const SESSION_IDLE: Duration = Duration::days(7);
 /// Абсолютный срок жизни сессии.
 pub const SESSION_MAX: Duration = Duration::days(30);
+/// Сессия гостя демо — сутки (столько же живёт её cookie).
+pub const GUEST_SESSION_MAX: Duration = Duration::hours(24);
 /// Как часто обновлять `last_seen_at` (чтобы не писать в БД на каждый запрос).
 pub const TOUCH_EVERY: Duration = Duration::minutes(5);
 
@@ -293,6 +295,12 @@ pub struct SessionRecord {
 impl SessionRecord {
     pub fn new(id_hash: String, user_id: Uuid, mfa: bool, ip: Option<String>, user_agent: Option<String>, now: DateTime<Utc>) -> Self {
         Self { id_hash, user_id, created_at: now, last_seen_at: now, expires_at: now + SESSION_MAX, mfa, ip, user_agent, revoked_at: None }
+    }
+
+    /// Абсолютный срок жизни короче обычного (гость демо).
+    pub fn lasting(mut self, max: Duration) -> Self {
+        self.expires_at = self.created_at + max;
+        self
     }
 
     /// Действует: не отозвана, не истекла, неактивность меньше 7 дней.

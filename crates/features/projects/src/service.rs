@@ -15,9 +15,9 @@ use kernel::i18n::Lang;
 use uuid::Uuid;
 
 use crate::domain::{
-    ApiToken, AuditEvent, Invite, InviteState, MAX_ACTIVE_INVITES, Member, PendingLogin, Project, ProjectKind, SessionRecord, TOKEN_TERMS, User, action,
-    check_members, family_name, is_default_personal_name, normalize_currency, normalize_email, normalize_name, normalize_scopes, personal_name, safe_next,
-    split_invite_code,
+    ApiToken, AuditEvent, GUEST_SESSION_MAX, Invite, InviteState, MAX_ACTIVE_INVITES, Member, PendingLogin, Project, ProjectKind, SESSION_MAX, SessionRecord,
+    TOKEN_TERMS, User, action, check_members, family_name, is_default_personal_name, normalize_currency, normalize_email, normalize_name, normalize_scopes,
+    personal_name, safe_next, split_invite_code,
 };
 use crate::ports::{AccessRepository, Deps, ProjectRepository};
 
@@ -195,7 +195,7 @@ impl ProjectService {
                 u
             }
         };
-        let raw = self.open_session(user.id, login.mfa(), meta).await?;
+        let raw = self.open_session(user.id, login.mfa(), meta, SESSION_MAX).await?;
         self.audit(audit_event(Some(user.id), None, action::LOGIN, meta, &[("method", "rauthy".into()), ("mfa", login.mfa().to_string())])).await;
         let onboarding = self.repo.projects_of(user.id).await?.is_empty();
         Ok(LoginResult { raw_session: raw, user_id: user.id, onboarding, next: pending.next.clone() })
@@ -208,9 +208,9 @@ impl ProjectService {
         self.audit(audit_event(None, None, action::LOGIN_FAILED, meta, &details)).await;
     }
 
-    async fn open_session(&self, user_id: Uuid, mfa: bool, meta: &RequestMeta) -> AppResult<String> {
+    async fn open_session(&self, user_id: Uuid, mfa: bool, meta: &RequestMeta, max: Duration) -> AppResult<String> {
         let raw = random_token(32);
-        let rec = SessionRecord::new(sha256_hex(&raw), user_id, mfa, meta.ip.clone(), meta.user_agent.clone(), Utc::now());
+        let rec = SessionRecord::new(sha256_hex(&raw), user_id, mfa, meta.ip.clone(), meta.user_agent.clone(), Utc::now()).lasting(max);
         self.access.insert_session(&rec).await?;
         Ok(raw)
     }
@@ -222,7 +222,7 @@ impl ProjectService {
         }
         let email = normalize_email(email).map_err(AppError::Validation)?;
         let user = self.repo.user_by_email(&email).await?.ok_or_else(|| AppError::Validation(format!("email: пользователь '{email}' не найден")))?;
-        let raw = self.open_session(user.id, false, meta).await?;
+        let raw = self.open_session(user.id, false, meta, SESSION_MAX).await?;
         self.audit(audit_event(Some(user.id), None, action::LOGIN, meta, &[("method", "dev".into())])).await;
         Ok(raw)
     }
@@ -234,7 +234,8 @@ impl ProjectService {
         }
         let guest = self.repo.user_by_sub(GUEST_SUB).await?.ok_or_else(|| AppError::NotFound("демо-проект ещё не готов".into()))?;
         let project = self.repo.projects_of(guest.id).await?.into_iter().next().ok_or_else(|| AppError::NotFound("демо-проект ещё не готов".into()))?;
-        let raw = self.open_session(guest.id, false, meta).await?;
+        // Гость не регистрировался: сессия живёт сутки, а не 30 дней.
+        let raw = self.open_session(guest.id, false, meta, GUEST_SESSION_MAX).await?;
         Ok((raw, project.0.id))
     }
 

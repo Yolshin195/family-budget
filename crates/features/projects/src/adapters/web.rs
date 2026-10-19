@@ -11,8 +11,8 @@ use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use chrono::{DateTime, Utc};
 use kernel::auth::{
-    Csrf, CurrentUser, Identity, LANG_COOKIE, MaybeUser, PROJECT_COOKIE, RequestMeta, Role, Theme, Via, cookie, request_lang, same_origin, session_cookie, session_credential,
-    session_csrf, set_cookie, set_cookie_at,
+    Csrf, CurrentUser, Identity, LANG_COOKIE, MaybeUser, PROJECT_COOKIE, RequestMeta, Role, Theme, Via, cookie, request_lang, same_origin, same_origin_strict,
+    session_cookie, session_credential, session_csrf, set_cookie, set_cookie_at,
 };
 use kernel::config::Config;
 use kernel::crypto::ct_eq;
@@ -308,10 +308,11 @@ async fn dev_login(State(svc): Svc, headers: HeaderMap, Extension(meta): Extensi
     }
 }
 
-/// «Посмотреть демо»: вход гостем в демо-проект с ролью VIEWER, без регистрации.
+/// «Посмотреть демо»: вход гостем в демо-проект с ролью VIEWER, без регистрации. Ни сессии, ни
+/// CSRF-токена тут нет, поэтому `Origin` (или `Referer`) обязателен.
 async fn demo(State(svc): Svc, headers: HeaderMap, Extension(meta): Extension<RequestMeta>) -> PageResult {
     let cfg = svc.config();
-    if !same_origin(cfg, &headers) {
+    if !same_origin_strict(cfg, &headers) {
         return Err(PageError(AppError::Forbidden("CSRF: запрос с чужого сайта".into())));
     }
     let (raw, project) = svc.guest_login(&meta).await?;
