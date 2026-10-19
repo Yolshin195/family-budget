@@ -51,6 +51,7 @@ impl TransactionService {
         let accounts = self.deps.accounts.currencies(project_id).await?;
         let item = Transaction::create(project_id, created_by, data, &accounts).map_err(AppError::Validation)?;
         self.check_refs(project_id, &item, None).await?;
+        self.check_plan(&item, None).await?;
         self.check_opening(&item).await?;
         self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
         Ok(item.into())
@@ -85,6 +86,7 @@ impl TransactionService {
         let accounts = self.deps.accounts.currencies(project_id).await?;
         item.change(data, &accounts).map_err(AppError::Validation)?;
         self.check_refs(project_id, &item, Some(&before)).await?;
+        self.check_plan(&item, Some(&before)).await?;
         self.check_opening(&item).await?;
         self.repo.update(&item).await.map_err(|e| conflict(e, &item))?;
         Ok(item.into())
@@ -321,6 +323,26 @@ impl TransactionService {
 
     async fn load(&self, project_id: Uuid, id: Uuid) -> AppResult<Transaction> {
         self.repo.find(project_id, id).await?.ok_or_else(|| not_found(id))
+    }
+
+    /// Оплата вхождения плана (этап 0, Ц7): план есть в проекте, дата — из его правила, тип операции —
+    /// как у плана, вхождение не пропущено. Вторую оплату того же вхождения не даёт уникальный индекс.
+    /// Если операция и раньше оплачивала это вхождение, проверка не повторяется.
+    async fn check_plan(&self, item: &Transaction, before: Option<&Transaction>) -> AppResult<()> {
+        let Some((plan_id, date)) = item.plan else { return Ok(()) };
+        if before.is_some_and(|b| b.plan == item.plan) {
+            return Ok(());
+        }
+        let Some(occ) = self.deps.plans.occurrence(item.project_id, plan_id, date).await? else {
+            return Err(AppError::Validation(format!("plan_date: у плана {plan_id} нет платежа на {date}")));
+        };
+        if occ.kind != item.tx_kind.as_str() {
+            return Err(AppError::Validation(format!("plan_id: плановая операция — {}, а эта — {}", occ.kind, item.tx_kind.as_str())));
+        }
+        if occ.skipped {
+            return Err(AppError::Validation(format!("plan_date: платёж {date} пропущен — сначала верните его в календаре")));
+        }
+        Ok(())
     }
 
     /// У счёта один начальный остаток: он ведётся из формы счёта.

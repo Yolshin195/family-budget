@@ -55,12 +55,14 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "accounts")] list.push(accounts::feature(accounts_api.clone())); // @f:accounts
     #[cfg(feature = "categories")] list.push(categories::feature(categories_api.clone())); // @f:categories
     #[cfg(feature = "transactions")] let budget_view = wire_transactions::BudgetViewAdapter::default(); // @f:transactions
-    #[cfg(feature = "transactions")] let transactions_api = transactions::api(ctx, transactions::Deps { accounts: Arc::new(wire_transactions::AccountsLookupAdapter(accounts_api.clone(), currencies_api.clone())), categories: Arc::new(wire_transactions::CategoriesLookupAdapter(categories_api.clone())), budget: Arc::new(budget_view.clone()) }); // @f:transactions
+    #[cfg(feature = "transactions")] let plans_lookup = wire_transactions::PlansLookupAdapter::default(); // @f:transactions
+    #[cfg(feature = "transactions")] let transactions_api = transactions::api(ctx, transactions::Deps { accounts: Arc::new(wire_transactions::AccountsLookupAdapter(accounts_api.clone(), currencies_api.clone())), categories: Arc::new(wire_transactions::CategoriesLookupAdapter(categories_api.clone())), budget: Arc::new(budget_view.clone()), plans: Arc::new(plans_lookup.clone()) }); // @f:transactions
     #[cfg(feature = "transactions")] let _ = ledger.0.set(transactions_api.clone()); // @f:transactions
     #[cfg(feature = "transactions")] list.push(transactions::feature(transactions_api.clone())); // @f:transactions
     #[cfg(feature = "limits")] let limits_api = limits::api(ctx, limits::Deps { categories: Arc::new(wire_limits::CategoriesLookupAdapter(categories_api.clone())) }); // @f:limits
     #[cfg(feature = "limits")] list.push(limits::feature(limits_api.clone())); // @f:limits
     #[cfg(feature = "planning")] let planning_api = planning::api(ctx, planning::Deps { payments: Arc::new(wire_planning::PaymentsAdapter(transactions_api.clone())), accounts: Arc::new(wire_planning::AccountsAdapter(accounts_api.clone())), categories: Arc::new(wire_planning::CategoriesAdapter(categories_api.clone())), rates: Arc::new(wire_planning::RatesAdapter(rates_api.clone())) }); // @f:planning
+    #[cfg(feature = "planning")] let _ = plans_lookup.0.set(planning_api.clone()); // @f:planning
     #[cfg(feature = "planning")] list.push(planning::feature(planning_api.clone())); // @f:planning
     #[cfg(feature = "budget")] let budget_api = budget::api(ctx, budget::Deps { categories: Arc::new(wire_budget::CategoriesAdapter(categories_api.clone())), facts: Arc::new(wire_budget::FactsAdapter(transactions_api.clone())), plans: Arc::new(wire_budget::PlansAdapter(planning_api.clone())), limits: Arc::new(wire_budget::LimitsAdapter(limits_api.clone())), accounts: Arc::new(wire_budget::AccountsAdapter(accounts_api.clone())), rates: Arc::new(wire_budget::RatesAdapter(rates_api.clone())) }); // @f:budget
     #[cfg(feature = "budget")] let _ = budget_view.0.set(budget_api.clone()); // @f:budget

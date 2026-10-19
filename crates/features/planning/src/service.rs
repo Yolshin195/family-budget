@@ -173,6 +173,17 @@ impl PlanningService {
             .ok_or_else(|| AppError::NotFound(format!("вхождение {plan_id} / {date} не найдено")))
     }
 
+    /// Публичный контракт для операций: тип плана и пропущено ли его вхождение `date`.
+    /// `None` — плана нет в проекте или дата не из его правила (в т. ч. после `end_on`).
+    pub async fn occurrence_kind(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<(String, bool)>> {
+        let Some(plan) = self.repo.find(project_id, plan_id).await? else { return Ok(None) };
+        if !plan.occurs_on(date) {
+            return Ok(None);
+        }
+        let skipped = self.repo.skips(project_id, date, date).await?.iter().any(|(p, _)| *p == plan_id);
+        Ok(Some((plan.tx_kind, skipped)))
+    }
+
     /// Пропустить вхождение (без транзакции).
     pub async fn skip(&self, project_id: Uuid, user_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<()> {
         let today = chrono::Local::now().date_naive();

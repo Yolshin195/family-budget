@@ -116,6 +116,23 @@ pub struct Deps {
     pub categories: Arc<dyn CategoriesLookup>,
     /// Остатки лимитов и курсы для предупреждения в форме (из фичи `budget`).
     pub budget: Arc<dyn BudgetView>,
+    /// Планы, вхождения которых оплачивают операции (из фичи `planning`).
+    pub plans: Arc<dyn PlansLookup>,
+}
+
+/// Вхождение плана, которое оплачивает операция.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlanOccurrence {
+    /// Тип плана: EXPENSE / INCOME / TRANSFER.
+    pub kind: String,
+    /// Вхождение пропущено — оплатить его можно, только вернув в календаре.
+    pub skipped: bool,
+}
+
+#[async_trait]
+pub trait PlansLookup: Send + Sync {
+    /// Вхождение плана проекта на дату. `None` — такого плана нет или дата не из его правила.
+    async fn occurrence(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<PlanOccurrence>>;
 }
 
 /// Лимит категории в периоде (суммы в базовой валюте проекта).

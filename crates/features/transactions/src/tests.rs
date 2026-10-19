@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::adapters::memory::InMemoryTransactionRepository;
 use crate::dto::{LineDto, ListQuery, TransactionInput, TranslationInput};
 use crate::domain::{AccountCurrency, Description};
-use crate::ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, Deps};
+use crate::ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, Deps, PlanOccurrence, PlansLookup};
 use crate::service::TransactionService;
 
 struct FakeAccounts;
@@ -92,11 +92,29 @@ impl BudgetView for FakeBudget {
     }
 }
 
+/// План «Аренда» (расход) платится 5-го числа; платёж 12.10 пропущен. Других планов нет.
+const RENT: Uuid = Uuid::from_u128(5);
+
+struct FakePlans;
+
+#[async_trait::async_trait]
+impl PlansLookup for FakePlans {
+    async fn occurrence(&self, _p: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<PlanOccurrence>> {
+        use chrono::Datelike;
+        Ok(match (plan_id == RENT, date.day()) {
+            (true, 5) => Some(PlanOccurrence { kind: "EXPENSE".into(), skipped: false }),
+            (true, 12) => Some(PlanOccurrence { kind: "EXPENSE".into(), skipped: true }),
+            _ => None,
+        })
+    }
+}
+
+fn deps() -> Deps {
+    Deps { accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), budget: Arc::new(FakeBudget), plans: Arc::new(FakePlans) }
+}
+
 fn service() -> TransactionService {
-    TransactionService::new(
-        Arc::new(InMemoryTransactionRepository::default()),
-        Deps { accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), budget: Arc::new(FakeBudget) },
-    )
+    TransactionService::new(Arc::new(InMemoryTransactionRepository::default()), deps())
 }
 
 fn d(s: &str) -> Decimal {
@@ -183,7 +201,7 @@ async fn unknown_account_is_validation_error() {
 #[tokio::test]
 async fn plan_occurrence_is_paid_once_and_freed_on_delete() {
     let svc = service();
-    let (p, u, plan) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let (p, u, plan) = (Uuid::new_v4(), Uuid::new_v4(), RENT);
     let mut input = receipt(&[("home", "15000")]);
     input.plan_id = Some(plan);
     input.plan_date = Some(day(5));
@@ -418,15 +436,29 @@ fn templates_are_translated() {
     assert!(absent.is_empty(), "нет перевода для ключей: {absent:?}");
 }
 
-/// Ц7: несуществующий план и дата вне правила не принимаются.
+/// Ц7: оплатить можно только настоящее вхождение плана: план есть, дата из правила, тип совпадает,
+/// платёж не пропущен и ещё не оплачен.
 #[tokio::test]
-#[ignore = "Ц7: исправление ждёт утверждения разбора (docs/stage-0.md)"]
 async fn unknown_plan_occurrence_is_rejected() {
     let svc = service();
-    let mut input = receipt(&[("home", "1539.87")]);
-    input.plan_id = Some(Uuid::new_v4());
-    input.plan_date = Some(day(17));
-    assert!(svc.create(Uuid::new_v4(), Uuid::new_v4(), input).await.is_err(), "оплачено вхождение несуществующего плана");
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    let pay = |plan: Uuid, date: u32, kind: &str| {
+        let mut input = TransactionInput { lines: vec![LineDto { category_code: if kind == "INCOME" { "salary" } else { "home" }.into(), amount: d("1539.87"), note: None }], ..input(kind, "card") };
+        input.plan_id = Some(plan);
+        input.plan_date = Some(day(date));
+        input
+    };
+    let err = |e: AppError, field: &str| matches!(e, AppError::Validation(m) if m.starts_with(field));
+    assert!(err(svc.create(p, u, pay(Uuid::new_v4(), 5, "EXPENSE")).await.unwrap_err(), "plan_date"), "нет такого плана");
+    assert!(err(svc.create(p, u, pay(RENT, 17, "EXPENSE")).await.unwrap_err(), "plan_date"), "17-е — не дата правила (платили 17-го, а план на 5-е)");
+    assert!(err(svc.create(p, u, pay(RENT, 5, "INCOME")).await.unwrap_err(), "plan_id"), "план — расход, операция — доход");
+    assert!(err(svc.create(p, u, pay(RENT, 12, "EXPENSE")).await.unwrap_err(), "plan_date"), "платёж пропущен");
+    let t = svc.create(p, u, pay(RENT, 5, "EXPENSE")).await.unwrap();
+    assert!(matches!(svc.create(p, u, pay(RENT, 5, "EXPENSE")).await.unwrap_err(), AppError::Conflict(_)), "уже оплачено");
+    // Правка оплаты (сумма) с тем же вхождением — без повторной проверки и без конфликта с самой собой.
+    let mut fix = pay(RENT, 5, "EXPENSE");
+    fix.lines[0].amount = d("1600");
+    assert_eq!(svc.update(p, t.id, fix).await.unwrap().total, d("1600"));
 }
 
 /// Ц10: у счёта один начальный остаток — это держит уникальный индекс БД, а не только проверка в сервисе.
@@ -457,7 +489,7 @@ async fn second_opening_is_rejected_by_db() {
     repo.insert(&opening()).await.unwrap();
     let second = repo.insert(&opening()).await;
     // Два одновременных сохранения из формы счёта: оба успешны, остаток один — последний.
-    let svc = TransactionService::new(repo, Deps { accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), budget: Arc::new(FakeBudget) });
+    let svc = TransactionService::new(repo, deps());
     let q = Uuid::new_v4();
     let (a, b) = tokio::join!(svc.set_opening(q, u, "card", d("500"), day(15)), svc.set_opening(q, u, "card", d("500"), day(15)));
     let count = |project: Uuid| {
