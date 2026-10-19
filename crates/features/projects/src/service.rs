@@ -201,6 +201,13 @@ impl ProjectService {
         Ok(LoginResult { raw_session: raw, user_id: user.id, onboarding, next: pending.next.clone() })
     }
 
+    /// Вход не удался: пользователь видит общий текст, подробности (ответ Rauthy, ошибка проверки
+    /// токена) — только в журнале безопасности.
+    pub async fn login_failed(&self, meta: &RequestMeta, details: &[(&str, &str)]) {
+        let details: Vec<(&str, String)> = details.iter().map(|(k, v)| (*k, v.chars().take(300).collect())).collect();
+        self.audit(audit_event(None, None, action::LOGIN_FAILED, meta, &details)).await;
+    }
+
     async fn open_session(&self, user_id: Uuid, mfa: bool, meta: &RequestMeta) -> AppResult<String> {
         let raw = random_token(32);
         let rec = SessionRecord::new(sha256_hex(&raw), user_id, mfa, meta.ip.clone(), meta.user_agent.clone(), Utc::now());

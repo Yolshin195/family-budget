@@ -172,6 +172,7 @@ pub fn dict(key: &str) -> Option<Tr> {
                          "การเข้าใช้ สมาชิกและบทบาท โทเคน — ย้อนหลังหนึ่งปี เหตุการณ์ 2FA บันทึกโดย Rauthy"),
         "no_events" => ("Событий пока нет", "No events yet", "ยังไม่มีเหตุการณ์"),
         "act.login" => ("Вход", "Sign-in", "เข้าสู่ระบบ"),
+        "act.login_failed" => ("Неудачный вход", "Failed sign-in", "เข้าสู่ระบบไม่สำเร็จ"),
         "act.logout" => ("Выход", "Sign-out", "ออกจากระบบ"),
         "act.logout_all" => ("Выход на всех устройствах", "Signed out everywhere", "ออกจากระบบทุกอุปกรณ์"),
         "act.session_revoked" => ("Сессия завершена", "Session ended", "สิ้นสุดเซสชัน"),

@@ -221,8 +221,10 @@ async fn callback(State(svc): Svc, headers: HeaderMap, Extension(meta): Extensio
         }
         Ok(r)
     };
+    // Пользователю — общий текст: ответ Rauthy и подробности проверки уходят в журнал.
     if !q.error.is_empty() {
-        return fail(format!("{}: {}", q.error, q.error_description));
+        svc.login_failed(&meta, &[("error", &q.error), ("description", &q.error_description)]).await;
+        return fail(t(lang, "login_failed_hint"));
     }
     let Some(pending) = open_pending(cfg, &headers) else {
         return fail(t(lang, "login_failed_hint"));
@@ -246,7 +248,10 @@ async fn callback(State(svc): Svc, headers: HeaderMap, Extension(meta): Extensio
             )
                 .into_response())
         }
-        Err(AppError::Validation(m) | AppError::Forbidden(m)) => fail(m),
+        Err(AppError::Validation(m) | AppError::Forbidden(m)) => {
+            svc.login_failed(&meta, &[("reason", &m)]).await;
+            fail(t(lang, "login_failed_hint"))
+        }
         Err(e) => Err(PageError(e)),
     }
 }

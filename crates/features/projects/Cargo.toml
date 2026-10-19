@@ -27,3 +27,5 @@ sqlx.workspace = true
 utoipa.workspace = true
 uuid.workspace = true
 
+[dev-dependencies]
+tower.workspace = true

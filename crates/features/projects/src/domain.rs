@@ -358,6 +358,8 @@ pub fn normalize_scopes(scopes: &[String]) -> Result<Vec<String>, String> {
 /// События журнала (свои пользователь видит в профиле). Входы и 2FA дополнительно ведёт Rauthy.
 pub mod action {
     pub const LOGIN: &str = "login";
+    /// Вход не удался (ошибка от Rauthy, неверный state, ID-токен не прошёл проверку). Без пользователя.
+    pub const LOGIN_FAILED: &str = "login_failed";
     pub const LOGOUT: &str = "logout";
     pub const LOGOUT_ALL: &str = "logout_all";
     pub const SESSION_REVOKED: &str = "session_revoked";

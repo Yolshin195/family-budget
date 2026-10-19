@@ -488,3 +488,35 @@ async fn demo_guest_cannot_join_by_invite() {
     assert!(matches!(e.svc.accept_invite(guest, &code, &meta()).await.unwrap_err(), AppError::Forbidden(_)));
     assert_eq!(e.svc.invite_preview(&code, None).await.unwrap().state, InviteState::Active, "приглашение не израсходовано");
 }
+
+// ---------------------------------------------------------------- страницы входа
+
+/// Б6: ошибка входа на странице — общим текстом; ответ Rauthy (`error_description`) и причина
+/// отказа — только в журнале безопасности.
+#[tokio::test]
+async fn login_error_details_go_to_journal_not_to_page() {
+    use axum::body::{Body, to_bytes};
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    let e = env();
+    let repo = e.repo.clone();
+    let app = crate::adapters::web::public(Arc::new(e.svc)).layer(axum::Extension(meta()));
+    let page = |uri: &'static str| {
+        let app = app.clone();
+        async move {
+            let resp = app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap()).await.unwrap();
+            String::from_utf8(to_bytes(resp.into_body(), 1 << 20).await.unwrap().to_vec()).unwrap()
+        }
+    };
+    let html = page("/auth/callback?error=server_error&error_description=upstream%20github%20token%20invalid").await;
+    assert!(!html.contains("upstream github") && !html.contains("server_error"), "подробности не показываются");
+    assert!(html.contains(crate::i18n::dict("login_failed_hint").unwrap().0), "общий текст ошибки");
+
+    let audit = repo.audit.lock().unwrap().clone();
+    let failed: Vec<_> = audit.iter().filter(|a| a.action == "login_failed").collect();
+    assert_eq!(failed.len(), 1);
+    assert!(failed[0].user_id.is_none());
+    assert!(failed[0].details.iter().any(|(k, v)| k == "description" && v.contains("upstream github")), "{:?}", failed[0].details);
+}
+
