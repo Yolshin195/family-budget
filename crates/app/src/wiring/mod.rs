@@ -119,6 +119,7 @@ pub fn features(ctx: &AppContext) -> Wired {
             currencies: currencies_api,
             rates: rates_api,
             accounts: accounts_api,
+            places: places_api,
             transactions: transactions_api,
             limits: limits_api,
             planning: planning_api,

@@ -14,7 +14,7 @@ Money moves through the app in three kinds of transactions: an expense, income, 
 
 ## 1. Quick expense
 
-Click "Expense" in the menu, press <kbd>N</kbd>, or tap the round "+" on a phone. Enter the amount — you can do the maths right away: "120+45". Pick a category from the frequent ones or find it with search, which understands names in any of the three languages. The account defaults to the one you paid from last time and the date to "Today"; you can change both. Enter saves and closes the window; "Save & add another" (<kbd>Ctrl</kbd> + <kbd>Enter</kbd>) keeps it open for the next expense.
+Click "Expense" in the menu, press <kbd>N</kbd>, or tap the round "+" on a phone. Enter the amount — you can do the maths right away: "120+45". Pick a category from the frequent ones or find it with search, which understands names in any of the three languages. If you have places under "Directories", search finds them too: pick 7-Eleven and the category and account are filled in (more in ["Places: shops, cafés and markets"](@/guides/places/index.en.md)). The account defaults to the one you paid from last time and the date to "Today"; you can change both. Enter saves and closes the window; "Save & add another" (<kbd>Ctrl</kbd> + <kbd>Enter</kbd>) keeps it open for the next expense.
 
 ![The "New expense" window: amount, frequent categories, account and date](quick.en.webp)
 

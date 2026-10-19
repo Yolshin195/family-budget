@@ -5,7 +5,10 @@
 //   node scripts/guide-screenshots.mjs <папка гайда> <имя>=<путь>[@клавиша] ...
 //   node scripts/guide-screenshots.mjs site/content/guides/first-budget overview=/budget quick-expense=/budget@n limits=/limits
 //
-// «@клавиша» — нажать клавишу после загрузки (n — окно «Новый расход»). APP_URL — адрес приложения
+// «@клавиша» — нажать клавишу после загрузки (n — окно «Новый расход»); «@селектор=текст» — ввести текст в поле,
+// «@!селектор» — нажать на элемент; действий может быть несколько:
+//   quick-place='/budget@n@#q-search=cafe@!#q-results [data-place]'
+// APP_URL — адрес приложения
 // (по умолчанию http://localhost:8080), DEMO_PROJECT — проект для съёмки (по умолчанию «Семья»), CHROMIUM — путь к браузеру. Кадр 1280×800, WebP ~30–50 КБ.
 import puppeteer from 'puppeteer-core';
 import sharp from 'sharp';
@@ -37,10 +40,12 @@ for (const [lang, locale] of Object.entries(locales)) {
   for (const spec of specs) {
     // Имя — до первого «=»: в пути могут быть свои «=» (/budget?view=year).
     const name = spec.slice(0, spec.indexOf('='));
-    const [path, key] = spec.slice(spec.indexOf('=') + 1).split('@');
+    const [path, ...actions] = spec.slice(spec.indexOf('=') + 1).split('@');
     await page.goto(base + path, { waitUntil: 'networkidle0' });
-    if (key) {
-      await page.keyboard.press(key);
+    for (const act of actions) {
+      if (act.startsWith('!')) await page.click(act.slice(1));
+      else if (act.includes('=')) await page.type(act.slice(0, act.indexOf('=')), act.slice(act.indexOf('=') + 1));
+      else await page.keyboard.press(act);
       await new Promise((r) => setTimeout(r, 600));
     }
     const png = await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 800 } });

@@ -52,4 +52,4 @@ site = ["dep:site"]
 mcp = ["dep:mcp", "projects", "currencies", "accounts", "categories", "places", "rates", "limits", "transactions", "budget", "planning"]
 # @arch:features:end
 # Демо-данные при пустой БД (не фича предметной области — флаг приложения).
-seed = ["budget"]
+seed = ["budget", "places"]
