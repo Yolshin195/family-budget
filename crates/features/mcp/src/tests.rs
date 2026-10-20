@@ -15,7 +15,7 @@ use crate::adapters::memory::InMemoryGrantRepository;
 use crate::domain::*;
 use crate::dto::*;
 use crate::ports::{Accounts, Budget, Deps, Directories, Ledger, Limits, Plans, Rates};
-use crate::service::{Auth, McpService, Settings, tool_right};
+use crate::service::{Assistant, Auth, McpService, Settings, tool_right};
 
 const RESOURCE: &str = "https://budget.test/mcp";
 
@@ -505,6 +505,13 @@ struct Env {
     project: Uuid,
 }
 
+fn assistants() -> Vec<Assistant> {
+    vec![
+        Assistant { key: "claude", name: "Claude", client_id: "claude".into(), client_secret: None },
+        Assistant { key: "chatgpt", name: "ChatGPT", client_id: "chatgpt".into(), client_secret: Some("s3cret".into()) },
+    ]
+}
+
 fn env() -> Env {
     let (ledger, plans, accounts, members) = (Arc::new(FakeLedger::default()), Arc::new(FakePlans::default()), Arc::new(FakeAccounts::default()), Arc::new(FakeMemberships::default()));
     let (dirs, rates, limits) = (Arc::new(FakeDirs::default()), Arc::new(FakeRates::default()), Arc::new(FakeLimits::default()));
@@ -521,7 +528,7 @@ fn env() -> Env {
         authenticator: Arc::new(FakeAuthenticator),
         memberships: members.clone(),
     };
-    let settings = Settings { base_url: "https://budget.test".into(), resource: RESOURCE.into(), oauth_client_id: "claude".into(), oauth_scope: "openid".into(), rate_limit: 600 };
+    let settings = Settings { base_url: "https://budget.test".into(), resource: RESOURCE.into(), assistants: assistants(), oauth_scope: "openid".into(), rate_limit: 600 };
     let svc = McpService::new(Arc::new(InMemoryGrantRepository::default()), deps, settings);
     Env { svc, ledger, plans, dirs, rates, limits, accounts, members, user, project }
 }
@@ -674,6 +681,42 @@ async fn left_project_and_revoked_grant_stop_access() {
     e.svc.revoke_grant(e.user, "claude", &RequestMeta::default()).await.unwrap();
     assert!(matches!(e.caller(&e.oauth()).await.via, Via::Unconfigured { reason: Unconfigured::NoGrant, .. }));
     assert!(e.events().contains(&"mcp_access_revoked".to_string()));
+}
+
+/// У каждого ассистента свой OAuth-клиент и свой доступ: доступ Claude не открывает проект ChatGPT,
+/// у ChatGPT могут быть другие проект и права, а отключение одного не трогает другого.
+#[tokio::test]
+async fn each_assistant_has_its_own_grant() {
+    let e = env();
+    let gpt = format!("at:{}:chatgpt:{RESOURCE}", e.user);
+    e.grant(&["read", "transactions:write"]).await;
+    assert!(matches!(e.caller(&gpt).await.via, Via::Unconfigured { reason: Unconfigured::NoGrant, .. }), "доступ Claude — не доступ ChatGPT");
+
+    let other = Uuid::new_v4();
+    e.members.members.lock().unwrap().push((e.user, other, Role::Owner, false));
+    e.svc.save_grant(e.user, "chatgpt", other, Role::Owner, false, false, &["read".to_string()], &RequestMeta::default()).await.unwrap();
+    let c = e.caller(&gpt).await;
+    assert_eq!((c.project_id, c.client()), (other, "chatgpt"));
+    assert!(c.allows(Right::read("transactions")) && !c.allows(Right::write("transactions")));
+    let claude = e.caller(&e.oauth()).await;
+    assert_eq!(claude.project_id, e.project);
+    assert!(claude.allows(Right::write("transactions")));
+
+    e.svc.revoke_grant(e.user, "chatgpt", &RequestMeta::default()).await.unwrap();
+    assert!(matches!(e.caller(&gpt).await.via, Via::Unconfigured { .. }));
+    assert!(matches!(e.caller(&e.oauth()).await.via, Via::Grant { .. }), "Claude по-прежнему подключён");
+}
+
+/// Подсказка без доступа ведёт сразу на вкладку своего ассистента.
+#[tokio::test]
+async fn setup_hint_opens_the_assistant_tab() {
+    let e = env();
+    let c = e.caller(&format!("at:{}:chatgpt:{RESOURCE}", e.user)).await;
+    let ctx = e.svc.get_context(&c).await.unwrap();
+    assert!(ctx.summary.contains("https://budget.test/assistants?assistant=chatgpt"), "{}", ctx.summary);
+    assert_eq!(ctx.data["setup_url"], "https://budget.test/assistants?assistant=chatgpt");
+    let c = e.caller(&e.oauth()).await;
+    assert!(e.svc.get_context(&c).await.unwrap().summary.contains("/assistants?assistant=claude"));
 }
 
 #[tokio::test]

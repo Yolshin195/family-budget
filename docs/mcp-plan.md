@@ -347,7 +347,7 @@ MCP — открытый стандарт, сервер от модели не �
 
 | Клиент | Что добавить |
 | --- | --- |
-| ChatGPT (режим разработчика / приложения) | Хост его CIMD-документа в `OAUTH_CIMD_HOSTS`, адрес возврата `https://chatgpt.com/connector_platform_oauth_redirect` |
+| ChatGPT (плагин из своего MCP-сервера) | **Сделано 20.10.2026** — без CIMD: свой клиент `chatgpt` в Rauthy и вкладка на странице «Ассистенты» (у каждого ассистента свой доступ), см. [mcp.md](mcp.md#chatgpt) |
 | Gemini CLI, Cursor, VS Code | Заранее заведённый клиент «Локальное приложение» (возврат на `http://localhost:<любой порт>/…`) — в Gemini CLI указывается `oauth.clientId`; либо ограниченная DCR (только localhost и адреса из белого списка), т. к. часть клиентов умеет только её |
 | Gemini Enterprise / Business | Заранее заведённый клиент, адрес возврата `https://vertexaisearch.cloud.google.com/oauth-redirect` |
 

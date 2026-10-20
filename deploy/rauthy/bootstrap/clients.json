@@ -30,5 +30,20 @@
     "default_scopes": ["openid"],
     "challenges": ["S256"],
     "force_mfa": false
+  },
+  {
+    "id": "chatgpt",
+    "name": "ChatGPT MCP",
+    "redirect_uris": ["https://chatgpt.com/connector_platform_oauth_redirect", "https://chatgpt.com/connector/oauth/*"],
+    "enabled": true,
+    "flows_enabled": ["authorization_code", "refresh_token"],
+    "access_token_alg": "EdDSA",
+    "id_token_alg": "EdDSA",
+    "auth_code_lifetime": 60,
+    "access_token_lifetime": 3600,
+    "scopes": ["openid", "profile", "email"],
+    "default_scopes": ["openid"],
+    "challenges": ["S256"],
+    "force_mfa": false
   }
 ]

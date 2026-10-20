@@ -14,7 +14,7 @@ Claude can keep the budget for you: log expenses by voice or from a receipt phot
 
 ## 1. Grant access in the budget
 
-Sign in to the budget and open Profile → Security → Assistants (MCP). Choose a project and permissions: "View everything" is always on, and "Transactions: add and edit" is ticked by default. Directories, limits and scheduled operations are up to you. Click "Save access".
+Sign in to the budget and open Profile → Security → Assistants (MCP). At the top of the page there is a "Claude | ChatGPT" switch: Claude is open by default. Choose a project and permissions: "View everything" is always on, and "Transactions: add and edit" is ticked by default. Directories, limits and scheduled operations are up to you. Click "Save access".
 
 ![The Assistants (MCP) page: Claude's project and permissions](assistants.en.webp)
 
@@ -30,4 +30,4 @@ Start a new chat and write, for example: "Coffee 120 baht, cash" or send a recei
 
 For Claude Code, create a personal API token in Profile → Security → API tokens — the token defines the project and permissions. The command to connect is shown on the Assistants (MCP) page.
 
-If you change permissions, start a new chat in Claude: it asks for the list of available actions at the start of a conversation.
+If you change permissions, start a new chat in Claude: it asks for the list of available actions at the start of a conversation. ChatGPT connects to the budget separately, with its own permissions — see the guide ["How to connect ChatGPT to your budget"](@/guides/connect-chatgpt/index.en.md).

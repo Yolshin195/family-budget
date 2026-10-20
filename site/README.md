@@ -109,7 +109,8 @@ APP_URL=http://localhost:8080 node scripts/guide-screenshots.mjs site/content/gu
   overview=/budget quick-expense=/budget@n accounts=/accounts limits=/limits
 ```
 
-Интерфейс изменился — переснимите той же командой. Выноска в тексте: `{% <note kind="tip"> %}Текст{% </note> %}`
+Интерфейс изменился — переснимите той же командой. Чужие окна, которые не снять на трёх языках (настройки ChatGPT),
+рисуются схемами: `node scripts/chatgpt-schemes.mjs site/content/guides/connect-chatgpt`. Выноска в тексте: `{% <note kind="tip"> %}Текст{% </note> %}`
 (`info`, `tip`, `warn`). Фигурные скобки Tera в тексте статьи — внутри `{% raw %}…{% endraw %}`.
 
 ### Идея — что планируем

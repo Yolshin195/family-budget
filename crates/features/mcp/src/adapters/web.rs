@@ -1,10 +1,11 @@
-//! Входящий адаптер: страница «Ассистенты (MCP)» — доступ Claude к проекту и правам, подключение.
+//! Входящий адаптер: страница «Ассистенты (MCP)» — доступ Claude и ChatGPT к проекту и правам, подключение.
+//! У каждого ассистента своя вкладка (`?assistant=chatgpt`) и свой доступ: у них разные OAuth-клиенты.
 //! Права меняются только здесь: под cookie-сессией браузера, с CSRF; токен ассистента сюда не пускают.
 
 use std::sync::Arc;
 
 use askama::Template;
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
 use kernel::auth::{Identity, RequestMeta, Role, Via as AuthVia};
@@ -14,7 +15,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::domain::{ALL_DIRECTORIES, DEFAULT_GRANT_SCOPES, DIRECTORY_SCOPES, GRANT_SCOPES, Grant, scope_group};
-use crate::service::McpService;
+use crate::service::{Assistant, McpService};
 
 type Svc = State<Arc<McpService>>;
 
@@ -48,6 +49,13 @@ fn scope_groups() -> Vec<ScopeGroup> {
     groups
 }
 
+/// Вкладка ассистента: открыт ли ему доступ.
+struct Tab {
+    key: &'static str,
+    name: &'static str,
+    granted: bool,
+}
+
 struct GrantView {
     project: String,
     scopes: Vec<String>,
@@ -60,7 +68,9 @@ struct GrantView {
 struct AssistantsPage {
     page: PageCtx,
     mcp_url: String,
-    client_id: String,
+    /// Выбранный ассистент: его доступ и как его подключить.
+    assistant: Assistant,
+    tabs: Vec<Tab>,
     oauth_ready: bool,
     grant: Option<GrantView>,
     projects: Vec<ProjectOption>,
@@ -84,6 +94,15 @@ impl AssistantsPage {
     fn all_directories_checked(&self) -> bool {
         DIRECTORY_SCOPES.iter().all(|d| self.checked(d))
     }
+
+    /// «Доступ Claude», «Доступ ChatGPT».
+    fn access_title(&self) -> String {
+        self.page.t("access").replace("{name}", self.assistant.name)
+    }
+
+    fn status_off_hint(&self) -> String {
+        self.page.t("status_off_hint").replace("{name}", self.assistant.name)
+    }
 }
 
 fn ctx(page: PageCtx) -> PageCtx {
@@ -92,9 +111,17 @@ fn ctx(page: PageCtx) -> PageCtx {
     page.for_feature("profile", crate::i18n::dict).crumb(profile, "/profile").crumb(security, "/profile/security")
 }
 
-async fn render_page(svc: &McpService, page: PageCtx, error: Option<String>) -> PageResult {
+/// Ассистент по ключу из адреса или формы; неизвестный или пустой — первый (Claude).
+fn pick<'a>(svc: &'a McpService, key: &str) -> &'a Assistant {
     let s = svc.settings();
-    let grant: Option<Grant> = svc.grants(page.session.user_id).await?.into_iter().find(|g| g.client_id == s.oauth_client_id);
+    s.assistant(key).unwrap_or(&s.assistants[0])
+}
+
+async fn render_page(svc: &McpService, page: PageCtx, assistant: &Assistant, error: Option<String>) -> PageResult {
+    let s = svc.settings();
+    let grants = svc.grants(page.session.user_id).await?;
+    let tabs = s.assistants.iter().map(|a| Tab { key: a.key, name: a.name, granted: grants.iter().any(|g| g.client_id == a.client_id) }).collect();
+    let grant: Option<Grant> = grants.into_iter().find(|g| g.client_id == assistant.client_id);
     let page = ctx(page);
     let name_of = |id: Uuid| page.session.projects.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_else(|| page.t("project_gone"));
     let projects: Vec<ProjectOption> = page
@@ -115,7 +142,8 @@ async fn render_page(svc: &McpService, page: PageCtx, error: Option<String>) -> 
     let guest = svc.is_guest(page.session.user_id).await?;
     render(&AssistantsPage {
         mcp_url: s.resource.clone(),
-        client_id: s.oauth_client_id.clone(),
+        assistant: assistant.clone(),
+        tabs,
         oauth_ready: svc.issuer().await.is_some(),
         grant: view,
         projects,
@@ -130,15 +158,27 @@ async fn render_page(svc: &McpService, page: PageCtx, error: Option<String>) -> 
     })
 }
 
-async fn show(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
-    render_page(&svc, page, None).await
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct PickQuery {
+    assistant: String,
+}
+
+async fn show(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Query<PickQuery>) -> PageResult {
+    render_page(&svc, page, pick(&svc, &q.assistant), None).await
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct GrantForm {
+    assistant: String,
     project: String,
     scope: Vec<String>,
+}
+
+/// Куда вернуться после сохранения: на вкладку того же ассистента.
+fn back(assistant: &Assistant) -> String {
+    format!("/assistants?assistant={}", assistant.key)
 }
 
 /// Только из браузера: запрос по API-токену (или токену ассистента) права не меняет.
@@ -157,27 +197,39 @@ async fn save(
     axum_extra::extract::Form(f): axum_extra::extract::Form<GrantForm>,
 ) -> PageResult {
     browser_only(&identity)?;
-    let s = svc.settings().clone();
+    let assistant = pick(&svc, &f.assistant).clone();
     let Some(project) = Uuid::parse_str(&f.project).ok().and_then(|id| page.session.projects.iter().find(|p| p.id == id)).cloned() else {
         let msg = page.t("no_such_project");
-        return render_page(&svc, page, Some(msg)).await;
+        return render_page(&svc, page, &assistant, Some(msg)).await;
     };
     // «Требовать 2FA» — свойство проекта; у активного проекта оно в сессии, у другого — уточняем у сервиса.
     let require_2fa = if project.id == page.session.project_id { page.session.require_2fa } else { svc.require_2fa(page.session.user_id, project.id).await? };
-    match svc.save_grant(page.session.user_id, &s.oauth_client_id, project.id, project.role, require_2fa, identity.mfa, &f.scope, &meta).await {
+    match svc.save_grant(page.session.user_id, &assistant.client_id, project.id, project.role, require_2fa, identity.mfa, &f.scope, &meta).await {
         Ok(_) => {
             let msg = page.t("saved");
-            Ok(see_other_flash(&page.config, "/assistants", Flash::ok(msg)))
+            Ok(see_other_flash(&page.config, &back(&assistant), Flash::ok(msg)))
         }
-        Err(AppError::Forbidden(m) | AppError::Validation(m)) => render_page(&svc, page, Some(m)).await,
+        Err(AppError::Forbidden(m) | AppError::Validation(m)) => render_page(&svc, page, &assistant, Some(m)).await,
         Err(e) => Err(PageError(e)),
     }
 }
 
-async fn revoke(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(identity): Extension<Identity>, Extension(meta): Extension<RequestMeta>) -> PageResult {
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct RevokeForm {
+    assistant: String,
+}
+
+async fn revoke(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(identity): Extension<Identity>,
+    Extension(meta): Extension<RequestMeta>,
+    axum_extra::extract::Form(f): axum_extra::extract::Form<RevokeForm>,
+) -> PageResult {
     browser_only(&identity)?;
-    let client = svc.settings().oauth_client_id.clone();
-    svc.revoke_grant(page.session.user_id, &client, &meta).await?;
+    let assistant = pick(&svc, &f.assistant).clone();
+    svc.revoke_grant(page.session.user_id, &assistant.client_id, &meta).await?;
     let msg = page.t("revoked");
-    Ok(see_other_flash(&page.config, "/assistants", Flash::ok(msg)))
+    Ok(see_other_flash(&page.config, &back(&assistant), Flash::ok(msg)))
 }

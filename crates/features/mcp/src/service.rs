@@ -25,8 +25,8 @@ pub struct Settings {
     pub base_url: String,
     /// Адрес MCP-ресурса (`<base_url>/mcp`) — с ним сверяется `aud` токенов провайдера.
     pub resource: String,
-    /// OAuth-клиент ассистента у провайдера входа (вводится в Claude как Client ID).
-    pub oauth_client_id: String,
+    /// Ассистенты, которые входят через провайдера: у каждого свой OAuth-клиент и свой доступ.
+    pub assistants: Vec<Assistant>,
     /// Scope, который ассистент запрашивает у провайдера.
     pub oauth_scope: String,
     /// Запросов в минуту на ассистента.
@@ -40,7 +40,15 @@ impl Settings {
         Settings {
             resource: format!("{base_url}/mcp"),
             base_url,
-            oauth_client_id: var("MCP_OAUTH_CLIENT_ID", "claude"),
+            assistants: vec![
+                Assistant { key: "claude", name: "Claude", client_id: var("MCP_OAUTH_CLIENT_ID", "claude"), client_secret: None },
+                Assistant {
+                    key: "chatgpt",
+                    name: "ChatGPT",
+                    client_id: var("MCP_OAUTH_CHATGPT_CLIENT_ID", "chatgpt"),
+                    client_secret: kernel::config::secret_var("MCP_OAUTH_CHATGPT_CLIENT_SECRET"),
+                },
+            ],
             oauth_scope: var("MCP_OAUTH_SCOPE", "openid"),
             rate_limit: config.rate_limit,
         }
@@ -50,9 +58,37 @@ impl Settings {
         format!("{}/assistants", self.base_url)
     }
 
+    /// Страница «Ассистенты» сразу на вкладке ассистента с этим OAuth-клиентом — для подсказок модели.
+    pub fn setup_url_for(&self, client_id: &str) -> String {
+        match self.assistants.iter().find(|a| a.client_id == client_id) {
+            Some(a) => format!("{}?assistant={}", self.setup_url(), a.key),
+            None => self.setup_url(),
+        }
+    }
+
+    /// Ассистент по ключу (`claude`, `chatgpt`).
+    pub fn assistant(&self, key: &str) -> Option<&Assistant> {
+        self.assistants.iter().find(|a| a.key == key)
+    }
+
     pub fn resource_metadata_url(&self) -> String {
         format!("{}/.well-known/oauth-protected-resource/mcp", self.base_url)
     }
+}
+
+/// Ассистент, который входит через провайдера (OAuth): свой клиент у провайдера — свой доступ
+/// (проект и права) на странице «Ассистенты».
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Assistant {
+    /// Ключ — в адресе страницы (`/assistants?assistant=chatgpt`) и в форме.
+    pub key: &'static str,
+    /// Название — одно на всех языках.
+    pub name: &'static str,
+    /// OAuth-клиент у провайдера входа — вводится в ассистенте как Client ID.
+    pub client_id: String,
+    /// Секрет конфиденциального клиента: пользователь вводит его в ассистенте, поэтому он виден всем на
+    /// странице «Ассистенты» — защищают адрес возврата и PKCE, а не он. `None` — публичный клиент.
+    pub client_secret: Option<String>,
 }
 
 /// Итог проверки токена на `/mcp`.
@@ -334,7 +370,7 @@ impl McpService {
 
     fn check(&self, caller: &Caller, right: Right) -> Result<(), ToolError> {
         if let Via::Unconfigured { reason, .. } = &caller.via {
-            return Err(ToolError(reason.message(&self.settings.setup_url())));
+            return Err(ToolError(reason.message(&self.settings.setup_url_for(caller.client()))));
         }
         if caller.allows(right) { Ok(()) } else { Err(deny(right)) }
     }
@@ -372,14 +408,15 @@ impl McpService {
             "write_rates": can(Right::write("rates")),
             "write_limits": can(Right::write("limits")),
             "delete": false,
-            "how_to_change": format!("Only the user can change permissions, in a browser: {}", self.settings.setup_url()),
+            "how_to_change": format!("Only the user can change permissions, in a browser: {}", self.settings.setup_url_for(caller.client())),
         })
     }
 
     /// Проект, валюта, язык, счета с остатками, дерево категорий, частые категории, права.
     pub async fn get_context(&self, caller: &Caller) -> ToolResult {
         if let Via::Unconfigured { reason, .. } = &caller.via {
-            return Ok(ToolOutput { summary: reason.message(&self.settings.setup_url()), data: json!({"configured": false, "setup_url": self.settings.setup_url()}) });
+            let setup_url = self.settings.setup_url_for(caller.client());
+            return Ok(ToolOutput { summary: reason.message(&setup_url), data: json!({"configured": false, "setup_url": setup_url}) });
         }
         let today = today();
         let mut base = json!({
