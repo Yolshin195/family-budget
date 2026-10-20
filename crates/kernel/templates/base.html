@@ -22,7 +22,7 @@
 <div class="app">
   <aside class="sidebar" id="sidebar" aria-label="{{ page.t("nav.main") }}">
     <div class="sidebar-top">
-      <a href="/budget" class="logo" aria-label="{{ page.t("app.title") }}">
+      <a href="{{ page.start_page() }}" class="logo" aria-label="{{ page.t("app.title") }}">
         <span class="logo-mark"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("wallet") }}"></use></svg></span>
         <span class="nav-text logo-text">{{ page.t("app.title") }}</span>
       </a>

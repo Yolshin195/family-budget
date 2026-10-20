@@ -18,7 +18,7 @@ use kernel::config::Config;
 use kernel::crypto::ct_eq;
 use kernel::error::AppError;
 use kernel::i18n::Lang;
-use kernel::web::{Flash, PageCtx, PageError, PageResult, flash_cookie, render, see_other, see_other_flash};
+use kernel::web::{Flash, PageCtx, PageError, PageResult, START_PAGE, flash_cookie, render, see_other, see_other_flash};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -137,7 +137,7 @@ impl AuthPage {
             oidc: svc.oidc_enabled(),
             dev: svc.config().dev_login,
             demo_users: vec![("aleksey@demo.local", "Алексей · OWNER"), ("anna@demo.local", "Anna · EDITOR")],
-            next: "/budget".into(),
+            next: START_PAGE.into(),
             logout_csrf: None,
         }
     }
@@ -188,7 +188,7 @@ async fn login(State(svc): Svc, headers: HeaderMap, Query(q): Query<NextQuery>) 
 /// поэтому вошедшего туда не отправляем — сразу в приложение.
 async fn register(State(svc): Svc, headers: HeaderMap) -> Response {
     if signed_in(&svc, &headers).await {
-        return see_other("/budget");
+        return see_other(START_PAGE);
     }
     match &svc.config().oidc {
         Some(o) if svc.oidc_enabled() => {
@@ -317,6 +317,7 @@ async fn demo(State(svc): Svc, headers: HeaderMap, Extension(meta): Extension<Re
     let (raw, project) = svc.guest_login(&meta).await?;
     Ok((
         AppendHeaders([session_cookie(cfg, &raw, 24 * 3600), set_cookie(cfg, PROJECT_COOKIE, &project.to_string(), 24 * 3600)]),
+        // Демо показывает бюджет целиком — начинаем с «Обзора», а не со стартовой страницы.
         Redirect::to("/budget"),
     )
         .into_response())
@@ -421,7 +422,7 @@ async fn join(State(svc): Svc, headers: HeaderMap, Extension(user): Extension<Cu
                 set_cookie(cfg, JOIN_COOKIE, "", 0),
                 flash_cookie(cfg, &Flash::ok(t(lang, "joined"))),
             ]),
-            Redirect::to("/budget"),
+            Redirect::to(START_PAGE),
         )
             .into_response()),
         Err(AppError::Validation(m) | AppError::Forbidden(m) | AppError::NotFound(m)) => {
@@ -478,7 +479,7 @@ async fn onboarding(State(svc): Svc, Extension(user): Extension<CurrentUser>, Ex
     match svc.onboard(user.id, &f.name, &f.base_currency, lang).await {
         Ok(project) => Ok((
             AppendHeaders([set_cookie(svc.config(), PROJECT_COOKIE, &project.to_string(), YEAR), set_cookie(svc.config(), LANG_COOKIE, lang.code(), YEAR)]),
-            Redirect::to("/budget"),
+            Redirect::to(START_PAGE),
         )
             .into_response()),
         Err(AppError::Validation(m)) => render(&OnboardingPage { lang, langs: Lang::ALL, csrf: csrf.0, name: f.name, currency: f.base_currency, error: Some(m) }),
@@ -832,7 +833,7 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(
 
 async fn switch(State(svc): Svc, Path(id): Path<Uuid>) -> Response {
     // Проверку членства сделает middleware на следующем запросе: чужой проект просто не выберется.
-    ([set_cookie(svc.config(), PROJECT_COOKIE, &id.to_string(), YEAR)], Redirect::to("/budget")).into_response()
+    ([set_cookie(svc.config(), PROJECT_COOKIE, &id.to_string(), YEAR)], Redirect::to(START_PAGE)).into_response()
 }
 
 #[derive(Debug, Default, Deserialize)]

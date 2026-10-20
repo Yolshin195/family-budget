@@ -36,7 +36,7 @@
         {% endif %}
       {% when "member" %}
         <p class="text-muted mb-6">{{ self.t("join_member") }}</p>
-        <a class="btn-primary w-full justify-center" href="/budget">{{ self.t("join_open") }}</a>
+        <a class="btn-primary w-full justify-center" href="{{ kernel::web::START_PAGE }}">{{ self.t("join_open") }}</a>
       {% when _ %}
         <div class="alert alert-warn mb-6" role="note"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("triangle-alert") }}"></use></svg>
           <span>{{ self.state_text() }}</span></div>

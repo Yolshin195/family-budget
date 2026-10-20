@@ -10,7 +10,7 @@ topics = ["limits", "planning"]
 level = "beginner"
 +++
 
-The Overview is the first page you see after signing in. It answers three questions: how much came in and went out in the period, how much you can still spend in each category, and which payments are coming up. All amounts are converted to the project's base currency, so a card in baht and an account in dollars add up to one figure.
+The Overview is the main page of your budget. It answers three questions: how much came in and went out in the period, how much you can still spend in each category, and which payments are coming up. All amounts are converted to the project's base currency, so a card in baht and an account in dollars add up to one figure.
 
 ## 1. Choose the period
 

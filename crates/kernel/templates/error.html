@@ -21,7 +21,7 @@
       <p class="error-hint">{{ self.hint() }}</p>
       {% if self.show_message() %}<p class="alert alert-error mt-4" role="alert">{{ message }}</p>{% endif %}
       <div class="error-actions">
-        <a class="btn-primary" href="{% if signed_in %}/budget{% else %}/{% endif %}">{{ self.t("error.home") }}</a>
+        <a class="btn-primary" href="{% if signed_in %}{{ crate::web::START_PAGE }}{% else %}/{% endif %}">{{ self.t("error.home") }}</a>
       </div>
     </div>
   </main>

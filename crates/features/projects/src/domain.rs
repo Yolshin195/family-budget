@@ -265,7 +265,7 @@ impl PendingLogin {
 /// Только относительный адрес этого сайта — без открытых редиректов.
 pub fn safe_next(next: &str) -> String {
     let ok = next.starts_with('/') && !next.starts_with("//") && !next.starts_with("/\\") && !next.contains("://");
-    if ok && !next.starts_with("/auth/") { next.to_string() } else { "/budget".to_string() }
+    if ok && !next.starts_with("/auth/") { next.to_string() } else { kernel::web::START_PAGE.to_string() }
 }
 
 // ---------------------------------------------------------------- сессии
@@ -470,9 +470,9 @@ mod tests {
         assert!(normalize_scopes(&["admin".into()]).is_err());
         assert!(normalize_scopes(&[]).is_err());
         assert_eq!(safe_next("/transactions?month=2026-10"), "/transactions?month=2026-10");
-        assert_eq!(safe_next("//evil.example"), "/budget");
-        assert_eq!(safe_next("https://evil.example"), "/budget");
-        assert_eq!(safe_next("/auth/callback"), "/budget");
+        assert_eq!(safe_next("//evil.example"), kernel::web::START_PAGE);
+        assert_eq!(safe_next("https://evil.example"), kernel::web::START_PAGE);
+        assert_eq!(safe_next("/auth/callback"), kernel::web::START_PAGE);
         let p = PendingLogin { state: "s".into(), nonce: "n".into(), pkce_verifier: "v".into(), next: "/".into(), started: Utc::now().timestamp() };
         assert!(!p.expired(Utc::now()));
         assert!(p.expired(Utc::now() + Duration::minutes(11)));

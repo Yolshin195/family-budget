@@ -19,7 +19,7 @@
       <form method="post" action="/auth/logout" class="flex gap-2">
         <input type="hidden" name="_csrf" value="{{ csrf }}">
         <button class="btn-primary" autofocus>{{ self.t("nav.logout") }}</button>
-        <a class="btn-ghost" href="/budget">{{ self.t("cancel") }}</a>
+        <a class="btn-ghost" href="{{ kernel::web::START_PAGE }}">{{ self.t("cancel") }}</a>
       </form>
     {% else if let Some(err) = error %}
       <h1 class="auth-title">{{ self.t("login_failed") }}</h1>

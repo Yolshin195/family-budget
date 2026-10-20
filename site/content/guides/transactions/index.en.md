@@ -10,7 +10,7 @@ topics = ["start", "accounts"]
 level = "beginner"
 +++
 
-Money moves through the app in three kinds of transactions: an expense, income, and a transfer between your own accounts. You can log a transaction from any page, and in the "Transactions" section you can find, fix or delete it.
+Money moves through the app in three kinds of transactions: an expense, income, and a transfer between your own accounts. You can log a transaction from any page, and in the "Transactions" section you can find, fix or delete it. The app opens on "Transactions" when you sign in.
 
 ## 1. Quick expense
 

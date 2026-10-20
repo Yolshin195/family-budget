@@ -136,10 +136,10 @@ impl LandingPage {
     }
 }
 
-/// `/`: гостю — лендинг на его языке, вошедшему — сразу «Обзор».
+/// `/`: гостю — лендинг на его языке, вошедшему — сразу стартовая страница приложения («Операции»).
 async fn landing(State(st): St, Extension(user): Extension<MaybeUser>, headers: HeaderMap, Query(q): Query<LangQuery>) -> PageResult {
     if user.0.is_some() {
-        return Ok(Redirect::to("/budget").into_response());
+        return Ok(Redirect::to(kernel::web::START_PAGE).into_response());
     }
     st.svc.record_visit();
     let (lang, explicit) = page_lang(&q, &headers);
@@ -224,7 +224,7 @@ async fn robots_txt(State(st): St) -> Response {
     text("text/plain; charset=utf-8", robots(&st.config.base_url))
 }
 
-/// Манифест PWA: иконки, цвета, старт с «Обзора».
+/// Манифест PWA: иконки, цвета, старт со стартовой страницы приложения.
 async fn manifest(State(st): St, headers: HeaderMap) -> Response {
     let lang = request_lang(&headers).unwrap_or_default();
     let t = |k: &str| kernel::i18n::t(lang, None, k);
@@ -232,7 +232,7 @@ async fn manifest(State(st): St, headers: HeaderMap) -> Response {
         "name": t("app.title"),
         "short_name": t("app.title"),
         "lang": lang.code(),
-        "start_url": "/budget",
+        "start_url": kernel::web::START_PAGE,
         "scope": "/",
         "display": "standalone",
         "background_color": "#fafaf9",

@@ -65,6 +65,9 @@ pub struct Web {
 #[derive(Debug, Clone, Default)]
 pub struct Nav(pub Arc<Vec<NavItem>>);
 
+/// Куда приложение ведёт вошедшего пользователя: после входа, с `/`, с логотипа и из установленного PWA.
+pub const START_PAGE: &str = "/transactions";
+
 /// Состояние веб-слоя: меню и настройки.
 #[derive(Clone)]
 pub struct WebState {
@@ -194,6 +197,11 @@ impl PageCtx {
 
     pub fn langs(&self) -> [Lang; 3] {
         Lang::ALL
+    }
+
+    /// Стартовая страница — для логотипа в шапке.
+    pub fn start_page(&self) -> &'static str {
+        START_PAGE
     }
 
     /// Текущий путь, закодированный для параметра `back=`.
