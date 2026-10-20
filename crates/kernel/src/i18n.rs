@@ -114,6 +114,31 @@ pub fn t(lang: Lang, feature: Option<Dict>, key: &str) -> String {
         .unwrap_or_else(|| key.to_string())
 }
 
+tokio::task_local! {
+    static CURRENT: Lang;
+}
+
+/// Язык текущего запроса — для сообщений, которые собираются вдали от страницы (ошибки домена и
+/// сервисов, техдолг #9). Задают middleware: `auth::attach_meta` — из cookie и Accept-Language,
+/// `auth::require_user` — с настройкой пользователя. Вне запроса (тесты, фоновые задачи) — русский.
+pub fn current() -> Lang {
+    CURRENT.try_with(|l| *l).unwrap_or_default()
+}
+
+/// Выполнить `f` с языком запроса `lang` (см. [`current`]).
+pub async fn scope<F: std::future::Future>(lang: Lang, f: F) -> F::Output {
+    CURRENT.scope(lang, f).await
+}
+
+/// Перевод на язык запроса с подстановкой параметров `{имя}`.
+pub fn tr(feature: Option<Dict>, key: &str, args: &[(&str, &dyn std::fmt::Display)]) -> String {
+    let mut s = t(current(), feature, key);
+    for (name, value) in args {
+        s = s.replace(&format!("{{{name}}}"), &value.to_string());
+    }
+    s
+}
+
 /// Общие строки интерфейса.
 pub fn dict(key: &str) -> Option<Tr> {
     Some(match key {
@@ -204,9 +229,15 @@ pub fn dict(key: &str) -> Option<Tr> {
         "quick.frequent" => ("Частые", "Frequent", "ใช้บ่อย"),
         "quick.search" => ("Найти категорию на любом языке", "Find a category in any language", "ค้นหาหมวดหมู่ได้ทุกภาษา"),
         "quick.no_match" => ("Ничего не нашлось", "No matches", "ไม่พบ"),
+        "quick.search_places" => ("Найти категорию или место", "Find a category or place", "ค้นหาหมวดหมู่หรือสถานที่"),
+        "quick.categories" => ("Категории", "Categories", "หมวดหมู่"),
+        "quick.places" => ("Места", "Places", "สถานที่"),
+        "quick.fills" => ("Подставит", "Fills in", "จะใส่ให้"),
+        "quick.from_place" => ("из места", "from the place", "จากสถานที่"),
+        "quick.remove_place" => ("Убрать место", "Remove place", "เอาสถานที่ออก"),
         "quick.yesterday" => ("Вчера", "Yesterday", "เมื่อวาน"),
         "quick.other_date" => ("Другая…", "Other…", "วันอื่น…"),
-        "quick.split" => ("Разбить на позиции", "Split into items", "แยกเป็นรายการย่อย"),
+        "quick.split" => ("Подробная карточка", "Full details", "รายละเอียดทั้งหมด"),
         "quick.save_more" => ("Сохранить и ещё", "Save & add another", "บันทึกและเพิ่มอีก"),
         "quick.available" => ("Доступно", "Available", "ใช้ได้"),
         "quick.left" => ("Останется доступно", "Will remain", "จะเหลือ"),
@@ -262,6 +293,22 @@ pub fn dict(key: &str) -> Option<Tr> {
         "theme.SYSTEM" => ("Как в системе", "System", "ตามระบบ"),
         "theme.LIGHT" => ("Светлая", "Light", "สว่าง"),
         "theme.DARK" => ("Тёмная", "Dark", "มืด"),
+        // Ошибки ядра (техдолг #9): правила кодов и ссылок, ответы БД, сбои.
+        "err.empty" => ("не может быть пустым", "cannot be empty", "ต้องไม่เว้นว่าง"),
+        "err.no_spaces" => ("не должен содержать пробелов", "must not contain spaces", "ต้องไม่มีช่องว่าง"),
+        "err.code_chars" => (
+            "только латинские буквы, цифры и _, до {max} знаков",
+            "only Latin letters, digits and _, up to {max} characters",
+            "ใช้ได้เฉพาะอักษรละติน ตัวเลข และ _ ไม่เกิน {max} ตัว",
+        ),
+        "err.ref_not_found" => ("запись '{code}' не найдена", "'{code}' not found", "ไม่พบ '{code}'"),
+        "err.not_found" => ("запись не найдена", "record not found", "ไม่พบรายการ"),
+        "err.duplicate" => ("запись с таким ключом уже существует", "a record with this key already exists", "มีรายการที่ใช้คีย์นี้อยู่แล้ว"),
+        "err.internal" => ("внутренняя ошибка сервера", "internal server error", "เซิร์ฟเวอร์ขัดข้อง"),
+        "err.unavailable" => ("сервис временно недоступен, попробуйте позже", "the service is temporarily unavailable, try again later", "บริการไม่พร้อมใช้งานชั่วคราว ลองใหม่ภายหลัง"),
+        "err.too_big" => ("слишком большое число", "the number is too large", "ตัวเลขใหญ่เกินไป"),
+        "err.not_a_number" => ("'{value}' — не число", "'{value}' is not a number", "'{value}' ไม่ใช่ตัวเลข"),
+        "err.enter_amount" => ("введите сумму", "enter an amount", "กรอกจำนวนเงิน"),
         _ => return None,
     })
 }

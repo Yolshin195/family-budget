@@ -1,6 +1,6 @@
 //! Доменная модель «Счета». Никаких sqlx/axum/serde — только правила предметной области.
 
-use kernel::code::{normalize, require_text};
+use kernel::code::{new_code, normalize, require_text};
 use uuid::Uuid;
 
 /// Язык оригинала названия
@@ -114,7 +114,7 @@ impl Account {
         Ok(Self {
             id: Uuid::new_v4(),
             project_id,
-            code: normalize("code", &new.code)?,
+            code: new_code("code", &new.code)?,
             name: require_text("name", &new.name)?,
             archived: false,
             name_lang: new.name_lang,

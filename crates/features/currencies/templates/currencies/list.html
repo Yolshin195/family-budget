@@ -22,7 +22,7 @@
           {% if c.archived %}<span class="badge">{{ page.t("archived") }}</span>{% endif %}</td>
         <td>{{ c.symbol }}</td>
         <td class="num">{{ c.minor_units }}</td>
-        <td class="text-right">{% if page.can_write() %}<a class="btn-ghost btn-sm" href="/currencies/{{ c.code }}/edit" aria-label="{{ page.t("edit") }} {{ c.code }}">{{ page.t("edit") }}</a>{% endif %}</td>
+        <td class="text-right">{% if page.can_write() %}<a class="btn-ghost btn-sm" href="/currencies/{{ kernel::web::url_segment(c.code) }}/edit" aria-label="{{ page.t("edit") }} {{ c.code }}">{{ page.t("edit") }}</a>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>

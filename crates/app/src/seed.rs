@@ -25,6 +25,8 @@ pub struct Services {
     pub currencies: Arc<currencies::Service>,
     pub rates: Arc<rates::Service>,
     pub accounts: Arc<accounts::Service>,
+    pub places: Arc<places::Service>,
+    pub people: Arc<people::Service>,
     pub transactions: Arc<transactions::Service>,
     pub limits: Arc<limits::Service>,
     pub planning: Arc<planning::Service>,
@@ -160,10 +162,17 @@ struct Tx<'a> {
     tr: (Option<&'a str>, Option<&'a str>, Option<&'a str>),
     lines: Vec<(&'a str, &'a str, Option<&'a str>)>,
     plan: Option<(Uuid, NaiveDate)>,
+    /// Место (справочник мест, шаг 5)
+    place: Option<&'a str>,
     by: Uuid,
 }
 
 async fn tx(s: &Services, p: Uuid, t: Tx<'_>) -> AppResult<()> {
+    tx_for(s, p, t, &[]).await
+}
+
+/// Операция с получателями позиций (шаг 6): `who[i]` — для кого `lines[i]`, пусто — для всех.
+async fn tx_for(s: &Services, p: Uuid, t: Tx<'_>, who: &[Option<&str>]) -> AppResult<()> {
     if t.date > chrono::Local::now().date_naive() {
         return Ok(());
     }
@@ -184,13 +193,56 @@ async fn tx(s: &Services, p: Uuid, t: Tx<'_>) -> AppResult<()> {
         description_th: t.tr.2.map(Into::into),
         plan_id: t.plan.map(|x| x.0),
         plan_date: t.plan.map(|x| x.1),
-        lines: t
+        place_code: t.place.map(Into::into),
+        items: t
             .lines
             .into_iter()
-            .map(|(c, a, n)| transactions::dto::LineDto { category_code: c.into(), amount: dec(a), note: n.map(Into::into) })
+            .enumerate()
+            .map(|(i, (c, a, n))| transactions::dto::ItemInput {
+                category_code: Some(c.into()),
+                amount: Some(dec(a)),
+                name: n.map(Into::into),
+                for_person_code: who.get(i).copied().flatten().map(Into::into),
+                ..Default::default()
+            })
             .collect(),
+        ..Default::default()
     };
     s.transactions.create(p, t.by, input).await.map(|_| ())
+}
+
+/// Чек с ценами (группа 1, шаг 2): позиции (категория, название, количество, единица, цена, скидка).
+/// Названия позиций — данные пользователя, без переводов.
+#[allow(clippy::too_many_arguments)]
+async fn receipt(s: &Services, p: Uuid, date: NaiveDate, place: &str, desc: (&str, Lang), tr: (Option<&str>, Option<&str>, Option<&str>), items: &[(&str, &str, &str, &str, &str, &str)], by: Uuid) -> AppResult<()> {
+    if date > chrono::Local::now().date_naive() {
+        return Ok(());
+    }
+    let input = transactions::dto::TransactionInput {
+        occurred_on: date,
+        account_code: "CARD_KBANK".into(),
+        tx_kind: "EXPENSE".into(),
+        place_code: Some(place.into()),
+        description: Some(desc.0.into()),
+        description_lang: desc.1.upper().into(),
+        description_ru: tr.0.map(Into::into),
+        description_en: tr.1.map(Into::into),
+        description_th: tr.2.map(Into::into),
+        items: items
+            .iter()
+            .map(|(c, n, q, u, price, discount)| transactions::dto::ItemInput {
+                category_code: Some((*c).into()),
+                name: Some((*n).into()),
+                quantity: Some(dec(q)),
+                unit: Some((*u).into()),
+                price_per_unit: Some(dec(price)),
+                discount: Some(dec(discount)),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    };
+    s.transactions.create(p, by, input).await.map(|_| ())
 }
 
 /// Перевод между счетами: `to_amount` — при обмене валют, `fee` — комиссия (категория, сумма).
@@ -228,6 +280,7 @@ async fn transfer(s: &Services, p: Uuid, t: Transfer<'_>) -> AppResult<()> {
         description_th: None,
         plan_id: t.plan.map(|x| x.0),
         plan_date: t.plan.map(|x| x.1),
+        ..Default::default()
     };
     s.transactions.create(p, t.by, input).await.map(|_| ())
 }
@@ -278,6 +331,29 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
     account(s, p, me, "WISE_USD", "BANK", "USD", "850", Some(me), Lang::En, ("Wise доллары", "Wise USD", "Wise ดอลลาร์")).await?;
     // Рубли из России: каждый месяц меняются на баты через приложение (перевод с обменом и комиссией).
     account(s, p, me, "TINKOFF_RUB", "CARD", "RUB", "120000", Some(me), ru, ("Тинькофф рубли", "Tinkoff RUB", "Tinkoff รูเบิล")).await?;
+    // Места (шаг 5): названия — как на вывеске, не переводятся; варианты написания — для поиска на любом языке.
+    for (code, name, aliases, kind, category, account, location) in [
+        ("SEVEN_ELEVEN", "7-Eleven", &["7-11", "เซเว่น อีเลฟเว่น", "Севен"][..], "SHOP", "FOOD_GROCERIES", "CARD_KBANK", Some("Sukhumvit 24")),
+        ("CAFE_AMAZON", "Café Amazon", &["Кафе Амазон", "คาเฟ่ อเมซอน"][..], "CAFE", "FOOD_CAFE", "CASH", Some("On Nut")),
+        ("TOPS", "Tops", &["ท็อปส์", "Топс"][..], "SHOP", "FOOD_GROCERIES", "CARD_SCB", None),
+        ("BIG_C", "Big C", &["บิ๊กซี", "Биг Си"][..], "SHOP", "FOOD_GROCERIES", "CARD_SCB", None),
+        ("ON_NUT_MARKET", "ตลาดอ่อนนุช", &["On Nut market", "Рынок Он Нут"][..], "MARKET", "FOOD_GROCERIES", "CASH", None),
+        ("GRAB", "Grab", &["แกร็บ", "Грэб"][..], "SERVICE", "TRANSPORT_TAXI", "CASH", None),
+    ] {
+        let data = places::dto::PlaceFields {
+            name: name.into(),
+            aliases: aliases.iter().map(|a| (*a).into()).collect(),
+            default_category_code: Some(category.into()),
+            default_account_code: Some(account.into()),
+            place_kind: kind.into(),
+            location: location.map(Into::into),
+        };
+        s.places.create(p, places::dto::CreatePlaceDto { code: code.into(), data }).await?;
+    }
+    // Люди (шаг 6): Алексей и Анна — участники (записи создались сами), дочь Пинпан — без аккаунта.
+    let pinpan = people::dto::PersonFields { name: "Pinpan".into(), aliases: vec!["Пинпан".into(), "ปิ่นปั่น".into()] };
+    s.people.create(p, people::dto::CreatePersonDto { code: "PINPAN".into(), data: pinpan }).await?;
+    let anna_code = s.people.of_member(p, anna).await?.map(|x| x.code);
 
     let start = day(3, 1);
     for (cat, period, amount) in [
@@ -327,28 +403,34 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
     // Прошлый месяц: все планы оплачены (кроме подработки — пропуск), плюс повседневные траты.
     for back in [1u32, 0] {
         let pay = |plan: Uuid, d: u32| (plan, day(back, d));
-        tx(s, p, Tx { date: day(back, 1), account: "CARD_KBANK", kind: "INCOME", desc: Some(("Зарплата", ru)), tr: (None, Some("Salary"), Some("เงินเดือน")), lines: vec![("SALARY", "85000", None)], plan: Some(pay(salary, 1)), by: me }).await?;
-        tx(s, p, Tx { date: day(back, 6), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Аренда квартиры", ru)), tr: (None, Some("Apartment rent"), Some("ค่าเช่าคอนโด")), lines: vec![("HOME_RENT", "15000", None)], plan: Some(pay(rent, 5)), by: me }).await?;
+        tx(s, p, Tx { date: day(back, 1), account: "CARD_KBANK", kind: "INCOME", desc: Some(("Зарплата", ru)), tr: (None, Some("Salary"), Some("เงินเดือน")), lines: vec![("SALARY", "85000", None)], plan: Some(pay(salary, 1)), place: None, by: me }).await?;
+        tx(s, p, Tx { date: day(back, 6), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Аренда квартиры", ru)), tr: (None, Some("Apartment rent"), Some("ค่าเช่าคอนโด")), lines: vec![("HOME_RENT", "15000", None)], plan: Some(pay(rent, 5)), place: None, by: me }).await?;
         tx(s, p, Tx { date: day(back, 3), account: "CARD_SCB", kind: "EXPENSE", desc: Some(("ท็อปส์ ซูเปอร์มาร์เก็ต", Lang::Th)), tr: (Some("Tops, супермаркет"), None, None),
-            lines: vec![("FOOD_GROCERIES", "1640", Some("овощи, мясо")), ("HOUSEHOLD", "385", Some("средства для стирки")), ("FOOD_CAFE", "120", Some("кофе"))], plan: None, by: anna }).await?;
-        tx(s, p, Tx { date: day(back, 4), account: "CASH", kind: "EXPENSE", desc: Some(("Grab до офиса", ru)), tr: (None, None, None), lines: vec![("TRANSPORT_TAXI", "210", None)], plan: None, by: me }).await?;
+            lines: vec![("FOOD_GROCERIES", "1640", Some("овощи, мясо")), ("HOUSEHOLD", "385", Some("средства для стирки")), ("FOOD_CAFE", "120", Some("кофе"))], plan: None, place: Some("TOPS"), by: anna }).await?;
+        tx(s, p, Tx { date: day(back, 4), account: "CASH", kind: "EXPENSE", desc: Some(("Grab до офиса", ru)), tr: (None, None, None), lines: vec![("TRANSPORT_TAXI", "210", None)], plan: None, place: Some("GRAB"), by: me }).await?;
+        // Чек с ценами: количество × цена − скидка; бананы — на вес.
+        // Названия — как на чеке (по-английски), их не переводят.
+        receipt(s, p, day(back, 12), "SEVEN_ELEVEN", ("Завтрак в 7-Eleven", ru), (None, Some("Breakfast at 7-Eleven"), Some("อาหารเช้าที่เซเว่น")),
+            &[("FOOD_GROCERIES", "Water 1.5 L", "1", "pcs", "14", "0"), ("FOOD_CAFE", "Latte", "1", "pcs", "45", "0"), ("FOOD_CAFE", "Croissant", "2", "pcs", "25", "3"), ("FOOD_GROCERIES", "Bananas", "0.45", "kg", "60", "0")], me).await?;
         // Обмен через приложение: списано 20 050 ₽ (из них 50 ₽ комиссия), зачислено по курсу хуже справочного.
         let got = if back == 1 { "7640" } else { "7280" };
         transfer(s, p, Transfer { date: day(back, 2), from: "TINKOFF_RUB", to: "CARD_KBANK", amount: "20050", to_amount: Some(got), fee: Some(("FEES", "50")),
             desc: ("Обмен через приложение", ru), plan: Some(pay(exchange, 2)), by: me }).await?;
         transfer(s, p, Transfer { date: day(back, 10), from: "CARD_KBANK", to: "CASH", amount: "5000", to_amount: None, fee: None, desc: ("Снял наличные", ru), plan: None, by: me }).await?;
-        tx(s, p, Tx { date: day(back, 7), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Ужин с друзьями", ru)), tr: (None, Some("Dinner with friends"), None), lines: vec![("FOOD_CAFE", "2450", None)], plan: None, by: me }).await?;
-        tx(s, p, Tx { date: day(back, 8), account: "CARD_SCB", kind: "EXPENSE", desc: Some(("Big C", Lang::En)), tr: (None, None, Some("บิ๊กซี")),
-            lines: vec![("FOOD_GROCERIES", "2180", None), ("KIDS", "690", Some("краски")), ("HOUSEHOLD", "240", None)], plan: None, by: anna }).await?;
-        tx(s, p, Tx { date: day(back, 9), account: "WISE_USD", kind: "EXPENSE", desc: Some(("Spotify Family", Lang::En)), tr: (None, None, None), lines: vec![("FUN_SUBSCRIPTIONS", "19.99", None)], plan: None, by: me }).await?;
-        tx(s, p, Tx { date: day(back, 9), account: "CASH", kind: "EXPENSE", desc: Some(("ร้านกาแฟ", Lang::Th)), tr: (None, None, None), lines: vec![("FOOD_CAFE", "1850", Some("кофе за неделю"))], plan: None, by: anna }).await?;
+        tx(s, p, Tx { date: day(back, 7), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Ужин с друзьями", ru)), tr: (None, Some("Dinner with friends"), None), lines: vec![("FOOD_CAFE", "2450", None)], plan: None, place: None, by: me }).await?;
+        tx_for(s, p, Tx { date: day(back, 8), account: "CARD_SCB", kind: "EXPENSE", desc: Some(("Big C", Lang::En)), tr: (None, None, Some("บิ๊กซี")),
+            lines: vec![("FOOD_GROCERIES", "2180", None), ("KIDS", "690", Some("краски")), ("HOUSEHOLD", "240", None)], plan: None, place: Some("BIG_C"), by: anna }, &[None, Some("PINPAN"), None]).await?;
+        tx_for(s, p, Tx { date: day(back, 14), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Кружок рисования", ru)), tr: (None, Some("Art class"), Some("คลาสวาดรูป")),
+            lines: vec![("KIDS", "1200", None)], plan: None, place: None, by: anna }, &[Some("PINPAN")]).await?;
+        tx(s, p, Tx { date: day(back, 9), account: "WISE_USD", kind: "EXPENSE", desc: Some(("Spotify Family", Lang::En)), tr: (None, None, None), lines: vec![("FUN_SUBSCRIPTIONS", "19.99", None)], plan: None, place: None, by: me }).await?;
+        tx(s, p, Tx { date: day(back, 9), account: "CASH", kind: "EXPENSE", desc: Some(("ร้านกาแฟ", Lang::Th)), tr: (None, None, None), lines: vec![("FOOD_CAFE", "1850", Some("кофе за неделю"))], plan: None, place: Some("CAFE_AMAZON"), by: anna }).await?;
         if back == 1 {
-            tx(s, p, Tx { date: day(1, 12), account: "CARD_SCB", kind: "EXPENSE", desc: None, tr: (None, None, None), lines: vec![("HOME_INTERNET", "649", None)], plan: Some(pay(net, 12)), by: anna }).await?;
-            tx(s, p, Tx { date: day(1, 15), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Netflix", Lang::En)), tr: (None, None, None), lines: vec![("FUN_SUBSCRIPTIONS", "419", None)], plan: Some(pay(netflix, 15)), by: me }).await?;
-            tx(s, p, Tx { date: day(1, 21), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Электричество", ru)), tr: (None, None, None), lines: vec![("HOME_ELECTRICITY", "1960", Some("кондиционер"))], plan: Some(pay(power, 20)), by: me }).await?;
-            tx(s, p, Tx { date: day(1, 20), account: "CARD_SCB", kind: "EXPENSE", desc: None, tr: (None, None, None), lines: vec![("HOME_WATER", "230", None)], plan: Some(pay(water, 20)), by: anna }).await?;
-            tx(s, p, Tx { date: day(1, 18), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Аптека", ru)), tr: (None, Some("Pharmacy"), Some("ร้านขายยา")), lines: vec![("HEALTH", "780", None)], plan: None, by: me }).await?;
-            tx(s, p, Tx { date: day(1, 23), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Кино", ru)), tr: (None, None, None), lines: vec![("FUN", "640", None), ("FOOD_CAFE", "260", Some("попкорн"))], plan: None, by: me }).await?;
+            tx(s, p, Tx { date: day(1, 12), account: "CARD_SCB", kind: "EXPENSE", desc: None, tr: (None, None, None), lines: vec![("HOME_INTERNET", "649", None)], plan: Some(pay(net, 12)), place: None, by: anna }).await?;
+            tx(s, p, Tx { date: day(1, 15), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Netflix", Lang::En)), tr: (None, None, None), lines: vec![("FUN_SUBSCRIPTIONS", "419", None)], plan: Some(pay(netflix, 15)), place: None, by: me }).await?;
+            tx(s, p, Tx { date: day(1, 21), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Электричество", ru)), tr: (None, None, None), lines: vec![("HOME_ELECTRICITY", "1960", Some("кондиционер"))], plan: Some(pay(power, 20)), place: None, by: me }).await?;
+            tx(s, p, Tx { date: day(1, 20), account: "CARD_SCB", kind: "EXPENSE", desc: None, tr: (None, None, None), lines: vec![("HOME_WATER", "230", None)], plan: Some(pay(water, 20)), place: None, by: anna }).await?;
+            tx_for(s, p, Tx { date: day(1, 18), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Аптека", ru)), tr: (None, Some("Pharmacy"), Some("ร้านขายยา")), lines: vec![("HEALTH", "780", None)], plan: None, place: None, by: me }, &[anna_code.as_deref()]).await?;
+            tx(s, p, Tx { date: day(1, 23), account: "CARD_KBANK", kind: "EXPENSE", desc: Some(("Кино", ru)), tr: (None, None, None), lines: vec![("FUN", "640", None), ("FOOD_CAFE", "260", Some("попкорн"))], plan: None, place: None, by: me }).await?;
             s.planning.skip(p, anna, freelance, day(1, 25)).await?;
         }
     }
@@ -359,6 +441,6 @@ async fn fill_personal(s: &Services, me: Uuid) -> AppResult<()> {
     let session = Memberships::session(s.projects.as_ref(), me, None).await?.ok_or_else(|| kernel::error::AppError::NotFound("personal".into()))?;
     let p = session.project_id;
     account(s, p, me, "CASH", "CASH", "THB", "2000", Some(me), Lang::Ru, ("Мои наличные", "My cash", "เงินสดของฉัน")).await?;
-    tx(s, p, Tx { date: day(0, 2), account: "CASH", kind: "EXPENSE", desc: Some(("Книги по Rust", Lang::Ru)), tr: (None, Some("Rust books"), None), lines: vec![("FUN", "890", None)], plan: None, by: me }).await?;
+    tx(s, p, Tx { date: day(0, 2), account: "CASH", kind: "EXPENSE", desc: Some(("Книги по Rust", Lang::Ru)), tr: (None, Some("Rust books"), None), lines: vec![("FUN", "890", None)], plan: None, place: None, by: me }).await?;
     Ok(())
 }

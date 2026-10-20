@@ -18,7 +18,7 @@ Click "Expense" in the left menu (on a computer — the <kbd>N</kbd> key, on a p
 
 ![The "New expense" window: amount, frequent categories, account and date](quick-expense.en.webp)
 
-If one receipt has both groceries and household goods, click "Split into items" and each part goes to its own category.
+If one receipt has both groceries and household goods, click "Full details" and each part goes to its own category.
 
 ## 2. Add accounts
 

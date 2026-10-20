@@ -61,8 +61,12 @@ pub struct CategoriesLookupAdapter(pub Arc<::categories::Service>);
 
 #[async_trait]
 impl ::transactions::CategoriesLookup for CategoriesLookupAdapter {
-    async fn kind_of(&self, project_id: Uuid, code: &str) -> AppResult<Option<String>> {
-        self.0.kind_of(project_id, code).await
+    async fn kind_of(&self, project_id: Uuid, code: &str) -> AppResult<Option<::transactions::CategoryRef>> {
+        match self.0.get(project_id, code).await {
+            Ok(c) => Ok(Some(::transactions::CategoryRef { kind: c.category_kind, archived: c.archived })),
+            Err(kernel::error::AppError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
     async fn choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>> {
         self.0.choices(project_id, lang).await
@@ -77,11 +81,7 @@ impl ::transactions::CategoriesLookup for CategoriesLookupAdapter {
             .await?
             .into_iter()
             .map(|(depth, c)| {
-                let names = [Some(c.name.clone()), c.name_ru.clone(), c.name_en.clone(), c.name_th.clone(), Some(c.code.clone())]
-                    .into_iter()
-                    .flatten()
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let names = kernel::search::join([Some(c.name.as_str()), c.name_ru.as_deref(), c.name_en.as_deref(), c.name_th.as_deref(), Some(c.code.as_str())].into_iter().flatten());
                 CategoryInfo { title: c.title(lang).to_string(), code: c.code, parent_code: c.parent_code, kind: c.category_kind, depth, names }
             })
             .collect())
@@ -156,5 +156,60 @@ impl ::transactions::PlansLookup for PlansLookupAdapter {
             Some(p) => p.occurrence(project_id, plan_id, date).await,
             None => Ok(None),
         }
+    }
+}
+
+/// Места из фичи `places` (без неё мест нет).
+#[derive(Default)]
+pub struct PlacesLookupAdapter {
+    #[cfg(feature = "places")]
+    pub places: Option<Arc<::places::Service>>,
+}
+
+#[async_trait]
+impl ::transactions::PlacesLookup for PlacesLookupAdapter {
+    async fn all(&self, project_id: Uuid) -> AppResult<Vec<::transactions::PlaceInfo>> {
+        #[cfg(feature = "places")]
+        if let Some(places) = &self.places {
+            return Ok(places
+                .all(project_id, true)
+                .await?
+                .into_iter()
+                .map(|p| ::transactions::PlaceInfo {
+                    title: p.title(),
+                    search: p.search(),
+                    code: p.code,
+                    default_category_code: p.default_category_code,
+                    default_account_code: p.default_account_code,
+                    archived: p.archived,
+                })
+                .collect());
+        }
+        let _ = project_id;
+        Ok(Vec::new())
+    }
+}
+
+/// Люди из фичи `people` (без неё все позиции — «Для всех»).
+#[derive(Default)]
+pub struct PeopleLookupAdapter {
+    #[cfg(feature = "people")]
+    pub people: Option<Arc<::people::Service>>,
+}
+
+#[async_trait]
+impl ::transactions::PeopleLookup for PeopleLookupAdapter {
+    async fn all(&self, project_id: Uuid, lang: kernel::i18n::Lang) -> AppResult<Vec<::transactions::PersonInfo>> {
+        #[cfg(feature = "people")]
+        if let Some(people) = &self.people {
+            return Ok(people
+                .all(project_id, true)
+                .await?
+                .into_iter()
+                .map(|p| ::transactions::PersonInfo { title: p.title(lang), search: p.search(lang), code: p.code, user_id: p.user_id, archived: p.archived })
+                .collect());
+        }
+        let _ = (project_id, lang);
+        Ok(Vec::new())
     }
 }

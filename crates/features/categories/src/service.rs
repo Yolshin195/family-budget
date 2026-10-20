@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 #[allow(unused_imports)]
 use kernel::code::{ensure_ref, normalize};
-use kernel::error::{AppError, AppResult};
+use kernel::error::{AppError, AppResult, Problem};
+use kernel::i18n::tr;
 use kernel::pagination::{PagedResponse, Pagination};
 use kernel::i18n::Lang;
 use kernel::web::Choice;
@@ -69,7 +70,7 @@ impl CategoryService {
         let mut item = self.load(project_id, code).await?;
         let all = self.repo.list(project_id, false, 10_000, 0).await?;
         if all.iter().any(|c| c.parent_code.as_deref() == Some(item.code.as_str())) {
-            return Err(AppError::Validation(format!("'{}': сначала архивируйте подкатегории", item.code)));
+            return Err(problem("err.archive_children", &[("name", &title(&item))]));
         }
         item.archived = true;
         self.repo.update(&item).await
@@ -78,10 +79,11 @@ impl CategoryService {
     /// Вернуть из архива («Отменить» в тосте). Родитель должен быть активным — иначе сначала его.
     pub async fn restore(&self, project_id: Uuid, code: &str) -> AppResult<()> {
         let mut item = self.load(project_id, code).await?;
-        if let Some(parent) = &item.parent_code {
-            if !self.exists(project_id, parent).await? {
-                return Err(AppError::Validation(format!("'{}': сначала верните из архива родителя '{parent}'", item.code)));
-            }
+        if let Some(parent) = &item.parent_code
+            && !self.exists(project_id, parent).await?
+        {
+            let parent = self.load(project_id, parent).await.map(|p| title(&p)).unwrap_or_else(|_| parent.clone());
+            return Err(problem("err.restore_parent", &[("name", &title(&item)), ("parent", &parent)]));
         }
         item.archived = false;
         self.repo.update(&item).await
@@ -150,6 +152,16 @@ impl CategoryService {
             })
             .collect())
     }
+}
+
+/// Ошибка архива на языке запроса (техдолг #9): без поля — показывается целиком, в тосте или над формой.
+fn problem(key: &str, args: &[(&str, &dyn std::fmt::Display)]) -> AppError {
+    Problem::validation("", tr(Some(crate::i18n::dict), key, args)).into()
+}
+
+/// Название категории на языке запроса.
+fn title(c: &Category) -> String {
+    CategoryDto::from(c.clone()).title(kernel::i18n::current()).to_string()
 }
 
 /// Узел дерева для других фич (бюджет, лимиты): порядок — обход в глубину.

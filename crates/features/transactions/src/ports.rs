@@ -31,6 +31,10 @@ pub struct Filter {
     pub created_by: Option<Uuid>,
     /// Только с описанием без перевода на этот язык.
     pub untranslated: Option<Lang>,
+    /// Только операции в этом месте.
+    pub place_code: Option<String>,
+    /// Только операции с позицией для этого человека; `Some(None)` — с позицией «Для всех». Итоги — по этим позициям.
+    pub for_person: Option<Option<String>>,
 }
 
 /// Проводка на категорию — факт для бюджета и лимитов.
@@ -81,6 +85,10 @@ pub trait TransactionRepository: Send + Sync {
     /// Новые сначала.
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>>;
     async fn count(&self, project_id: Uuid, filter: &Filter) -> AppResult<i64>;
+    /// Итоги по проводкам на категории всех операций фильтра: (валюта, доходы, расходы); возврат уменьшает итог.
+    async fn category_totals(&self, project_id: Uuid, filter: &Filter) -> AppResult<Vec<(String, Decimal, Decimal)>>;
+    /// Поступления и списания по счёту `account` у операций фильтра: (сумма «+», сумма «−»).
+    async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)>;
     /// `true`, если запись была удалена.
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool>;
     /// Проводки на категории за период (для бюджета).
@@ -114,6 +122,8 @@ pub trait TransactionRepository: Send + Sync {
 pub struct QuickStats {
     pub last_account: Option<String>,
     pub frequent: Vec<String>,
+    /// Частые места — по числу операций.
+    pub places: Vec<String>,
 }
 
 /// Зависимости фичи от других фич. Реализации — crates/app/src/wiring/wire_transactions.rs.
@@ -124,6 +134,50 @@ pub struct Deps {
     pub budget: Arc<dyn BudgetView>,
     /// Планы, вхождения которых оплачивают операции (из фичи `planning`).
     pub plans: Arc<dyn PlansLookup>,
+    /// Места операций (из фичи `places`; без неё мест нет).
+    pub places: Arc<dyn PlacesLookup>,
+    /// Для кого позиции (из фичи `people`; без неё все позиции — «Для всех»).
+    pub people: Arc<dyn PeopleLookup>,
+}
+
+/// Человек из справочника `people`: для кого позиция.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PersonInfo {
+    pub code: String,
+    /// Имя на языке запроса («Удалённый участник» — у записи без имени).
+    pub title: String,
+    /// Имя, другие имена и код через `kernel::search::SEP`.
+    pub search: String,
+    /// Участник проекта: запись того, кто смотрит, в выборе — «Для себя».
+    pub user_id: Option<Uuid>,
+    pub archived: bool,
+}
+
+/// Что этой фиче нужно от справочника `people`.
+#[async_trait]
+pub trait PeopleLookup: Send + Sync {
+    /// Все люди проекта, с архивными (старые операции показывают своего получателя), имена — на языке `lang`.
+    async fn all(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<PersonInfo>>;
+}
+
+/// Место операции (справочник `places`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaceInfo {
+    pub code: String,
+    /// «7-Eleven · Сукхумвит 24»
+    pub title: String,
+    /// Название, варианты написания и код через `kernel::search::SEP` — для поиска в быстром вводе.
+    pub search: String,
+    pub default_category_code: Option<String>,
+    pub default_account_code: Option<String>,
+    pub archived: bool,
+}
+
+/// Что этой фиче нужно от справочника `places`.
+#[async_trait]
+pub trait PlacesLookup: Send + Sync {
+    /// Все места проекта, с архивными: старые операции показывают своё место. Их немного.
+    async fn all(&self, project_id: Uuid) -> AppResult<Vec<PlaceInfo>>;
 }
 
 /// Вхождение плана, которое оплачивает операция.
@@ -178,7 +232,7 @@ pub struct CategoryInfo {
     pub kind: String,
     pub title: String,
     pub depth: usize,
-    /// Оригинал и переводы через пробел — для поиска на любом языке.
+    /// Оригинал, переводы и код через `kernel::search::SEP` — для поиска на любом языке.
     pub names: String,
 }
 
@@ -197,11 +251,20 @@ pub trait AccountsLookup: Send + Sync {
     async fn infos(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<AccountInfo>>;
 }
 
+/// Категория, на которую ссылается операция.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CategoryRef {
+    /// EXPENSE / INCOME
+    pub kind: String,
+    pub archived: bool,
+}
+
 /// Что этой фиче нужно от справочника `categories`.
 #[async_trait]
 pub trait CategoriesLookup: Send + Sync {
-    /// Тип активной категории (EXPENSE / INCOME) или `None`, если её нет или она в архиве.
-    async fn kind_of(&self, project_id: Uuid, code: &str) -> AppResult<Option<String>>;
+    /// Тип категории и признак архива (архивные — тоже: тип проверяется и у старых ссылок, техдолг #3);
+    /// `None` — такой категории нет.
+    async fn kind_of(&self, project_id: Uuid, code: &str) -> AppResult<Option<CategoryRef>>;
     /// Активные категории деревом; `tag` — тип.
     async fn choices(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<Choice>>;
     /// Названия всех категорий, включая архивные: (код, название).

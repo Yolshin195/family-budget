@@ -25,6 +25,7 @@ sha2.workspace = true
 tokio.workspace = true
 serde.workspace = true
 sqlx.workspace = true
+unicode-normalization.workspace = true
 utoipa.workspace = true
 uuid.workspace = true
 

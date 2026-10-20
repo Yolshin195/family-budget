@@ -131,6 +131,10 @@ impl ProjectRepository for InMemoryProjectRepository {
             .filter_map(|m| us.iter().find(|u| u.id == m.user_id).map(|u| (m.clone(), u.clone())))
             .collect())
     }
+    async fn all_members(&self) -> AppResult<Vec<(Member, User)>> {
+        let us = self.users.lock().unwrap();
+        Ok(self.members.lock().unwrap().iter().filter_map(|m| us.iter().find(|u| u.id == m.user_id).map(|u| (m.clone(), u.clone()))).collect())
+    }
     async fn upsert_member(&self, member: &Member) -> AppResult<()> {
         let mut ms = self.members.lock().unwrap();
         ms.retain(|m| !(m.project_id == member.project_id && m.user_id == member.user_id));

@@ -10,16 +10,16 @@ use axum::routing::{get, post};
 use axum::{Extension, Router};
 use axum_extra::extract::Form;
 use chrono::{Datelike, Months, NaiveDate};
-use kernel::error::AppError;
+use kernel::error::{AppError, Problem};
 use kernel::i18n::{Lang, month_name, weekdays};
-use kernel::pagination::Pagination;
-use kernel::web::{Choice, Flash, PageCtx, PageError, PageResult, money_in, parse_money, render, see_other, see_other_flash};
+use kernel::web::{Choice, Flash, FormError, PageCtx, PageError, PageResult, money_in, parse_money, render, see_other, see_other_flash};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::domain::Description;
-use crate::dto::{LineDto, ListQuery, TransactionDto, TransactionInput, TranslationInput};
+use crate::domain::{Description, Unit};
+use crate::dto::{ItemDto, ItemInput, ListQuery, TransactionDto, TransactionInput, TranslationInput};
+use crate::ports::PersonInfo;
 use crate::service::TransactionService;
 
 type Svc = State<Arc<TransactionService>>;
@@ -89,12 +89,48 @@ struct ListParams {
     kind: String,
     member: String,
     untranslated: String,
+    /// Для кого: код человека, `all` — «Для всех», пусто — без фильтра.
+    #[serde(rename = "for")]
+    for_person: String,
 }
 
-struct LineView {
+impl ListParams {
+    /// Фильтры для ссылок «месяц назад / вперёд».
+    fn query(&self) -> String {
+        let e = kernel::web::url_encode;
+        format!("account={}&kind={}&member={}&untranslated={}&for={}", e(&self.account), e(&self.kind), e(&self.member), e(&self.untranslated), e(&self.for_person))
+    }
+}
+
+/// Кто в выборе «Для кого»: код и подпись («Для себя» — запись того, кто смотрит).
+#[derive(Debug, Clone)]
+struct PersonChoice {
+    code: String,
+    label: String,
+}
+
+/// Люди для выбора: «Для себя» первым, затем остальные по имени; `keep` — коды, которые показываются и из архива.
+fn person_choices(people: &[PersonInfo], me: Uuid, me_label: &str, keep: &[&str]) -> Vec<PersonChoice> {
+    let mut out: Vec<(bool, PersonChoice)> = people
+        .iter()
+        .filter(|p| !p.archived || keep.contains(&p.code.as_str()))
+        .map(|p| {
+            let mine = p.user_id == Some(me);
+            (!mine, PersonChoice { code: p.code.clone(), label: if mine { me_label.to_string() } else { p.title.clone() } })
+        })
+        .collect();
+    out.sort_by_key(|a| (a.0, a.1.label.to_lowercase()));
+    out.into_iter().map(|x| x.1).collect()
+}
+
+/// Категория чека в ленте: сумма по категории и товары в порядке чека (docs/group-1.md, 3.3).
+struct GroupView {
     category: String,
     amount: String,
-    note: String,
+    /// «Круассан · 2 шт × 25 − 3 → 47», «Латте · 45» и для кого — если у позиций разные получатели.
+    items: Vec<(String, Option<String>)>,
+    /// Для кого единственная простая позиция категории (строки товара нет) — при разных получателях.
+    label: Option<String>,
 }
 
 struct TxView {
@@ -105,8 +141,9 @@ struct TxView {
     missing: bool,
     /// Счёт (у перевода — «откуда → куда») и автор.
     meta: String,
-    lines: Vec<LineView>,
-    /// Категория единственной позиции без уточнения.
+    /// Позиции по категориям — если операция не простая.
+    groups: Vec<GroupView>,
+    /// Категория простой операции (одна позиция без названия и цены).
     category: String,
     /// Главная сумма со знаком и её валюта.
     amount: String,
@@ -116,6 +153,10 @@ struct TxView {
     second: Option<(String, String)>,
     /// Пояснения: курс, комиссия, возврат.
     notes: Vec<String>,
+    /// Один получатель на все позиции (не «Для всех») — метка у операции.
+    recipient: Option<String>,
+    /// Разные получатели — сводка под операцией: «Для всех 88,00 ฿ · Для себя 45,00 ฿ · Pinpan 22,00 ฿».
+    for_summary: Option<String>,
     /// Остаток счёта после операции (выписка).
     running: Option<String>,
     edit_href: String,
@@ -144,6 +185,8 @@ struct ListPage {
     params: ListParams,
     accounts: Vec<Choice>,
     kinds: Vec<(&'static str, String)>,
+    /// Фильтр «Для кого»: есть, когда в справочнике людей есть кто-то кроме того, кто смотрит.
+    people: Vec<PersonChoice>,
     days: Vec<DayGroup>,
     stats: Vec<Stat>,
     /// Выписка по счёту: (название счёта, валюта).
@@ -152,28 +195,12 @@ struct ListPage {
     filtered: bool,
     /// Для «+ Перевод» из выписки.
     account_query: String,
+    /// Операций больше, чем показано (итоги — по всем).
+    truncated: bool,
 }
 
 fn month_start(s: &str) -> NaiveDate {
     NaiveDate::parse_from_str(&format!("{s}-01"), "%Y-%m-%d").unwrap_or_else(|_| today().with_day(1).unwrap_or(today()))
-}
-
-/// Итоги «Доходы / Расходы / Итог» по проводкам на категории, отдельно по каждой валюте.
-fn category_totals(items: &[TransactionDto]) -> Vec<(String, Decimal, Decimal)> {
-    let mut sums: Vec<(String, Decimal, Decimal)> = Vec::new();
-    for t in items {
-        for p in t.postings.iter().filter(|p| p.ref_kind == "CATEGORY") {
-            let i = match sums.iter().position(|x| x.0 == p.currency_code) {
-                Some(i) => i,
-                None => {
-                    sums.push((p.currency_code.clone(), Decimal::ZERO, Decimal::ZERO));
-                    sums.len() - 1
-                }
-            };
-            if t.is_income() { sums[i].1 -= p.amount } else { sums[i].2 += p.amount }
-        }
-    }
-    sums
 }
 
 async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params): Query<ListParams>) -> PageResult {
@@ -189,29 +216,34 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
         tx_kind: Some(params.kind.clone()).filter(|v| !v.is_empty()),
         created_by: Uuid::parse_str(&params.member).ok(),
         untranslated: (params.untranslated == "1").then(|| lang.code().to_string()),
+        place_code: None,
+        for_person_code: Some(params.for_person.clone()).filter(|v| !v.is_empty()),
     };
-    // Месяц целиком: страницы API по 200 записей (предел 25 страниц — защита от бесконечного цикла).
-    let mut items = Vec::new();
-    for page_no in 0..25 {
-        let chunk = svc.list(p, query(), Pagination { page: page_no, size: kernel::pagination::MAX_PAGE }).await?;
-        let last = chunk.page.number + 1 >= chunk.page.total_pages;
-        items.extend(chunk.content);
-        if last {
-            break;
-        }
-    }
+    // Месяц целиком; итоги и выписка — по всем операциям фильтра, даже если лента обрезана (техдолг #25).
+    let feed = svc.feed(p, query()).await?;
+    let items = feed.items;
     let cats: HashMap<String, String> = svc.category_titles(p, lang).await?.into_iter().collect();
     let accs: HashMap<String, String> = svc.account_titles(p, lang).await?.into_iter().collect();
     let accounts = svc.account_choices(p, lang).await?;
     let acc_title = |code: &str| accs.get(code).cloned().unwrap_or_else(|| code.to_string());
+    let places: HashMap<String, String> = svc.places(p).await?.into_iter().map(|x| (x.code, x.title)).collect();
     let cat_title = |code: &str| cats.get(code).cloned().unwrap_or_else(|| code.to_string());
+    // Для кого (шаг 6): «Для всех» не показывается, запись того, кто смотрит, — «Для себя».
+    let people = svc.people(p, lang).await?;
+    let me = page.session.user_id;
+    let for_me = page_t(&page, "for_me");
+    let names: HashMap<String, String> = people.iter().map(|x| (x.code.clone(), if x.user_id == Some(me) { for_me.clone() } else { x.title.clone() })).collect();
+    let who = |code: &Option<String>| match code {
+        None => page_t(&page, "for_all"),
+        Some(c) => names.get(c).cloned().unwrap_or_else(|| c.clone()),
+    };
 
     // Выписка: остаток на начало месяца и нарастающий остаток — только без прочих фильтров.
-    let only_account = params.kind.is_empty() && params.member.is_empty() && params.untranslated != "1";
+    let only_account = params.kind.is_empty() && params.member.is_empty() && params.untranslated != "1" && params.for_person.is_empty();
     let mut running: HashMap<Uuid, Decimal> = HashMap::new();
     let stats: Vec<Stat>;
     let mut statement = None;
-    if let Some(acc) = &account {
+    if let (Some(acc), Some(st)) = (&account, feed.statement) {
         let currency = items
             .iter()
             .flat_map(|t| t.postings.iter())
@@ -219,32 +251,21 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             .map(|x| x.currency_code.clone())
             .or_else(|| accounts.iter().find(|a| &a.code == acc).map(|a| a.tag.clone()))
             .unwrap_or_default();
-        let start = match from.pred_opt() {
-            Some(d) => svc.balance(p, acc, d).await?,
-            None => Decimal::ZERO,
-        };
-        let end = svc.balance(p, acc, to).await?;
-        let mut bal = start;
-        for t in items.iter().rev() {
-            bal += t.amount_on(acc);
-            running.insert(t.id, bal);
-        }
-        let inflow: Decimal = items.iter().map(|t| t.amount_on(acc)).filter(|v| *v > Decimal::ZERO).sum();
-        let outflow: Decimal = items.iter().map(|t| t.amount_on(acc)).filter(|v| *v < Decimal::ZERO).sum();
+        running.extend(st.running);
         let one = |label: &str, v: Decimal, income: bool| Stat {
             label: page_t(&page, label),
             values: vec![(money_in(lang, v), currency.clone(), v < Decimal::ZERO)],
             income,
         };
         stats = vec![
-            one("balance_start", start, false),
-            Stat { label: page_t(&page, "inflow"), values: vec![(signed(lang, inflow), currency.clone(), false)], income: true },
-            Stat { label: page_t(&page, "outflow"), values: vec![(signed(lang, outflow), currency.clone(), false)], income: false },
-            one("balance_end", end, false),
+            one("balance_start", st.start, false),
+            Stat { label: page_t(&page, "inflow"), values: vec![(signed(lang, st.inflow), currency.clone(), false)], income: true },
+            Stat { label: page_t(&page, "outflow"), values: vec![(signed(lang, st.outflow), currency.clone(), false)], income: false },
+            one("balance_end", st.end, false),
         ];
         statement = Some((acc_title(acc), currency));
     } else {
-        let mut sums = category_totals(&items);
+        let mut sums = feed.totals;
         if sums.is_empty() {
             sums.push((page.session.base_currency.clone(), Decimal::ZERO, Decimal::ZERO));
         }
@@ -275,11 +296,20 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             "INCOME" => ("income", format!("{} · {author}", acc_title(&t.account_code)), String::new()),
             _ => ("expense", format!("{} · {author}", acc_title(&t.account_code)), String::new()),
         };
-        let lines: Vec<LineView> = t
-            .lines
-            .iter()
-            .map(|l| LineView { category: cat_title(&l.category_code), amount: money_in(lang, l.amount), note: l.note.clone().unwrap_or_default() })
-            .collect();
+        // Место: без описания — заголовок операции, иначе — первым в строке под ним («Café Amazon · Карта KBank · Алексей»).
+        let place = t.place_code.as_ref().map(|code| places.get(code).cloned().unwrap_or_else(|| code.clone()));
+        let (meta, desc_fallback) = match place {
+            Some(p) if t.title(lang).is_empty() => (meta, p),
+            Some(p) => (format!("{p} · {meta}"), desc_fallback),
+            None => (meta, desc_fallback),
+        };
+        let simple = t.items.len() == 1 && t.items[0].is_simple();
+        let differ = t.recipients_differ;
+        let groups = if simple { Vec::new() } else { item_groups(lang, &t.items, &cat_title, &|c: &Option<String>| (differ && c.is_some()).then(|| who(c))) };
+        let recipient = t.for_person_code.as_ref().map(|c| who(&Some(c.clone())));
+        let for_summary = differ.then(|| {
+            recipient_sums(&t.items).into_iter().map(|(c, v)| format!("{} {}\u{a0}{}", who(&c), money_in(lang, v), page.cur(&t.currency))).collect::<Vec<_>>().join(" · ")
+        });
         if t.refund {
             notes.push(page_t(&page, "refund"));
         }
@@ -291,7 +321,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
         }
         let desc = match t.title(lang) {
             "" if !desc_fallback.is_empty() => desc_fallback,
-            "" => lines.first().map(|l| l.category.clone()).unwrap_or_default(),
+            "" => t.items.first().map(|x| cat_title(&x.category_code)).unwrap_or_default(),
             s => s.to_string(),
         };
         // В выписке — как операция изменила этот счёт; иначе — сумма операции со знаком.
@@ -312,16 +342,18 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             desc,
             missing: t.missing_tr(lang),
             meta,
-            category: if t.lines.len() == 1 && t.lines[0].note.is_none() { lines[0].category.clone() } else { String::new() },
-            lines: if t.lines.len() > 1 || t.lines.first().is_some_and(|l| l.note.is_some()) { lines } else { Vec::new() },
+            category: if simple { cat_title(&t.items[0].category_code) } else { String::new() },
+            groups,
             amount: signed(lang, value),
             currency,
             positive: value > Decimal::ZERO && !t.is_transfer(),
             second,
             notes,
+            recipient,
+            for_summary,
             running: if only_account { running.get(&t.id).map(|b| money_in(lang, *b)) } else { None },
             edit_href: if t.is_opening() {
-                format!("/accounts/{}/edit", kernel::web::url_encode(&t.account_code))
+                format!("/accounts/{}/edit", kernel::web::url_segment(&t.account_code))
             } else {
                 format!("/transactions/{}/edit?back={}", t.id, kernel::web::url_encode(&page.back()))
             },
@@ -336,9 +368,16 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
         }
     }
     let fmt = |d: NaiveDate| format!("{}-{:02}", d.year(), d.month());
-    let filtered = account.is_some() || !params.kind.is_empty() || !params.member.is_empty() || params.untranslated == "1";
+    let filtered = account.is_some() || !params.kind.is_empty() || !params.member.is_empty() || params.untranslated == "1" || !params.for_person.is_empty();
+    // Фильтр «Для кого» — когда выбирать есть из кого: кроме того, кто смотрит, есть ещё кто-то.
+    let people = match people.iter().any(|x| !x.archived && x.user_id != Some(me)) {
+        // В фильтре — и архивные: прошлые покупки ушедшего участника тоже можно найти.
+        true => person_choices(&people, me, &for_me, &people.iter().map(|x| x.code.as_str()).collect::<Vec<_>>()),
+        false => Vec::new(),
+    };
     let kinds = ["EXPENSE", "INCOME", "TRANSFER", "OPENING"].into_iter().map(|k| (k, page_t(&page, &format!("kinds.{k}")))).collect();
     render(&ListPage {
+        truncated: feed.truncated,
         filtered,
         month_title: format!("{} {}", month_name(lang, from.month()), from.year()),
         month: fmt(from),
@@ -348,6 +387,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
         params,
         accounts,
         kinds,
+        people,
         days,
         stats,
         statement,
@@ -358,6 +398,79 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
 /// Строка словаря фичи (до того, как `PageCtx` переключён на фичу).
 fn page_t(page: &PageCtx, key: &str) -> String {
     kernel::i18n::t(page.lang, Some(crate::i18n::dict), key)
+}
+
+/// Число без лишних нулей и без разделителя тысяч: «2», «0,45» — количество и цена.
+fn num(lang: Lang, v: Decimal) -> String {
+    let s = v.normalize().to_string();
+    if lang == Lang::Ru { s.replace('.', ",") } else { s }
+}
+
+/// Сумма без «,00»: «47», «12 345», «5,03».
+fn money_short(lang: Lang, v: Decimal) -> String {
+    let s = money_in(lang, v);
+    s.strip_suffix(if lang == Lang::Ru { ",00" } else { ".00" }).map(str::to_string).unwrap_or(s)
+}
+
+/// Строка позиции в ленте: «Круассан · 2 шт × 25 − 3 → 47»; без цены — «Латте · 45».
+fn item_text(lang: Lang, x: &ItemDto) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(name) = &x.name {
+        parts.push(name.clone());
+    }
+    let unit = kernel::i18n::t(lang, Some(crate::i18n::dict), &format!("unit.{}", x.unit));
+    let plain = x.quantity == Decimal::ONE && x.unit == "pcs" && x.discount.is_zero();
+    let money = match x.price_per_unit {
+        // 1 шт по цене без скидки — цена и есть сумма.
+        Some(_) if plain => money_short(lang, x.amount),
+        Some(price) => {
+            let mut s = format!("{}\u{a0}{unit} × {}", num(lang, x.quantity), money_short(lang, price));
+            if !x.discount.is_zero() {
+                s.push_str(&format!(" − {}", money_short(lang, x.discount)));
+            }
+            format!("{s} → {}", money_short(lang, x.amount))
+        }
+        None if !x.discount.is_zero() => format!("{} − {} → {}", money_short(lang, x.amount + x.discount), money_short(lang, x.discount), money_short(lang, x.amount)),
+        None if x.quantity != Decimal::ONE || x.unit != "pcs" => format!("{}\u{a0}{unit} → {}", num(lang, x.quantity), money_short(lang, x.amount)),
+        None => money_short(lang, x.amount),
+    };
+    parts.push(money);
+    parts.join(" · ")
+}
+
+/// Суммы позиций по получателям: «Для всех» первым, остальные — в порядке чека.
+fn recipient_sums(items: &[ItemDto]) -> Vec<(Option<String>, Decimal)> {
+    let mut out: Vec<(Option<String>, Decimal)> = Vec::new();
+    for x in items {
+        match out.iter_mut().find(|r| r.0 == x.for_person_code) {
+            Some(r) => r.1 += x.amount,
+            None => out.push((x.for_person_code.clone(), x.amount)),
+        }
+    }
+    out.sort_by_key(|r| r.0.is_some());
+    out
+}
+
+/// Позиции по категориям в порядке первого появления в чеке; внутри — в порядке чека. `who` — метка получателя
+/// позиции (только при разных получателях и не «Для всех» — раздел 3.3).
+fn item_groups(lang: Lang, items: &[ItemDto], cat_title: &dyn Fn(&str) -> String, who: &dyn Fn(&Option<String>) -> Option<String>) -> Vec<GroupView> {
+    let mut order: Vec<&str> = Vec::new();
+    for x in items {
+        if !order.contains(&x.category_code.as_str()) {
+            order.push(&x.category_code);
+        }
+    }
+    order
+        .into_iter()
+        .map(|code| {
+            let mine: Vec<&ItemDto> = items.iter().filter(|x| x.category_code == code).collect();
+            let total: Decimal = mine.iter().map(|x| x.amount).sum();
+            // Одна простая позиция в категории — достаточно строки категории.
+            let alone = mine.len() == 1 && mine[0].is_simple();
+            let lines = if alone { Vec::new() } else { mine.iter().map(|x| (item_text(lang, x), who(&x.for_person_code))).collect() };
+            GroupView { category: cat_title(code), amount: money_in(lang, total), items: lines, label: if alone { who(&mine[0].for_person_code) } else { None } }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------- форма
@@ -382,9 +495,25 @@ struct TxForm {
     plan_id: String,
     plan_date: String,
     back: String,
-    line_category: Vec<String>,
-    line_amount: Vec<String>,
-    line_note: Vec<String>,
+    /// Место (шаг 5): у перевода не сохраняется.
+    place_code: String,
+    /// Скидка на чек (раздел 5.1): делится по позициям, не хранится — при правке поле пустое.
+    discount_total: String,
+    /// «Для кого по умолчанию» (шаг 6): пусто — «Для всех»; поля нет (`None`) — пока в справочнике людей никого нет,
+    /// и тогда получатели позиций не меняются.
+    for_default: Option<String>,
+    /// «Разные получатели в чеке»: позиции берут свой `item_for`, иначе все — `for_default`.
+    for_split: String,
+    // Позиции — параллельные списки: каждая строка формы отправляет все поля, пустые тоже.
+    item_id: Vec<String>,
+    item_category: Vec<String>,
+    item_amount: Vec<String>,
+    item_name: Vec<String>,
+    item_qty: Vec<String>,
+    item_unit: Vec<String>,
+    item_price: Vec<String>,
+    item_discount: Vec<String>,
+    item_for: Vec<String>,
 }
 
 /// Предзаполнение формы (из календаря планов: «Оплатил»; со счёта: «Перевести»; из быстрого диалога).
@@ -400,16 +529,56 @@ struct Prefill {
     kind: String,
     desc: String,
     desc_lang: String,
-    /// Дата операции (из быстрого расхода: «Разбить на позиции»).
+    /// Дата операции (из быстрого ввода: «Подробная карточка»).
     date: String,
+    /// Место (из быстрого ввода).
+    place: String,
     back: String,
 }
 
-struct LineForm {
+/// Строка позиции в форме.
+#[derive(Debug, Default, Clone)]
+struct ItemForm {
+    /// Номер строки с 1 (`items[n]` в ошибках).
+    n: usize,
+    /// Пустая строка в запасе.
+    spare: bool,
+    /// Поля с ошибкой и тексты ошибок строки.
+    invalid: Vec<&'static str>,
+    errors: Vec<String>,
+    id: String,
     category: String,
     amount: String,
-    note: String,
+    name: String,
+    qty: String,
+    unit: String,
+    price: String,
+    discount: String,
+    /// Для кого: пусто — «Для всех».
+    for_person: String,
 }
+
+impl ItemForm {
+    fn is_empty(&self) -> bool {
+        [&self.category, &self.amount, &self.name, &self.price].iter().all(|v| v.trim().is_empty())
+    }
+
+    /// «× цена» раскрыто: есть цена, количество не 1, единица не «шт» или скидка (раздел 3.2).
+    fn open(&self) -> bool {
+        let set = |v: &str, default: &str| !v.trim().is_empty() && v.trim() != default;
+        !self.price.trim().is_empty() || set(&self.qty, "1") || set(&self.unit, "pcs") || set(&self.discount, "0") || self.bad("quantity") || self.bad("unit")
+    }
+
+    fn bad(&self, field: &str) -> bool {
+        self.invalid.contains(&field)
+    }
+}
+
+/// Поля позиции, к которым бывает ошибка, в порядке строки формы.
+const ITEM_FIELDS: [&str; 8] = ["id", "category_code", "amount", "quantity", "unit", "price", "discount", "for_person_code"];
+
+/// Пустых строк позиций в запасе — для ввода чека без JS (с JS они спрятаны до «Добавить позицию»).
+const SPARE_ITEMS: usize = 3;
 
 /// Проводка для блока «Проводки» в карточке транзакции.
 struct PostingView {
@@ -425,18 +594,97 @@ struct FormPage {
     page: PageCtx,
     id: Option<Uuid>,
     f: TxForm,
-    lines: Vec<LineForm>,
+    /// Заполненные позиции, затем пустые в запасе.
+    items: Vec<ItemForm>,
+    units: Vec<(&'static str, String)>,
     accounts: Vec<Choice>,
     categories: Vec<Choice>,
+    /// Активные места и место самой операции; пусто — поля «Место» нет.
+    places: Vec<crate::ports::PlaceInfo>,
+    /// Люди для «Для кого» (активные и получатели самой операции); пусто — полей нет, всё «Для всех».
+    people: Vec<PersonChoice>,
     /// Курс 1 единицы валюты к базовой на дату формы (для курса справочника рядом с курсом перевода).
     rates: HashMap<String, String>,
+    /// Знаков после запятой у валюты счёта — для суммы «количество × цена» в браузере.
+    minor: HashMap<String, u32>,
     postings: Vec<PostingView>,
     error: Option<String>,
 }
 
+/// Поля формы, у которых свой текст ошибки рядом с полем.
+const FIELDS: [&str; 13] = [
+    "occurred_on", "account_code", "tx_kind", "description", "to_account_code", "amount", "to_amount", "fee_category_code", "fee_amount", "discount_total", "items",
+    "place_code", "for_person_code",
+];
+
 impl FormPage {
     fn rate_of(&self, currency: &str) -> String {
         self.rates.get(currency).cloned().unwrap_or_default()
+    }
+
+    fn minor_of(&self, account: &str) -> u32 {
+        self.minor.get(account).copied().unwrap_or(2)
+    }
+
+    /// Ошибка, не привязанная ни к одному полю формы, — общим блоком над формой.
+    fn general_error(&self) -> Option<String> {
+        let e = FormError::parse(self.error.as_deref()?);
+        let known = FIELDS.contains(&e.field.as_str()) || e.field.starts_with("items[");
+        if known { None } else { self.error.clone() }
+    }
+
+    /// Строка «Ещё» в свёрнутом виде: что внутри (раздел 3.2) — «для всех · скидка на чек».
+    fn more_summary(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.people.is_empty() {
+            // «для всех», «для себя» — со строчной, имена — как есть.
+            let label = self.person_label(self.for_default());
+            let generic = self.for_default().is_empty() || label == self.page.t("for_me");
+            parts.push(if self.split() { self.page.t("for_differ") } else if generic { label.to_lowercase() } else { label });
+        }
+        parts.push(self.page.t("discount_total").to_lowercase());
+        parts.join(" · ")
+    }
+
+    /// «Ещё» раскрыто: в нём есть введённое значение или ошибка; получатели не «Для всех» (раздел 3.2).
+    fn more_open(&self) -> bool {
+        !self.f.discount_total.trim().is_empty()
+            || kernel::web::field_error(&self.error, "discount_total").is_some()
+            || kernel::web::field_error(&self.error, "for_person_code").is_some()
+            || !self.for_default().is_empty()
+            || self.split()
+    }
+
+    fn for_default(&self) -> &str {
+        self.f.for_default.as_deref().unwrap_or_default()
+    }
+
+    /// Включено «Разные получатели в чеке».
+    fn split(&self) -> bool {
+        self.f.for_split == "1"
+    }
+
+    /// Подпись получателя: пусто — «Для всех».
+    fn person_label(&self, code: &str) -> String {
+        match code {
+            "" => self.page.t("for_all"),
+            c => self.people.iter().find(|p| p.code == c).map(|p| p.label.clone()).unwrap_or_else(|| c.to_string()),
+        }
+    }
+
+    /// Сводка под позициями при разных получателях (раздел 3.2): «Для всех 88,00 ฿ · Для себя 45,00 ฿ · Pinpan 22,00 ฿».
+    /// Без JS — как сохранено; с JS её пересчитывает браузер.
+    fn for_summary(&self) -> String {
+        let mut sums: Vec<(&str, Decimal)> = Vec::new();
+        for x in self.items.iter().filter(|x| !x.spare) {
+            let Ok(v) = x.amount.trim().replace(',', ".").parse::<Decimal>() else { continue };
+            match sums.iter_mut().find(|r| r.0 == x.for_person) {
+                Some(r) => r.1 += v,
+                None => sums.push((&x.for_person, v)),
+            }
+        }
+        sums.sort_by_key(|r| !r.0.is_empty());
+        sums.into_iter().map(|(c, v)| format!("{} {}", self.person_label(c), money_in(self.page.lang, v))).collect::<Vec<_>>().join(" · ")
     }
 }
 
@@ -449,20 +697,32 @@ fn back_or_list(back: &str) -> String {
     if back.starts_with('/') && !back.starts_with("//") { back.to_string() } else { "/transactions".to_string() }
 }
 
+/// Ошибка поля из словаря фичи на языке запроса.
+fn invalid(field: &str, key: &str) -> AppError {
+    Problem::validation(field, kernel::i18n::tr(Some(crate::i18n::dict), key, &[])).into()
+}
+
 impl TxForm {
-    fn lines(&self) -> Vec<LineForm> {
-        let n = self.line_category.len().max(self.line_amount.len());
-        let mut out: Vec<LineForm> = (0..n)
-            .map(|i| LineForm {
-                category: self.line_category.get(i).cloned().unwrap_or_default(),
-                amount: self.line_amount.get(i).cloned().unwrap_or_default(),
-                note: self.line_note.get(i).cloned().unwrap_or_default(),
+    /// Заполненные строки позиций в порядке формы: пустые строки (запас) пропускаются, и номер позиции в
+    /// ошибке — номер среди заполненных.
+    fn items(&self) -> Vec<ItemForm> {
+        let n = [self.item_category.len(), self.item_amount.len(), self.item_name.len(), self.item_price.len()].into_iter().max().unwrap_or(0);
+        let at = |v: &Vec<String>, i: usize| v.get(i).cloned().unwrap_or_default();
+        (0..n)
+            .map(|i| ItemForm {
+                id: at(&self.item_id, i),
+                category: at(&self.item_category, i),
+                amount: at(&self.item_amount, i),
+                name: at(&self.item_name, i),
+                qty: at(&self.item_qty, i),
+                unit: at(&self.item_unit, i),
+                price: at(&self.item_price, i),
+                discount: at(&self.item_discount, i),
+                for_person: at(&self.item_for, i),
+                ..Default::default()
             })
-            .collect();
-        if out.is_empty() {
-            out.push(LineForm { category: String::new(), amount: String::new(), note: String::new() });
-        }
-        out
+            .filter(|x| !x.is_empty())
+            .collect()
     }
 
     fn kind(&self) -> &str {
@@ -476,27 +736,41 @@ impl TxForm {
     fn to_input(&self) -> Result<TransactionInput, AppError> {
         let v = |m: String| AppError::Validation(m);
         let money = |field: &str, s: &str| opt(s).map(|s| parse_money(field, &s)).transpose().map_err(v);
+        let number = |field: &str, s: &str| opt(s).map(|s| kernel::web::parse_number(field, &s)).transpose().map_err(v);
         let transfer = self.kind() == "TRANSFER";
-        let mut lines = Vec::new();
+        let mut items = Vec::new();
         if !transfer {
-            for (i, l) in self.lines().into_iter().enumerate() {
-                // Полностью пустая строка формы просто пропускается.
-                if l.category.trim().is_empty() && l.amount.trim().is_empty() {
-                    continue;
-                }
-                lines.push(LineDto {
-                    category_code: l.category,
-                    amount: parse_money(&format!("lines[{}].amount", i + 1), &l.amount).map_err(v)?,
-                    note: opt(&l.note),
+            for (n, x) in self.items().into_iter().enumerate() {
+                let f = |name: &str| format!("items[{}].{name}", n + 1);
+                let price = number(&f("price"), &x.price)?;
+                items.push(ItemInput {
+                    id: opt(&x.id).map(|s| Uuid::parse_str(&s)).transpose().map_err(|_| invalid(&f("id"), "err.bad_id"))?,
+                    category_code: opt(&x.category),
+                    name: opt(&x.name),
+                    quantity: number(&f("quantity"), &x.qty)?,
+                    unit: opt(&x.unit),
+                    // С ценой сумму считает сервер (раздел 3.2): поле суммы в форме только для чтения.
+                    amount: if price.is_some() { None } else { money(&f("amount"), &x.amount)? },
+                    price_per_unit: price,
+                    discount: money(&f("discount"), &x.discount)?,
+                    note: None,
+                    // Без «Разные получатели» все позиции — «Для кого по умолчанию»; пусто — «Для всех».
+                    for_person_code: match (&self.for_default, self.for_split == "1") {
+                        (None, _) => None,
+                        (Some(_), true) => Some(x.for_person.trim().to_string()),
+                        (Some(d), false) => Some(d.trim().to_string()),
+                    },
                 });
             }
         }
         Ok(TransactionInput {
-            occurred_on: self.occurred_on.parse().map_err(|_| v("occurred_on: неверная дата".into()))?,
+            occurred_on: self.occurred_on.parse().map_err(|_| invalid("occurred_on", "err.bad_date"))?,
             tx_kind: self.kind().to_string(),
             account_code: self.account_code.clone(),
             refund: !transfer && self.refund == "1",
-            lines,
+            items,
+            replace_items: true,
+            discount_total: if transfer { None } else { money("discount_total", &self.discount_total)? },
             to_account_code: if transfer { opt(&self.to_account_code) } else { None },
             amount: if transfer { money("amount", &self.amount)? } else { None },
             to_amount: if transfer { money("to_amount", &self.to_amount)? } else { None },
@@ -507,13 +781,17 @@ impl TxForm {
             description_ru: opt(&self.description_ru),
             description_en: opt(&self.description_en),
             description_th: opt(&self.description_th),
-            plan_id: opt(&self.plan_id).map(|s| Uuid::parse_str(&s)).transpose().map_err(|_| v("plan_id: неверный id".into()))?,
-            plan_date: opt(&self.plan_date).map(|s| s.parse()).transpose().map_err(|_| v("plan_date: неверная дата".into()))?,
+            plan_id: opt(&self.plan_id).map(|s| Uuid::parse_str(&s)).transpose().map_err(|_| invalid("plan_id", "err.bad_id"))?,
+            plan_date: opt(&self.plan_date).map(|s| s.parse()).transpose().map_err(|_| invalid("plan_date", "err.bad_date"))?,
+            place_code: if transfer { None } else { opt(&self.place_code) },
+            for_person_code: if transfer { None } else { self.for_default.as_ref().map(|d| d.trim().to_string()) },
+            ..Default::default()
         })
     }
 
     fn from_dto(t: &TransactionDto) -> Self {
         let num = |d: Option<Decimal>| d.map(|d| d.normalize().to_string()).unwrap_or_default();
+        let col = |f: &dyn Fn(&ItemDto) -> String| t.items.iter().map(f).collect::<Vec<String>>();
         Self {
             occurred_on: t.occurred_on.to_string(),
             tx_kind: t.tx_kind.clone(),
@@ -532,9 +810,19 @@ impl TxForm {
             plan_id: t.plan_id.map(|u| u.to_string()).unwrap_or_default(),
             plan_date: t.plan_date.map(|d| d.to_string()).unwrap_or_default(),
             back: String::new(),
-            line_category: t.lines.iter().map(|l| l.category_code.clone()).collect(),
-            line_amount: t.lines.iter().map(|l| l.amount.normalize().to_string()).collect(),
-            line_note: t.lines.iter().map(|l| l.note.clone().unwrap_or_default()).collect(),
+            place_code: t.place_code.clone().unwrap_or_default(),
+            discount_total: String::new(),
+            for_default: Some(t.for_person_code.clone().unwrap_or_default()),
+            for_split: if t.recipients_differ { "1".into() } else { String::new() },
+            item_for: col(&|x| x.for_person_code.clone().unwrap_or_default()),
+            item_id: col(&|x| x.id.to_string()),
+            item_category: col(&|x| x.category_code.clone()),
+            item_amount: col(&|x| x.amount.normalize().to_string()),
+            item_name: col(&|x| x.name.clone().unwrap_or_default()),
+            item_qty: col(&|x| x.quantity.normalize().to_string()),
+            item_unit: col(&|x| x.unit.clone()),
+            item_price: col(&|x| num(x.price_per_unit)),
+            item_discount: col(&|x| x.discount.normalize().to_string()),
         }
     }
 }
@@ -569,8 +857,26 @@ async fn form_page(svc: &TransactionService, page: PageCtx, existing: Option<&Tr
                 .collect()
         }
     };
-    let lines = f.lines();
-    render(&FormPage { page: nested(page), id: existing.map(|t| t.id), f, lines, accounts, categories, rates, postings, error })
+    let mut items = f.items();
+    // Пустые строки в запасе — с получателем шапки: без JS новая позиция берёт его, как и с JS.
+    let spare = ItemForm { spare: true, for_person: f.for_default.clone().unwrap_or_default(), ..Default::default() };
+    items.extend(std::iter::repeat_n(spare, SPARE_ITEMS));
+    for (i, x) in items.iter_mut().enumerate() {
+        x.n = i + 1;
+        for name in ITEM_FIELDS {
+            if let Some(e) = kernel::web::field_error(&error, &format!("items[{}].{name}", x.n)) {
+                x.invalid.push(name);
+                x.errors.push(e);
+            }
+        }
+    }
+    let units = Unit::ALL.into_iter().map(|u| (u.as_str(), page_t(&page, &format!("unit.{}", u.as_str())))).collect();
+    let minor = svc.minor_units(p).await?.into_iter().collect();
+    let places = svc.places(p).await?.into_iter().filter(|x| !x.archived || x.code == f.place_code).collect();
+    let mut used: Vec<&str> = items.iter().map(|x| x.for_person.as_str()).collect();
+    used.extend(f.for_default.as_deref());
+    let people = person_choices(&svc.people(p, lang).await?, page.session.user_id, &page_t(&page, "for_me"), &used);
+    render(&FormPage { page: nested(page), id: existing.map(|t| t.id), f, items, units, accounts, categories, places, people, rates, minor, postings, error })
 }
 
 async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Query<Prefill>) -> PageResult {
@@ -591,9 +897,9 @@ async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
         plan_id: q.plan_id,
         plan_date: q.plan_date,
         back: q.back,
-        line_category: vec![q.category],
-        line_amount: vec![if transfer { String::new() } else { q.amount }],
-        line_note: vec![String::new()],
+        place_code: q.place,
+        item_category: vec![q.category],
+        item_amount: vec![if transfer { String::new() } else { q.amount }],
         ..Default::default()
     };
     form_page(&svc, page, None, f, None).await
@@ -604,7 +910,7 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): F
     let result = async { svc.create(s.project_id, s.user_id, f.to_input()?).await }.await;
     match result {
         Ok(_) => Ok(see_other_flash(&page.config, &back_or_list(&f.back), Flash::ok(page.t("toast.saved")))),
-        Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, None, f, Some(m)).await,
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_) | AppError::Conflict(_))) => form_page(&svc, page, None, f, Some(e.to_string())).await,
         Err(e) => Err(PageError(e)),
     }
 }
@@ -613,7 +919,7 @@ async fn edit_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id
     let t = svc.get(page.session.project_id, id).await?;
     // Начальный остаток ведётся из формы счёта.
     if t.is_opening() {
-        return Ok(see_other(&format!("/accounts/{}/edit", kernel::web::url_encode(&t.account_code))));
+        return Ok(see_other(&format!("/accounts/{}/edit", kernel::web::url_segment(&t.account_code))));
     }
     let f = TxForm::from_dto(&t);
     form_page(&svc, page, Some(&t), f, None).await
@@ -624,9 +930,9 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): 
     let result = async { svc.update(p, id, f.to_input()?).await }.await;
     match result {
         Ok(_) => Ok(see_other_flash(&page.config, &back_or_list(&f.back), Flash::ok(page.t("toast.saved")))),
-        Err(AppError::Validation(m) | AppError::Conflict(m)) => {
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_) | AppError::Conflict(_))) => {
             let t = svc.get(p, id).await?;
-            form_page(&svc, page, Some(&t), f, Some(m)).await
+            form_page(&svc, page, Some(&t), f, Some(e.to_string())).await
         }
         Err(e) => Err(PageError(e)),
     }
@@ -686,7 +992,10 @@ async fn reconcile_page(svc: &TransactionService, page: PageCtx, f: ReconcileFor
     let p = page.session.project_id;
     let lang = page.lang;
     let accounts = svc.account_choices(p, lang).await?;
-    let acc = accounts.iter().find(|a| a.code == f.account).ok_or_else(|| AppError::NotFound(format!("счёт {} не найден", f.account)))?;
+    let acc = accounts
+        .iter()
+        .find(|a| a.code == f.account)
+        .ok_or_else(|| AppError::NotFound(kernel::i18n::tr(Some(crate::i18n::dict), "err.account_not_found", &[("code", &f.account)])))?;
     let date = f.occurred_on.parse::<NaiveDate>().unwrap_or_else(|_| today());
     let book = svc.balance(p, &acc.code, date).await?;
     let categories = svc.category_choices(p, lang).await?;
@@ -715,7 +1024,7 @@ async fn reconcile(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f)
     let s = page.session.scope();
     let lang = page.lang;
     let result = async {
-        let date: NaiveDate = f.occurred_on.parse().map_err(|_| AppError::Validation("occurred_on: неверная дата".into()))?;
+        let date: NaiveDate = f.occurred_on.parse().map_err(|_| invalid("occurred_on", "err.bad_date"))?;
         let actual = parse_money("actual", &f.actual).map_err(AppError::Validation)?;
         let text = crate::i18n::dict("reconcile_desc").map(|t| lang.pick(t).to_string());
         let description = Description { text, lang, ..Default::default() };
@@ -726,7 +1035,7 @@ async fn reconcile(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f)
     match result {
         Ok(Some(_)) => see_other_flash(&page.config, &back, Flash::ok(page_t(&page, "reconcile_done"))),
         Ok(None) => see_other_flash(&page.config, &back, Flash::ok(page_t(&page, "reconcile_same"))),
-        Err(AppError::Validation(m)) => reconcile_page(&svc, page, f, Some(m)).await.into_response(),
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => reconcile_page(&svc, page, f, Some(e.to_string())).await.into_response(),
         Err(e) => PageError(e).into_response(),
     }
 }
@@ -769,9 +1078,9 @@ async fn translate(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id
     let input = TranslationInput { description_ru: opt(&f.description_ru), description_en: opt(&f.description_en), description_th: opt(&f.description_th) };
     match svc.translate(page.session.project_id, id, input).await {
         Ok(_) => Ok(see_other_flash(&page.config, "/transactions", Flash::ok(page.t("toast.saved")))),
-        Err(AppError::Validation(m)) => {
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => {
             let t = svc.get(page.session.project_id, id).await?;
-            translate_page(page, t, Some(m))
+            translate_page(page, t, Some(e.to_string()))
         }
         Err(e) => Err(PageError(e)),
     }
@@ -781,6 +1090,89 @@ async fn translate(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    fn form(rows: &[[&str; 8]]) -> TxForm {
+        let col = |i: usize| rows.iter().map(|r| r[i].to_string()).collect::<Vec<_>>();
+        TxForm {
+            occurred_on: "2026-10-18".into(),
+            tx_kind: "EXPENSE".into(),
+            account_code: "CARD".into(),
+            description_lang: "RU".into(),
+            item_id: col(0),
+            item_category: col(1),
+            item_amount: col(2),
+            item_name: col(3),
+            item_qty: col(4),
+            item_unit: col(5),
+            item_price: col(6),
+            item_discount: col(7),
+            ..Default::default()
+        }
+    }
+
+    /// Форма без JS: пустые строки в запасе пропускаются, с ценой сумму считает сервер, чек — целиком.
+    #[test]
+    fn form_items_to_input() {
+        let id = Uuid::new_v4().to_string();
+        let f = form(&[
+            [id.as_str(), "FOOD", "14", "Вода", "1", "pcs", "", "0"],
+            ["", "", "", "", "", "pcs", "", ""],
+            ["", "SNACKS", "50", "Круассан", "2", "pcs", "25", "3"],
+            ["", "", "", "", "1", "pcs", "", "0"],
+        ]);
+        let input = f.to_input().unwrap();
+        assert!(input.replace_items);
+        assert_eq!(input.items.len(), 2);
+        assert_eq!((input.items[0].id.map(|u| u.to_string()), input.items[0].amount), (Some(id), Some(Decimal::from(14))));
+        let x = &input.items[1];
+        assert_eq!((x.amount, x.price_per_unit, x.quantity, x.discount, x.name.as_deref()), (None, Some(Decimal::from(25)), Some(Decimal::from(2)), Some(Decimal::from(3)), Some("Круассан")));
+        let bad = form(&[["nope", "FOOD", "1", "", "", "pcs", "", ""]]).to_input().unwrap_err();
+        assert!(matches!(bad, AppError::Invalid(p) if p.field == "items[1].id"));
+        let bad = form(&[["", "FOOD", "abc", "", "", "pcs", "", ""]]).to_input().unwrap_err();
+        assert!(bad.to_string().starts_with("items[1].amount: "));
+    }
+
+    /// «Для кого» (шаг 6): без «Разные получатели» все позиции — «Для кого по умолчанию», с ним — свои
+    /// (пусто — «Для всех»); поля нет (в справочнике людей никого) — получатели не меняются.
+    #[test]
+    fn form_recipients_to_input() {
+        let mut f = form(&[["", "FOOD", "10", "", "", "pcs", "", ""], ["", "CAFE", "5", "", "", "pcs", "", ""]]);
+        f.item_for = vec!["".into(), "ANNA".into()];
+        let i = f.to_input().unwrap();
+        assert!(i.for_person_code.is_none() && i.items.iter().all(|x| x.for_person_code.is_none()));
+        f.for_default = Some("PINPAN".into());
+        let i = f.to_input().unwrap();
+        assert_eq!(i.for_person_code.as_deref(), Some("PINPAN"));
+        assert!(i.items.iter().all(|x| x.for_person_code.as_deref() == Some("PINPAN")));
+        f.for_split = "1".into();
+        let who: Vec<Option<String>> = f.to_input().unwrap().items.into_iter().map(|x| x.for_person_code).collect();
+        assert_eq!(who, vec![Some(String::new()), Some("ANNA".into())]);
+    }
+
+    /// Строка позиции в ленте (раздел 3.3).
+    #[test]
+    fn item_line_in_feed() {
+        let d = |s: &str| Decimal::from_str(s).unwrap();
+        let item = |name: Option<&str>, qty: &str, unit: &str, price: Option<&str>, discount: &str, amount: &str| ItemDto {
+            id: Uuid::nil(),
+            category_code: "FOOD".into(),
+            name: name.map(Into::into),
+            quantity: d(qty),
+            unit: unit.into(),
+            price_per_unit: price.map(d),
+            discount: d(discount),
+            amount: d(amount),
+            note: None,
+            for_person_code: None,
+        };
+        let ru = Lang::Ru;
+        assert_eq!(item_text(ru, &item(Some("Круассан"), "2", "pcs", Some("25"), "3", "47")), "Круассан · 2\u{a0}шт × 25 − 3 → 47");
+        assert_eq!(item_text(ru, &item(Some("Латте"), "1", "pcs", None, "0", "45")), "Латте · 45");
+        assert_eq!(item_text(ru, &item(Some("Бананы"), "0.45", "kg", Some("60"), "0", "27")), "Бананы · 0,45\u{a0}кг × 60 → 27");
+        assert_eq!(item_text(Lang::En, &item(None, "1", "pcs", None, "4.5", "40.5")), "45 − 4.50 → 40.50");
+        assert_eq!(item_text(Lang::Th, &item(Some("น้ำ"), "3", "l", None, "0", "30")), "น้ำ · 3\u{a0}ล. → 30");
+        assert_eq!(item_text(ru, &item(Some("Вода"), "1", "pcs", Some("14"), "0", "14")), "Вода · 14", "1 шт без скидки — только сумма");
+    }
 
     #[test]
     fn rate_is_shown_above_one() {

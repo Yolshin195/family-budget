@@ -19,9 +19,9 @@
         {% if c.archived %}<span class="badge">{{ page.t("archived") }}</span>{% endif %}
         {% if page.can_write() %}
         <span class="row-actions">
-          {% if !c.archived %}<a class="btn-ghost btn-sm" href="/categories/new?parent={{ c.code }}&amp;kind={{ c.category_kind }}" aria-label="{{ page.t("add_child") }}: {{ c.title(page.lang) }}">
+          {% if !c.archived %}<a class="btn-ghost btn-sm" href="/categories/new?parent={{ kernel::web::url_encode(c.code) }}&amp;kind={{ c.category_kind }}" aria-label="{{ page.t("add_child") }}: {{ c.title(page.lang) }}">
             <svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg><span class="hide-sm">{{ page.t("add_child") }}</span></a>{% endif %}
-          <a class="btn-ghost btn-sm" href="/categories/{{ c.code }}/edit" aria-label="{{ page.t("edit") }}: {{ c.title(page.lang) }}">{{ page.t("edit") }}</a>
+          <a class="btn-ghost btn-sm" href="/categories/{{ kernel::web::url_segment(c.code) }}/edit" aria-label="{{ page.t("edit") }}: {{ c.title(page.lang) }}">{{ page.t("edit") }}</a>
         </span>
         {% endif %}
       </li>

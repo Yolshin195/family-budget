@@ -9,7 +9,7 @@
   <div class="grid gap-4 sm:grid-cols-3">
     <div class="field">
       <label class="label" for="code">{{ page.t("code") }}</label>
-      <input class="input font-mono uppercase" id="code" name="code" value="{{ f.code }}"{% if !is_new %} readonly{% else %} autofocus{% endif %} required maxlength="3" placeholder="THB" aria-describedby="code-hint code-err"{% if kernel::web::field_error(error, "code").is_some() %} aria-invalid="true"{% endif %}>
+      <input class="input font-mono uppercase" id="code" name="code" value="{{ f.code }}"{% if !is_new %} readonly{% else %} autofocus{% endif %} required maxlength="3" pattern="[A-Za-z0-9_]+" title="{{ page.t("code_hint") }}" placeholder="THB" aria-describedby="code-hint code-err"{% if kernel::web::field_error(error, "code").is_some() %} aria-invalid="true"{% endif %}>
       <p class="hint" id="code-hint">{{ page.t("code_hint") }}</p>{% call m::err(error, "code") %}{% endcall %}
     </div>
     <div class="field"><label class="label" for="symbol">{{ page.t("symbol") }}</label>
@@ -21,7 +21,7 @@
   <div class="form-actions">
     <button class="btn-primary">{{ page.t("save") }}</button>
     <a href="/currencies" class="btn-ghost">{{ page.t("cancel") }}</a>
-    {% if !is_new %}<button formaction="/currencies/{{ f.code }}/archive" formnovalidate class="btn-ghost text-danger ml-auto">
+    {% if !is_new %}<button formaction="/currencies/{{ kernel::web::url_segment(f.code) }}/archive" formnovalidate class="btn-ghost text-danger ml-auto">
       <svg class="icon" aria-hidden="true"><use href="{{ page.icon("archive") }}"></use></svg>{{ page.t("archive") }}</button>{% endif %}
   </div>
 </form>

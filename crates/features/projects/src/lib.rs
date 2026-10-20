@@ -21,7 +21,7 @@ use kernel::web::Web;
 use utoipa::OpenApi;
 
 pub use domain::ProjectKind;
-pub use ports::{Deps, IdentityProvider, ProjectBootstrap, ProjectPurge};
+pub use ports::{Deps, IdentityProvider, MemberDirectory, ProjectBootstrap, ProjectPurge};
 pub use service::{GUEST_SUB, ProjectService as Service};
 
 pub const NAME: &str = "projects";

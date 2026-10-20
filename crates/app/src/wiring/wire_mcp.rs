@@ -17,7 +17,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use ::mcp::{
-    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxLine,
+    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Person, Place, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem,
 };
 
 pub struct LedgerAdapter(pub Arc<::transactions::Service>);
@@ -30,7 +30,22 @@ fn tx_from(d: ::transactions::dto::TransactionDto) -> Tx {
         account_code: d.account_code,
         to_account_code: d.to_account_code,
         refund: d.refund,
-        lines: d.lines.into_iter().map(|l| TxLine { category_code: l.category_code, amount: l.amount, note: l.note }).collect(),
+        items: d
+            .items
+            .into_iter()
+            .map(|x| TxItem {
+                id: Some(x.id),
+                category_code: Some(x.category_code),
+                name: x.name,
+                quantity: Some(x.quantity),
+                unit: Some(x.unit),
+                price: x.price_per_unit,
+                discount: Some(x.discount),
+                amount: Some(x.amount),
+                note: x.note,
+                for_person: Some(x.for_person_code),
+            })
+            .collect(),
         total: d.total,
         currency: d.currency,
         to_amount: d.to_amount,
@@ -45,7 +60,15 @@ fn tx_from(d: ::transactions::dto::TransactionDto) -> Tx {
         created_by: d.created_by,
         plan_id: d.plan_id,
         plan_date: d.plan_date,
+        place_code: d.place_code,
+        for_person_code: d.for_person_code,
+        recipients_differ: d.recipients_differ,
     }
+}
+
+/// «Для кого» в запрос операций: `Some(None)` — «Для всех» (`all`).
+fn recipient_into(v: Option<Option<String>>) -> Option<String> {
+    v.map(|who| who.unwrap_or_else(|| ::transactions::dto::ALL.to_string()))
 }
 
 fn input_from(d: TxDraft) -> ::transactions::dto::TransactionInput {
@@ -54,7 +77,26 @@ fn input_from(d: TxDraft) -> ::transactions::dto::TransactionInput {
         tx_kind: d.kind,
         account_code: d.account_code,
         refund: d.refund,
-        lines: d.lines.into_iter().map(|l| ::transactions::dto::LineDto { category_code: l.category_code, amount: l.amount, note: l.note }).collect(),
+        items: d
+            .items
+            .into_iter()
+            .map(|x| ::transactions::dto::ItemInput {
+                id: x.id,
+                category_code: x.category_code,
+                name: x.name,
+                quantity: x.quantity,
+                unit: x.unit,
+                price_per_unit: x.price,
+                discount: x.discount,
+                amount: x.amount,
+                note: x.note,
+                for_person_code: recipient_into(x.for_person),
+            })
+            .collect(),
+        replace_items: d.replace_items,
+        remove_item_ids: d.remove_item_ids,
+        discount_total: d.discount_total,
+        lines: Vec::new(),
         to_account_code: d.to_account_code,
         amount: d.amount,
         to_amount: d.to_amount,
@@ -67,6 +109,8 @@ fn input_from(d: TxDraft) -> ::transactions::dto::TransactionInput {
         description_th: d.description_th,
         plan_id: d.plan_id,
         plan_date: d.plan_date,
+        place_code: d.place_code,
+        for_person_code: recipient_into(d.for_person),
     }
 }
 
@@ -84,12 +128,18 @@ impl ::mcp::Ledger for LedgerAdapter {
                 .collect(),
             frequent_expense: q.frequent_expense,
             frequent_income: q.frequent_income,
+            places: q
+                .places
+                .into_iter()
+                .map(|p| ::mcp::PlaceInfo { code: p.code, title: p.title, search: p.search, category_code: p.category, account_code: p.account })
+                .collect(),
+            frequent_places: q.frequent_places,
         })
     }
 
     async fn list(&self, project_id: Uuid, filter: TxFilter, limit: i64, offset: i64) -> AppResult<(Vec<Tx>, i64)> {
         let size = limit.max(1);
-        let query = ::transactions::dto::ListQuery { from: filter.from, to: filter.to, account_code: filter.account_code, tx_kind: filter.kind, created_by: None, untranslated: None };
+        let query = ::transactions::dto::ListQuery { from: filter.from, to: filter.to, account_code: filter.account_code, tx_kind: filter.kind, created_by: None, untranslated: None, place_code: filter.place_code, for_person_code: recipient_into(filter.for_person) };
         let page = self.0.list(project_id, query, Pagination { page: offset / size, size }).await?;
         Ok((page.content.into_iter().map(tx_from).collect(), page.page.total_elements))
     }
@@ -242,6 +292,40 @@ pub struct DirectoriesAdapter {
     pub currencies: Arc<::currencies::Service>,
     pub accounts: Arc<::accounts::Service>,
     pub categories: Arc<::categories::Service>,
+    pub places: Arc<::places::Service>,
+    pub people: Arc<::people::Service>,
+}
+
+fn person_from(d: ::people::dto::PersonDto) -> Person {
+    Person { code: d.code, name: d.name, aliases: d.aliases, user_id: d.user_id, former_member: d.former_member, archived: d.archived }
+}
+
+fn person_fields(p: &Person) -> ::people::dto::PersonFields {
+    ::people::dto::PersonFields { name: p.name.clone(), aliases: p.aliases.clone() }
+}
+
+fn place_from(d: ::places::dto::PlaceDto) -> Place {
+    Place {
+        code: d.code,
+        name: d.name,
+        aliases: d.aliases,
+        category_code: d.default_category_code,
+        account_code: d.default_account_code,
+        kind: d.place_kind,
+        location: d.location,
+        archived: d.archived,
+    }
+}
+
+fn place_fields(p: &Place) -> ::places::dto::PlaceFields {
+    ::places::dto::PlaceFields {
+        name: p.name.clone(),
+        aliases: p.aliases.clone(),
+        default_category_code: p.category_code.clone(),
+        default_account_code: p.account_code.clone(),
+        place_kind: p.kind.clone(),
+        location: p.location.clone(),
+    }
 }
 
 fn currency_from(d: ::currencies::dto::CurrencyDto) -> Currency {
@@ -377,6 +461,26 @@ impl ::mcp::Directories for DirectoriesAdapter {
             sort_order: c.sort_order,
         };
         Ok(category_from(self.categories.update(project_id, &c.code, dto).await?))
+    }
+    async fn places(&self, project_id: Uuid) -> AppResult<Vec<Place>> {
+        Ok(self.places.all(project_id, true).await?.into_iter().map(place_from).collect())
+    }
+    async fn create_place(&self, project_id: Uuid, p: &Place) -> AppResult<Place> {
+        let dto = ::places::dto::CreatePlaceDto { code: p.code.clone(), data: place_fields(p) };
+        Ok(place_from(self.places.create(project_id, dto).await?))
+    }
+    async fn update_place(&self, project_id: Uuid, p: &Place) -> AppResult<Place> {
+        Ok(place_from(self.places.update(project_id, &p.code, place_fields(p)).await?))
+    }
+    async fn people(&self, project_id: Uuid) -> AppResult<Vec<Person>> {
+        Ok(self.people.all(project_id, true).await?.into_iter().map(person_from).collect())
+    }
+    async fn create_person(&self, project_id: Uuid, p: &Person) -> AppResult<Person> {
+        let dto = ::people::dto::CreatePersonDto { code: p.code.clone(), data: person_fields(p) };
+        Ok(person_from(self.people.create(project_id, dto).await?))
+    }
+    async fn update_person(&self, project_id: Uuid, p: &Person) -> AppResult<Person> {
+        Ok(person_from(self.people.update(project_id, &p.code, person_fields(p)).await?))
     }
 }
 

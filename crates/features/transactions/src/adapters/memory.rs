@@ -9,7 +9,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::adapters::postgres::fact;
-use crate::domain::{RefKind, Transaction, TxKind, check_balanced, system};
+use crate::domain::{Posting, RefKind, Transaction, TxKind, check_balanced, system};
 use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
 #[derive(Default)]
@@ -25,6 +25,13 @@ fn matches(r: &Transaction, project_id: Uuid, f: &Filter) -> bool {
         && f.kind.is_none_or(|k| r.tx_kind == k)
         && f.created_by.is_none_or(|u| r.created_by == u)
         && f.untranslated.is_none_or(|l| r.description.localized().is_some_and(|d| d.missing(l)))
+        && f.place_code.as_deref().is_none_or(|p| r.place_code.as_deref() == Some(p))
+        && f.for_person.as_ref().is_none_or(|who| r.items.iter().any(|x| x.for_person == *who))
+}
+
+/// Проводка относится к позиции получателя из фильтра (без фильтра — любая).
+fn of_recipient(filter: &Filter, r: &Transaction, p: &Posting) -> bool {
+    filter.for_person.as_ref().is_none_or(|who| r.items.iter().any(|x| Some(x.id) == p.item_id && x.for_person == *who))
 }
 
 /// То же, что уникальные индексы шапки в БД: оплата вхождения плана и начальный остаток счёта — по одному.
@@ -79,6 +86,33 @@ impl TransactionRepository for InMemoryTransactionRepository {
 
     async fn count(&self, project_id: Uuid, filter: &Filter) -> AppResult<i64> {
         Ok(self.rows.lock().unwrap().iter().filter(|r| matches(r, project_id, filter)).count() as i64)
+    }
+
+    async fn category_totals(&self, project_id: Uuid, filter: &Filter) -> AppResult<Vec<(String, Decimal, Decimal)>> {
+        let rows = self.rows.lock().unwrap();
+        let mut sums: Vec<(String, Decimal, Decimal)> = Vec::new();
+        for r in rows.iter().filter(|r| matches(r, project_id, filter)) {
+            // С фильтром «Для кого» — только позиции этого получателя.
+            let mine = |p: &&Posting| of_recipient(filter, r, p);
+            for p in r.postings.iter().filter(|p| p.ref_kind == RefKind::Category).filter(mine) {
+                let i = match sums.iter().position(|x| x.0 == p.currency) {
+                    Some(i) => i,
+                    None => {
+                        sums.push((p.currency.clone(), Decimal::ZERO, Decimal::ZERO));
+                        sums.len() - 1
+                    }
+                };
+                if r.tx_kind == TxKind::Income { sums[i].1 -= p.amount } else { sums[i].2 += p.amount }
+            }
+        }
+        sums.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(sums)
+    }
+
+    async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)> {
+        let rows = self.rows.lock().unwrap();
+        let amounts = rows.iter().filter(|r| matches(r, project_id, filter)).map(|r| r.amount_on(account));
+        Ok(amounts.fold((Decimal::ZERO, Decimal::ZERO), |(i, o), v| if v > Decimal::ZERO { (i + v, o) } else { (i, o + v) }))
     }
 
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool> {
@@ -183,12 +217,20 @@ impl TransactionRepository for InMemoryTransactionRepository {
             }
         }
         counts.sort_by_key(|c| std::cmp::Reverse(c.1));
+        let mut places: Vec<(String, usize)> = Vec::new();
+        for code in mine.iter().filter(|t| t.tx_kind.as_str() == kind && t.occurred_on >= since).filter_map(|t| t.place_code.as_ref()) {
+            match places.iter_mut().find(|c| &c.0 == code) {
+                Some(c) => c.1 += 1,
+                None => places.push((code.clone(), 1)),
+            }
+        }
+        places.sort_by_key(|c| std::cmp::Reverse(c.1));
         let last_account = mine
             .iter()
             .rev()
             .find(|t| matches!(t.tx_kind, TxKind::Expense | TxKind::Income))
             .and_then(|t| t.accounts().next().map(str::to_string));
-        Ok(QuickStats { last_account, frequent: counts.into_iter().map(|c| c.0).collect() })
+        Ok(QuickStats { last_account, frequent: counts.into_iter().map(|c| c.0).collect(), places: places.into_iter().map(|c| c.0).collect() })
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {

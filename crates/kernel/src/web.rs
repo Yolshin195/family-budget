@@ -573,12 +573,23 @@ pub fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
-/// Процентное кодирование для параметров URL.
+/// Процентное кодирование для параметров URL (`/` остаётся: `?back=/accounts`).
 pub fn url_encode(s: &str) -> String {
+    percent(s, true)
+}
+
+/// Сегмент пути (`/accounts/{code}/edit`): как [`url_encode`], но `/` тоже кодируется — код `FOOD/CAFE`,
+/// созданный до строгих правил (техдолг #7), открывается.
+pub fn url_segment(s: &str) -> String {
+    percent(s, false)
+}
+
+fn percent(s: &str, keep_slash: bool) -> String {
     let mut out = String::new();
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'/' if keep_slash => out.push('/'),
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -642,10 +653,17 @@ impl<T: AsDecimal + ?Sized> AsDecimal for &T {
 /// Разбор суммы из формы: пробелы, запятая или точка как разделитель дроби и простая арифметика
 /// `120+45`, `3*40`, `500-120` (как в быстром расходе — работает и без JS).
 pub fn parse_money(field: &str, value: &str) -> Result<Decimal, String> {
-    let bad = || format!("{field}: '{value}' — не число");
+    Ok(parse_number(field, value)?.round_dp(4))
+}
+
+/// [`parse_money`] без округления до 4 знаков — для количества и цены (до 6 знаков, проверяет домен).
+pub fn parse_number(field: &str, value: &str) -> Result<Decimal, String> {
+    let bad = || crate::error::Problem::validation(field, crate::i18n::tr(None, "err.not_a_number", &[("value", &value)])).to_string();
+    // Переполнение `Decimal` — ошибка ввода, а не паника (техдолг #20).
+    let too_big = || crate::error::Problem::validation(field, crate::i18n::tr(None, "err.too_big", &[])).to_string();
     let cleaned: String = value.chars().filter(|c| !c.is_whitespace() && *c != '\u{202F}' && *c != '\u{00A0}').collect::<String>().replace(',', ".");
     if cleaned.is_empty() {
-        return Err(format!("{field}: введите сумму"));
+        return Err(crate::error::Problem::validation(field, crate::i18n::tr(None, "err.enter_amount", &[])).to_string());
     }
     // Сумма слагаемых, каждое — произведение/частное множителей.
     let mut total = Decimal::ZERO;
@@ -660,8 +678,8 @@ pub fn parse_money(field: &str, value: &str) -> Result<Decimal, String> {
                 let n: Decimal = num.parse().map_err(|_| bad())?;
                 acc = Some(match (acc, op) {
                     (None, _) => n,
-                    (Some(a), '*') => a * n,
-                    (Some(a), _) if !n.is_zero() => a / n,
+                    (Some(a), '*') => a.checked_mul(n).ok_or_else(too_big)?,
+                    (Some(a), _) if !n.is_zero() => a.checked_div(n).ok_or_else(too_big)?,
                     _ => return Err(bad()),
                 });
                 op = ch;
@@ -674,15 +692,15 @@ pub fn parse_money(field: &str, value: &str) -> Result<Decimal, String> {
     };
     for (i, ch) in cleaned.chars().enumerate() {
         if (ch == '+' || ch == '-') && i > 0 && !term.ends_with(['*', '/']) {
-            total += flush(&term, sign)?;
+            total = total.checked_add(flush(&term, sign)?).ok_or_else(too_big)?;
             term.clear();
             sign = if ch == '-' { -Decimal::ONE } else { Decimal::ONE };
         } else {
             term.push(ch);
         }
     }
-    total += flush(&term, sign)?;
-    Ok(total.round_dp(4))
+    total = total.checked_add(flush(&term, sign)?).ok_or_else(too_big)?;
+    Ok(total)
 }
 
 /// Пункт выпадающего списка: запись справочника с названием на языке интерфейса.
@@ -784,6 +802,11 @@ mod tests {
         assert!(parse_money("a", "1/0").is_err());
         assert!(parse_money("a", "").is_err());
         assert!(parse_money("a", "5+").is_err());
+        // Техдолг #20: переполнение — ошибка поля, а не паника сервера.
+        assert_eq!(parse_money("a", "79228162514264337593543950335*10").unwrap_err(), "a: слишком большое число");
+        assert!(parse_money("a", "79228162514264337593543950335+79228162514264337593543950335").is_err());
+        assert_eq!(parse_number("q", "0,123456").unwrap(), d("0.123456"), "количество — до 6 знаков, без округления");
+        assert_eq!(parse_money("a", "0,123456").unwrap(), d("0.1235"));
     }
 
     #[test]

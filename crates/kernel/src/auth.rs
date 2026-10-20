@@ -580,7 +580,8 @@ pub async fn require_user(State(auth): State<AuthState>, req: Request, next: Nex
     req.extensions_mut().insert(identity);
     req.extensions_mut().insert(session.scope());
     req.extensions_mut().insert(session);
-    next.run(req).await
+    // Язык сообщений, собранных вдали от страницы (ошибки домена, техдолг #9) — как у интерфейса.
+    crate::i18n::scope(lang, next.run(req)).await
 }
 
 /// Адрес клиента из `ConnectInfo` (если сервер запущен с `into_make_service_with_connect_info`).
@@ -625,7 +626,9 @@ pub async fn limit_by_ip(State(auth): State<AuthState>, req: Request, next: Next
 pub async fn attach_meta(State(config): State<Arc<Config>>, mut req: Request, next: Next) -> Response {
     let meta = RequestMeta::from_request(req.headers(), peer(&req), config.trust_proxy);
     req.extensions_mut().insert(meta);
-    next.run(req).await
+    // Язык до входа (публичные страницы, ошибки входа); `require_user` уточняет его настройкой пользователя.
+    let lang = request_lang(req.headers()).unwrap_or_default();
+    crate::i18n::scope(lang, next.run(req)).await
 }
 
 /// Id сессии из cookie и её CSRF-токен — для публичных форм (выход), где нет middleware.

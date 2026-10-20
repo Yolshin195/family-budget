@@ -27,7 +27,7 @@
   </div>
   <div class="form-actions">
     <button class="btn-primary">{{ page.t("save") }}</button>
-    <a href="/transactions?account={{ f.account }}" class="btn-ghost">{{ page.t("cancel") }}</a>
+    <a href="/transactions?account={{ kernel::web::url_encode(f.account) }}" class="btn-ghost">{{ page.t("cancel") }}</a>
   </div>
 </form>
 {% endblock %}

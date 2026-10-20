@@ -31,13 +31,13 @@ struct FakeLedger {
 }
 
 fn quick_info() -> QuickInfo {
-    let cat = |code: &str, parent: Option<&str>, kind: &str, title: &str, search: &str| CategoryInfo {
+    let cat = |code: &str, parent: Option<&str>, kind: &str, title: &str, names: &[&str]| CategoryInfo {
         code: code.into(),
         parent_code: parent.map(Into::into),
         kind: kind.into(),
         title: title.into(),
         depth: usize::from(parent.is_some()),
-        search: search.into(),
+        search: kernel::search::join(names.iter().copied().chain([code])),
         limit: (code == "FOOD").then(|| d("1000")),
         available: (code == "FOOD" || code == "CAFE").then(|| d("700")),
     };
@@ -49,19 +49,63 @@ fn quick_info() -> QuickInfo {
             AccountInfo { code: "WISE".into(), title: "Wise".into(), currency: "USD".into(), symbol: "$".into(), has_rate: false },
         ],
         categories: vec![
-            cat("FOOD", None, "EXPENSE", "Еда", "Еда Food อาหาร"),
-            cat("CAFE", Some("FOOD"), "EXPENSE", "Кафе", "Кафе Cafe คาเฟ่"),
-            cat("CAR", None, "EXPENSE", "Машина", "Машина Car รถ"),
-            cat("CARWASH", Some("CAR"), "EXPENSE", "Мойка", "Мойка Car wash ล้างรถ"),
-            cat("SALARY", None, "INCOME", "Зарплата", "Зарплата Salary เงินเดือน"),
+            cat("FOOD", None, "EXPENSE", "Еда", &["Еда", "Food", "อาหาร"]),
+            cat("CAFE", Some("FOOD"), "EXPENSE", "Кафе", &["Кафе", "Café", "คาเฟ่"]),
+            cat("CAR", None, "EXPENSE", "Машина", &["Машина", "Car", "รถ"]),
+            cat("CARWASH", Some("CAR"), "EXPENSE", "Мойка", &["Мойка", "Car wash", "ล้างรถ"]),
+            cat("SALARY", None, "INCOME", "Зарплата", &["Зарплата", "Salary", "เงินเดือน"]),
         ],
         frequent_expense: vec!["CAFE".into()],
         frequent_income: vec![],
+        places: vec![
+            PlaceInfo {
+                code: "SEVEN_ELEVEN".into(),
+                title: "7-Eleven · Сукхумвит 24".into(),
+                search: kernel::search::join(["7-Eleven", "7-11", "เซเว่น", "SEVEN_ELEVEN"]),
+                category_code: Some("FOOD".into()),
+                account_code: Some("CARD".into()),
+            },
+            PlaceInfo { code: "MAKRO".into(), title: "Makro".into(), search: kernel::search::join(["Makro", "แม็คโคร", "MAKRO"]), category_code: None, account_code: None },
+        ],
+        frequent_places: vec!["SEVEN_ELEVEN".into()],
     }
 }
 
-fn tx_of(id: Uuid, user: Uuid, d: &TxDraft) -> Tx {
-    let total = if d.kind == "TRANSFER" { d.amount.unwrap_or_default() } else { d.lines.iter().map(|l| l.amount).sum() };
+/// Позиции после правки — упрощённо, как в transactions: с id — заменить заданные поля, без id — добавить.
+fn items_of(old: Option<&Tx>, d: &TxDraft) -> Vec<TxItem> {
+    let mut items: Vec<TxItem> = match old {
+        Some(t) if !d.replace_items => t.items.iter().filter(|x| !d.remove_item_ids.contains(&x.id.unwrap_or_default())).cloned().collect(),
+        _ => Vec::new(),
+    };
+    // Для кого — как в transactions: шапка достаётся позициям с прежним общим получателем и новым без своего.
+    let old_common = old.and_then(|t| t.for_person_code.clone());
+    if let Some(h) = &d.for_person {
+        for i in items.iter_mut().filter(|i| i.for_person.clone().flatten() == old_common) {
+            i.for_person = Some(h.clone());
+        }
+    }
+    for x in &d.items {
+        match items.iter_mut().find(|i| x.id.is_some() && i.id == x.id) {
+            Some(i) => {
+                i.amount = x.amount.or(i.amount);
+                i.category_code = x.category_code.clone().or(i.category_code.clone());
+                i.name = x.name.clone().or(i.name.clone());
+                i.for_person = x.for_person.clone().or(i.for_person.clone());
+            }
+            None => items.push(TxItem {
+                id: Some(Uuid::new_v4()),
+                quantity: x.quantity.or(Some(Decimal::ONE)),
+                for_person: Some(x.for_person.clone().or(d.for_person.clone()).unwrap_or(old_common.clone())),
+                ..x.clone()
+            }),
+        }
+    }
+    items
+}
+
+fn tx_of(id: Uuid, user: Uuid, d: &TxDraft, old: Option<&Tx>) -> Tx {
+    let items = items_of(old, d);
+    let total = if d.kind == "TRANSFER" { d.amount.unwrap_or_default() } else { items.iter().filter_map(|x| x.amount).sum() };
     Tx {
         id,
         occurred_on: d.occurred_on,
@@ -69,7 +113,6 @@ fn tx_of(id: Uuid, user: Uuid, d: &TxDraft) -> Tx {
         account_code: d.account_code.clone(),
         to_account_code: d.to_account_code.clone(),
         refund: d.refund,
-        lines: d.lines.clone(),
         total,
         currency: if d.account_code == "WISE" { "USD" } else { "THB" }.into(),
         to_amount: d.to_amount,
@@ -84,6 +127,10 @@ fn tx_of(id: Uuid, user: Uuid, d: &TxDraft) -> Tx {
         created_by: user,
         plan_id: d.plan_id,
         plan_date: d.plan_date,
+        place_code: d.place_code.clone(),
+        for_person_code: items.first().and_then(|f| f.for_person.clone().flatten()).filter(|c| items.iter().all(|x| x.for_person.clone().flatten().as_ref() == Some(c))),
+        recipients_differ: items.iter().any(|x| x.for_person != items[0].for_person),
+        items,
     }
 }
 
@@ -93,7 +140,15 @@ impl Ledger for Arc<FakeLedger> {
         Ok(quick_info())
     }
     async fn list(&self, _p: Uuid, filter: TxFilter, limit: i64, offset: i64) -> AppResult<(Vec<Tx>, i64)> {
-        let all: Vec<Tx> = self.txs.lock().unwrap().iter().filter(|t| filter.kind.as_ref().is_none_or(|k| &t.kind == k)).cloned().collect();
+        let all: Vec<Tx> = self
+            .txs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|t| filter.kind.as_ref().is_none_or(|k| &t.kind == k) && filter.place_code.as_ref().is_none_or(|p| t.place_code.as_ref() == Some(p)))
+            .filter(|t| filter.for_person.as_ref().is_none_or(|who| t.items.iter().any(|x| x.for_person.as_ref() == Some(who))))
+            .cloned()
+            .collect();
         let total = all.len() as i64;
         Ok((all.into_iter().skip(offset as usize).take(limit as usize).collect(), total))
     }
@@ -101,14 +156,15 @@ impl Ledger for Arc<FakeLedger> {
         self.txs.lock().unwrap().iter().find(|t| t.id == id).cloned().ok_or_else(|| AppError::NotFound("transaction".into()))
     }
     async fn create(&self, _p: Uuid, user: Uuid, draft: TxDraft) -> AppResult<Tx> {
-        let tx = tx_of(Uuid::new_v4(), user, &draft);
+        let tx = tx_of(Uuid::new_v4(), user, &draft, None);
         self.txs.lock().unwrap().push(tx.clone());
         Ok(tx)
     }
     async fn update(&self, _p: Uuid, id: Uuid, draft: TxDraft) -> AppResult<Tx> {
         let mut txs = self.txs.lock().unwrap();
         let t = txs.iter_mut().find(|t| t.id == id).ok_or_else(|| AppError::NotFound("transaction".into()))?;
-        *t = tx_of(id, t.created_by, &draft);
+        let old = t.clone();
+        *t = tx_of(id, t.created_by, &draft, Some(&old));
         Ok(t.clone())
     }
     async fn balances(&self, _p: Uuid, _date: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
@@ -186,6 +242,8 @@ struct FakeDirs {
     currencies: Mutex<Vec<Currency>>,
     accounts: Mutex<Vec<Account>>,
     categories: Mutex<Vec<Category>>,
+    places: Mutex<Vec<Place>>,
+    people: Mutex<Vec<Person>>,
     openings: Mutex<Vec<(String, Decimal, NaiveDate)>>,
 }
 
@@ -214,6 +272,23 @@ impl Default for FakeDirs {
                 cat("CAR", None, "EXPENSE", name("Машина", "Машина", "Car", "รถ"), 20),
                 cat("CARWASH", Some("CAR"), "EXPENSE", name("Мойка", "Мойка", "Car wash", "ล้างรถ"), 10),
                 cat("SALARY", None, "INCOME", name("Зарплата", "Зарплата", "Salary", "เงินเดือน"), 10),
+            ]),
+            places: Mutex::new(vec![
+                Place {
+                    code: "SEVEN_ELEVEN".into(),
+                    name: "7-Eleven".into(),
+                    aliases: vec!["7-11".into(), "เซเว่น".into()],
+                    category_code: Some("FOOD".into()),
+                    account_code: Some("CARD".into()),
+                    kind: "SHOP".into(),
+                    location: Some("Сукхумвит 24".into()),
+                    archived: false,
+                },
+                Place { code: "OLD".into(), name: "Old market".into(), aliases: vec![], category_code: None, account_code: None, kind: "MARKET".into(), location: None, archived: true },
+            ]),
+            people: Mutex::new(vec![
+                Person { code: "PINPAN".into(), name: "Pinpan".into(), aliases: vec!["ปิ่นปั่น".into()], user_id: None, former_member: false, archived: false },
+                Person { code: "NANNY".into(), name: "Old nanny".into(), aliases: vec![], user_id: None, former_member: false, archived: true },
             ]),
             openings: Mutex::default(),
         }
@@ -262,6 +337,26 @@ impl Directories for Arc<FakeDirs> {
     }
     async fn update_category(&self, _p: Uuid, c: &Category) -> AppResult<Category> {
         upsert(&self.categories, c, |x| x.code == c.code)
+    }
+    async fn places(&self, _p: Uuid) -> AppResult<Vec<Place>> {
+        Ok(self.places.lock().unwrap().clone())
+    }
+    async fn create_place(&self, _p: Uuid, x: &Place) -> AppResult<Place> {
+        self.places.lock().unwrap().push(x.clone());
+        Ok(x.clone())
+    }
+    async fn update_place(&self, _p: Uuid, x: &Place) -> AppResult<Place> {
+        upsert(&self.places, x, |y| y.code == x.code)
+    }
+    async fn people(&self, _p: Uuid) -> AppResult<Vec<Person>> {
+        Ok(self.people.lock().unwrap().clone())
+    }
+    async fn create_person(&self, _p: Uuid, x: &Person) -> AppResult<Person> {
+        self.people.lock().unwrap().push(x.clone());
+        Ok(x.clone())
+    }
+    async fn update_person(&self, _p: Uuid, x: &Person) -> AppResult<Person> {
+        upsert(&self.people, x, |y| y.code == x.code)
     }
 }
 
@@ -591,6 +686,41 @@ async fn demo_guest_cannot_grant_access() {
 
 // ---------------------------------------------------------------- инструменты
 
+/// Группа 1, шаг 2: чек с названиями, количеством и ценой; правка позиции по id, удаление по remove_item_ids.
+#[tokio::test]
+async fn receipt_items_with_prices_and_edit_by_id() {
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let items = vec![
+        ItemArgs { category: Some("Кафе".into()), name: Some("Круассан".into()), quantity: Some("2".into()), price: Some("25".into()), discount: Some("3".into()), ..Default::default() },
+        ItemArgs { category: Some("FOOD".into()), name: Some("Бананы".into()), quantity: Some("0,45".into()), unit: Some("kg".into()), amount: Some("27".into()), ..Default::default() },
+    ];
+    let out = e.svc.add_expense(&c, AddFlowArgs { items: Some(items), discount_total: Some("5".into()), ..Default::default() }).await.unwrap();
+    let tx = e.ledger.txs.lock().unwrap()[0].clone();
+    let first = &tx.items[0];
+    assert_eq!((first.category_code.as_deref(), first.name.as_deref(), first.quantity, first.price, first.discount), (Some("CAFE"), Some("Круассан"), Some(d("2")), Some(d("25")), Some(d("3"))));
+    assert_eq!((tx.items[1].quantity, tx.items[1].unit.as_deref()), (Some(d("0.45")), Some("kg")));
+    assert!(out.data["transaction"]["items"][0]["id"].is_string(), "id позиции — для правки");
+    assert_eq!(out.data["transaction"]["items"][0]["price"], serde_json::json!(d("25")));
+    let (keep, drop) = (tx.items[0].id.unwrap(), tx.items[1].id.unwrap());
+    let edit = UpdateTransactionArgs {
+        id: tx.id.to_string(),
+        items: Some(vec![ItemArgs { id: Some(keep.to_string()), amount: Some("40".into()), ..Default::default() }]),
+        remove_item_ids: Some(vec![drop.to_string()]),
+        ..Default::default()
+    };
+    e.svc.update_transaction(&c, edit).await.unwrap();
+    let tx = e.ledger.txs.lock().unwrap()[0].clone();
+    assert_eq!(tx.items.iter().map(|x| (x.id, x.amount)).collect::<Vec<_>>(), vec![(Some(keep), Some(d("40")))]);
+    // Сумма и категория без items — только у операции из одной позиции.
+    let single = UpdateTransactionArgs { id: tx.id.to_string(), amount: Some("41".into()), ..Default::default() };
+    e.svc.update_transaction(&c, single).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[0].items[0].amount, Some(d("41")));
+    let bad = UpdateTransactionArgs { id: tx.id.to_string(), remove_item_ids: Some(vec!["x".into()]), ..Default::default() };
+    assert!(e.svc.update_transaction(&c, bad).await.unwrap_err().0.contains("remove_item_ids"));
+}
+
 #[tokio::test]
 async fn expense_by_name_in_any_language_uses_default_account_and_is_audited() {
     let e = env();
@@ -598,11 +728,11 @@ async fn expense_by_name_in_any_language_uses_default_account_and_is_audited() {
     let c = e.caller(&e.oauth()).await;
     let out = e.svc.add_expense(&c, AddFlowArgs { description: Some("Кофе".into()), ..expense("120+45", "cafe") }).await.unwrap();
     let tx = e.ledger.txs.lock().unwrap()[0].clone();
-    assert_eq!((tx.account_code.as_str(), tx.lines[0].category_code.as_str(), tx.total), ("CASH", "CAFE", d("165")));
+    assert_eq!((tx.account_code.as_str(), tx.items[0].category_code.as_deref().unwrap_or_default(), tx.total), ("CASH", "CAFE", d("165")));
     assert_eq!(tx.description_lang, Lang::Ru, "язык описания — язык пользователя");
     assert!(out.summary.contains("Left this month"), "{}", out.summary);
     let thai = e.svc.add_expense(&c, expense("80", "ล้างรถ")).await.unwrap();
-    assert_eq!(thai.data["transaction"]["lines"][0]["category"], "CARWASH");
+    assert_eq!(thai.data["transaction"]["items"][0]["category"], "CARWASH");
     let events = e.accounts.events.lock().unwrap().clone();
     let write = events.iter().find(|x| x.0 == "mcp_write").unwrap();
     assert!(write.1.contains(&("client".to_string(), "claude".to_string())));
@@ -613,11 +743,14 @@ async fn ambiguous_or_unknown_category_asks_for_a_code() {
     let e = env();
     e.grant(&["read", "transactions:write"]).await;
     let c = e.caller(&e.oauth()).await;
-    let err = e.svc.add_expense(&c, expense("10", "รถ")).await.unwrap_err();
+    let err = e.svc.add_expense(&c, expense("10", "ca")).await.unwrap_err();
     assert!(err.0.contains("ambiguous") && err.0.contains("CARWASH"), "{}", err.0);
     let err = e.svc.add_expense(&c, expense("10", "Salary")).await.unwrap_err();
     assert!(err.0.contains("not found"), "доходная категория для расхода не подходит: {}", err.0);
     assert!(e.ledger.txs.lock().unwrap().is_empty());
+    // Техдолг #5: точное название на другом языке — не «неоднозначно», хотя «รถ» есть и в «ล้างรถ».
+    e.svc.add_expense(&c, expense("10", "รถ")).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[0].items[0].category_code.as_deref(), Some("CAR"));
 }
 
 #[tokio::test]
@@ -625,11 +758,14 @@ async fn expense_with_items_and_conflicting_arguments() {
     let e = env();
     e.grant(&["read", "transactions:write"]).await;
     let c = e.caller(&e.oauth()).await;
-    let items = vec![ItemArgs { category: "CAFE".into(), amount: "100".into(), note: None }, ItemArgs { category: "CARWASH".into(), amount: "50.5".into(), note: Some("мойка".into()) }];
+    let items = vec![
+        ItemArgs { category: Some("CAFE".into()), amount: Some("100".into()), ..Default::default() },
+        ItemArgs { category: Some("CARWASH".into()), amount: Some("50.5".into()), note: Some("мойка".into()), ..Default::default() },
+    ];
     let out = e.svc.add_expense(&c, AddFlowArgs { items: Some(items), account: Some("Карта".into()), ..Default::default() }).await.unwrap();
     assert_eq!(out.data["transaction"]["account"], "CARD");
     assert_eq!(e.ledger.txs.lock().unwrap()[0].total, d("150.5"));
-    let both = AddFlowArgs { items: Some(vec![ItemArgs { category: "CAFE".into(), amount: "1".into(), note: None }]), ..expense("1", "CAFE") };
+    let both = AddFlowArgs { items: Some(vec![ItemArgs { category: Some("CAFE".into()), amount: Some("1".into()), ..Default::default() }]), ..expense("1", "CAFE") };
     assert!(e.svc.add_expense(&c, both).await.is_err());
     assert!(e.svc.add_expense(&c, expense("0", "CAFE")).await.is_err(), "сумма > 0");
     assert!(e.svc.add_expense(&c, expense("10", "CAFE").with_date("15.10.2026")).await.is_err(), "дата — YYYY-MM-DD");
@@ -651,7 +787,7 @@ async fn update_changes_only_passed_fields() {
     let id = e.ledger.txs.lock().unwrap()[0].id;
     e.svc.update_transaction(&c, UpdateTransactionArgs { id: id.to_string(), amount: Some("90".into()), ..Default::default() }).await.unwrap();
     let tx = e.ledger.txs.lock().unwrap()[0].clone();
-    assert_eq!((tx.total, tx.lines[0].category_code.as_str(), tx.description.as_deref()), (d("90"), "CAFE", Some("Кофе")));
+    assert_eq!((tx.total, tx.items[0].category_code.as_deref().unwrap_or_default(), tx.description.as_deref()), (d("90"), "CAFE", Some("Кофе")));
     let err = e.svc.update_transaction(&c, UpdateTransactionArgs { id: id.to_string(), to_amount: Some("5".into()), ..Default::default() }).await.unwrap_err();
     assert!(err.0.contains("transfers"), "{}", err.0);
 }
@@ -682,6 +818,7 @@ async fn reading_tools_respect_rights() {
     let ctx = e.svc.get_context(&c).await.unwrap();
     assert_eq!(ctx.data["permissions"]["delete"], false);
     assert_eq!(ctx.data["accounts"][0]["balance"], "500", "суммы — строками, без потерь точности");
+    assert_eq!(ctx.data["expense_categories"][3]["names"], serde_json::json!(["Мойка", "Car wash", "ล้างรถ", "CARWASH"]), "названия списком");
 }
 
 #[tokio::test]
@@ -737,13 +874,13 @@ async fn directory_tools_need_their_right_and_are_hidden_without_it() {
 }
 
 #[tokio::test]
-async fn directories_checkbox_grants_the_four_directory_rights() {
+async fn directories_checkbox_grants_all_directory_rights() {
     let e = env();
     e.grant(&["directories", "limits:write"]).await;
     let g = e.svc.grants(e.user).await.unwrap().remove(0);
-    assert_eq!(g.scopes, vec!["read", "currencies:write", "accounts:write", "categories:write", "rates:write", "limits:write"]);
+    assert_eq!(g.scopes, vec!["read", "currencies:write", "accounts:write", "categories:write", "places:write", "people:write", "rates:write", "limits:write"]);
     let c = e.caller(&e.oauth()).await;
-    assert!(e.svc.visible(&c, "add_currency") && e.svc.visible(&c, "set_rate") && e.svc.visible(&c, "set_limit"));
+    assert!(e.svc.visible(&c, "add_currency") && e.svc.visible(&c, "set_rate") && e.svc.visible(&c, "set_limit") && e.svc.visible(&c, "add_place"));
     assert!(!e.svc.visible(&c, "add_plan") && !e.svc.visible(&c, "add_expense"));
 }
 
@@ -1144,10 +1281,13 @@ fn amounts_dates_and_lookup() {
     assert_eq!(parse_date("date", Some("yesterday"), today).unwrap(), NaiveDate::from_ymd_opt(2026, 10, 14).unwrap());
     assert_eq!(parse_date("date", None, today).unwrap(), today);
     let q = quick_info();
-    let pick = |v: &str| resolve("category", v, &q.categories, |x| &x.code, |x| format!("{}\u{1f}{}", x.title, x.search)).map(|c| c.code.clone());
+    let pick = |v: &str| resolve("category", v, &q.categories, |x| &x.code, |x| x.search.clone()).map(|c| c.code.clone());
     assert_eq!(pick("кафе").unwrap(), "CAFE");
     assert_eq!(pick("Car").unwrap(), "CAR", "точный код важнее подстроки");
-    assert!(pick("รถ").is_err(), "неоднозначно: Машина (รถ) и Мойка (ล้างรถ)");
+    assert_eq!(pick("รถ").unwrap(), "CAR", "точное тайское название важнее части «ล้างรถ» (техдолг #5)");
+    assert_eq!(pick("Car wash").unwrap(), "CARWASH", "точное название из двух слов");
+    assert_eq!(pick("CAFÉ").unwrap(), "CAFE", "без диакритики и регистра");
+    assert!(pick("ca").unwrap_err().contains("ambiguous"));
     let _ = Utc::now();
 }
 
@@ -1162,4 +1302,147 @@ async fn expense_without_rate_is_flagged() {
     assert_eq!(out.data["no_rate"], "USD");
     let ok = e.svc.add_expense(&c, expense("10", "cafe")).await.unwrap();
     assert!(!ok.summary.contains("no exchange rate") && ok.data.get("no_rate").is_none());
+}
+
+// ---------------------------------------------------------------- места (шаг 5)
+
+/// Место по названию или варианту написания подставляет категорию и счёт; переданное — важнее места.
+#[tokio::test]
+async fn place_fills_category_and_account() {
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let out = e.svc.add_expense(&c, AddFlowArgs { amount: Some("55".into()), place: Some("เซเว่น".into()), ..Default::default() }).await.unwrap();
+    let tx = e.ledger.txs.lock().unwrap()[0].clone();
+    assert_eq!((tx.place_code.as_deref(), tx.account_code.as_str(), tx.items[0].category_code.as_deref()), (Some("SEVEN_ELEVEN"), "CARD", Some("FOOD")));
+    assert!(!out.summary.contains("default account"), "счёт из места — не «по умолчанию»: {}", out.summary);
+    assert_eq!(out.data["transaction"]["place"], "SEVEN_ELEVEN");
+    e.svc.add_expense(&c, AddFlowArgs { place: Some("7-11".into()), account: Some("CASH".into()), ..expense("45", "cafe") }).await.unwrap();
+    let tx = e.ledger.txs.lock().unwrap()[1].clone();
+    assert_eq!((tx.account_code.as_str(), tx.items[0].category_code.as_deref()), ("CASH", Some("CAFE")));
+    let no_cat = e.svc.add_expense(&c, AddFlowArgs { amount: Some("10".into()), place: Some("makro".into()), ..Default::default() }).await.unwrap_err();
+    assert!(no_cat.0.contains("amount and category"), "у Makro нет категории: {}", no_cat.0);
+    let unknown = e.svc.add_expense(&c, AddFlowArgs { place: Some("Lotus".into()), ..expense("10", "cafe") }).await.unwrap_err();
+    assert!(unknown.0.contains("not found") && unknown.0.contains("add_place"), "{}", unknown.0);
+    // Фильтр ленты по месту; правка: "" убирает место, у перевода места нет.
+    let list = e.svc.list_transactions(&c, ListTransactionsArgs { place: Some("SEVEN_ELEVEN".into()), from: Some("2000-01-01".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(list.data["total"], 2);
+    let id = e.ledger.txs.lock().unwrap()[0].id.to_string();
+    e.svc.update_transaction(&c, UpdateTransactionArgs { id: id.clone(), place: Some("".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[0].place_code, None);
+    e.svc.add_transfer(&c, AddTransferArgs { from_account: "CASH".into(), to_account: "CARD".into(), amount: "100".into(), ..Default::default() }).await.unwrap();
+    let transfer = e.ledger.txs.lock().unwrap()[2].id.to_string();
+    let err = e.svc.update_transaction(&c, UpdateTransactionArgs { id: transfer, place: Some("SEVEN_ELEVEN".into()), ..Default::default() }).await.unwrap_err();
+    assert!(err.0.contains("no place"), "{}", err.0);
+    // Архивное место, которое уже стоит у операции, можно передать снова.
+    e.ledger.txs.lock().unwrap()[1].place_code = Some("OLD".into());
+    let second = e.ledger.txs.lock().unwrap()[1].id.to_string();
+    e.svc.update_transaction(&c, UpdateTransactionArgs { id: second, place: Some("old".into()), description: Some("Рынок".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[1].place_code.as_deref(), Some("OLD"));
+    let ctx = e.svc.get_context(&c).await.unwrap();
+    assert_eq!((ctx.data["frequent_places"][0]["code"].as_str(), ctx.data["places_total"].as_u64()), (Some("SEVEN_ELEVEN"), Some(2)));
+    assert_eq!(ctx.data["permissions"]["write_places"], false);
+}
+
+/// Места добавляют и меняют только с правом «Места» (или «Все справочники»); список — с поиском без регистра.
+#[tokio::test]
+async fn places_directory_tools() {
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let add = || AddPlaceArgs {
+        code: "cafe_amazon".into(),
+        name: "Café Amazon".into(),
+        aliases: Some(vec!["คาเฟ่ อเมซอน".into()]),
+        category: Some("Кафе".into()),
+        account: Some("Наличные".into()),
+        kind: Some("cafe".into()),
+        location: Some("Он Нут".into()),
+    };
+    assert!(e.svc.add_place(&c, add()).await.unwrap_err().0.contains("places:write"));
+    e.grant(&["read", "directories"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let out = e.svc.add_place(&c, add()).await.unwrap();
+    assert!(out.summary.contains("CAFE_AMAZON 'Café Amazon · Он Нут'"), "{}", out.summary);
+    let p = e.dirs.places.lock().unwrap().iter().find(|p| p.code == "CAFE_AMAZON").cloned().unwrap();
+    assert_eq!((p.category_code.as_deref(), p.account_code.as_deref(), p.kind.as_str()), (Some("CAFE"), Some("CASH"), "CAFE"));
+    assert!(e.svc.add_place(&c, add()).await.unwrap_err().0.contains("already exists"));
+    let found = e.svc.list_places(&c, ListPlacesArgs { text: Some("cafe".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(found.data["places"].as_array().unwrap().len(), 1, "Café без диакритики");
+    let all = e.svc.list_places(&c, ListPlacesArgs { include_archived: Some(true), ..Default::default() }).await.unwrap();
+    assert_eq!(all.data["places"].as_array().unwrap().len(), 3);
+    e.svc.update_place(&c, UpdatePlaceArgs { code: "Café Amazon".into(), aliases: Some(vec![]), category: Some("".into()), ..Default::default() }).await.unwrap();
+    let p = e.dirs.places.lock().unwrap().iter().find(|p| p.code == "CAFE_AMAZON").cloned().unwrap();
+    assert_eq!((p.aliases.len(), p.category_code), (0, None));
+    assert!(e.svc.update_place(&c, UpdatePlaceArgs { code: "CAFE_AMAZON".into(), ..Default::default() }).await.unwrap_err().0.contains("nothing to change"));
+}
+
+// ---------------------------------------------------------------- люди и «Для кого» (шаг 6)
+
+/// `for` у операции и позиций — по коду или имени; по умолчанию — для всех; правка шапки меняет позиции с прежним
+/// общим получателем; фильтр ленты; get_context отдаёт людей и запись пользователя.
+#[tokio::test]
+async fn recipients_in_transactions() {
+    let e = env();
+    e.dirs.people.lock().unwrap().push(Person { code: "ALEKSEY".into(), name: "Алексей".into(), aliases: vec![], user_id: Some(e.user), former_member: false, archived: false });
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let ctx = e.svc.get_context(&c).await.unwrap();
+    assert_eq!(ctx.data["my_person_code"], "ALEKSEY");
+    assert_eq!(ctx.data["people"].as_array().unwrap().len(), 2, "архивных нет");
+    assert_eq!(ctx.data["permissions"]["write_people"], false);
+    e.svc.add_expense(&c, expense("10", "cafe")).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[0].items[0].for_person, Some(None), "по умолчанию — для всех");
+    let out = e.svc.add_expense(&c, AddFlowArgs { for_whom: Some("ปิ่นปั่น".into()), ..expense("45", "cafe") }).await.unwrap();
+    assert!(out.summary.contains("For PINPAN"), "{}", out.summary);
+    assert_eq!(out.data["transaction"]["for"], "PINPAN");
+    let items = vec![
+        ItemArgs { category: Some("cafe".into()), amount: Some("88".into()), for_whom: Some("all".into()), ..Default::default() },
+        ItemArgs { category: Some("cafe".into()), amount: Some("45".into()), for_whom: Some("Алексей".into()), ..Default::default() },
+        ItemArgs { category: Some("cafe".into()), amount: Some("22".into()), ..Default::default() },
+    ];
+    let out = e.svc.add_expense(&c, AddFlowArgs { for_whom: Some("PINPAN".into()), items: Some(items), ..Default::default() }).await.unwrap();
+    let who: Vec<Option<Option<String>>> = e.ledger.txs.lock().unwrap()[2].items.iter().map(|x| x.for_person.clone()).collect();
+    assert_eq!(who, vec![Some(None), Some(Some("ALEKSEY".into())), Some(Some("PINPAN".into()))]);
+    assert_eq!(out.data["transaction"]["recipients_differ"], true);
+    assert_eq!(out.data["transaction"]["items"][1]["for"], "ALEKSEY");
+    for bad in ["Old nanny", "Nobody"] {
+        let err = e.svc.add_expense(&c, AddFlowArgs { for_whom: Some(bad.into()), ..expense("1", "cafe") }).await.unwrap_err();
+        assert!(err.0.starts_with("for:") && err.0.contains("add_person"), "{bad}: {}", err.0);
+    }
+    // Правка: шапка PINPAN → all меняет позиции с прежним общим получателем.
+    let id = e.ledger.txs.lock().unwrap()[1].id.to_string();
+    e.svc.update_transaction(&c, UpdateTransactionArgs { id: id.clone(), for_whom: Some("all".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[1].for_person_code, None);
+    let list = e.svc.list_transactions(&c, ListTransactionsArgs { for_whom: Some("pinpan".into()), from: Some("2000-01-01".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(list.data["total"], 1);
+    let archived = e.svc.list_transactions(&c, ListTransactionsArgs { for_whom: Some("NANNY".into()), from: Some("2000-01-01".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(archived.data["total"], 0, "архивный человек в фильтре находится");
+    let err = e.svc.add_transfer(&c, AddTransferArgs { from_account: "CASH".into(), to_account: "CARD".into(), amount: "1".into(), for_whom: Some("PINPAN".into()), ..Default::default() }).await.unwrap_err();
+    assert!(err.0.contains("no recipient"), "{}", err.0);
+    e.svc.add_transfer(&c, AddTransferArgs { from_account: "CASH".into(), to_account: "CARD".into(), amount: "100".into(), ..Default::default() }).await.unwrap();
+    let transfer = e.ledger.txs.lock().unwrap().last().unwrap().id.to_string();
+    let err = e.svc.update_transaction(&c, UpdateTransactionArgs { id: transfer, for_whom: Some("PINPAN".into()), ..Default::default() }).await.unwrap_err();
+    assert!(err.0.contains("no recipient"), "{}", err.0);
+}
+
+/// Людей добавляют и меняют только с правом «Люди» (или «Все справочники»); код ALL занят под «Для всех».
+#[tokio::test]
+async fn people_directory_tools() {
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let add = || AddPersonArgs { code: "nanny_ann".into(), name: "Ann".into(), aliases: Some(vec!["Аня".into()]) };
+    assert!(e.svc.add_person(&c, add()).await.unwrap_err().0.contains("people:write"));
+    e.grant(&["read", "directories"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let out = e.svc.add_person(&c, add()).await.unwrap();
+    assert!(out.summary.contains("NANNY_ANN 'Ann'"), "{}", out.summary);
+    assert!(e.svc.add_person(&c, add()).await.unwrap_err().0.contains("already exists"));
+    let found = e.svc.list_people(&c, ListPeopleArgs { text: Some("аня".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(found.data["people"].as_array().unwrap().len(), 1);
+    e.svc.update_person(&c, UpdatePersonArgs { code: "Ann".into(), name: Some("Ann B.".into()), ..Default::default() }).await.unwrap();
+    assert!(e.dirs.people.lock().unwrap().iter().any(|p| p.code == "NANNY_ANN" && p.name == "Ann B."));
+    assert!(e.svc.update_person(&c, UpdatePersonArgs { code: "NANNY_ANN".into(), ..Default::default() }).await.unwrap_err().0.contains("nothing to change"));
+    assert!(e.svc.visible(&c, "add_person"));
 }

@@ -30,6 +30,8 @@ pub fn dict(key: &str) -> Option<Tr> {
         "scope.currencies:write" => ("Валюты: добавлять и изменять", "Currencies: add and edit", "สกุลเงิน: เพิ่มและแก้ไข"),
         "scope.accounts:write" => ("Счета: добавлять и изменять", "Accounts: add and edit", "บัญชี: เพิ่มและแก้ไข"),
         "scope.categories:write" => ("Категории: добавлять, переименовывать, переносить", "Categories: add, rename, move", "หมวดหมู่: เพิ่ม เปลี่ยนชื่อ ย้าย"),
+        "scope.places:write" => ("Места: добавлять и изменять", "Places: add and edit", "สถานที่: เพิ่มและแก้ไข"),
+        "scope.people:write" => ("Люди: добавлять и изменять", "People: add and edit", "บุคคล: เพิ่มและแก้ไข"),
         "scope.rates:write" => ("Курсы валют: задавать и исправлять", "Exchange rates: set and correct", "อัตราแลกเปลี่ยน: กำหนดและแก้ไข"),
         "scope.limits:write" => ("Лимиты: задавать и изменять", "Limits: set and change", "วงเงิน: กำหนดและเปลี่ยน"),
         "scope.planning:write" => (
@@ -47,9 +49,9 @@ pub fn dict(key: &str) -> Option<Tr> {
             "ยอดยกมาของบัญชีต้องมีสิทธิ์ “รายการ” ด้วย",
         ),
         "directories_nojs" => (
-            "«Все справочники» выдаёт все четыре права. Чтобы снять одно из них, снимите и этот флажок.",
-            "“All directories” grants all four rights. To remove one of them, untick this box too.",
-            "“ข้อมูลหลักทั้งหมด” ให้สิทธิ์ทั้งสี่ หากต้องการยกเลิกสิทธิ์ใด ให้ยกเลิกช่องนี้ด้วย",
+            "«Все справочники» выдаёт все права справочников. Чтобы снять одно из них, снимите и этот флажок.",
+            "“All directories” grants all directory rights. To remove one of them, untick this box too.",
+            "“ข้อมูลหลักทั้งหมด” ให้สิทธิ์ข้อมูลอ้างอิงทั้งหมด หากต้องการยกเลิกสิทธิ์ใด ให้ยกเลิกช่องนี้ด้วย",
         ),
         "scope_read_always" => ("всегда", "always", "เสมอ"),
         "viewer_hint" => ("Роль VIEWER в проекте — только просмотр.", "VIEWER role in the project — view only.", "บทบาท VIEWER ในโปรเจกต์ — ดูอย่างเดียว"),

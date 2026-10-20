@@ -180,12 +180,14 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
 async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
     match svc.archive(page.session.project_id, &code).await {
         Ok(()) => {
-            let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/categories/{}/restore", kernel::web::url_encode(&code)));
+            let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/categories/{}/restore", kernel::web::url_segment(&code)));
             Ok(see_other_flash(&page.config, "/categories", flash))
         }
-        Err(AppError::Validation(m)) => {
-            let c = svc.get(page.session.project_id, &code).await?;
-            form_page(&svc, page, false, CategoryForm::from_dto(c), Some(m)).await
+        // Не рисуем форму в ответ: она открылась бы на адресе /archive, и «Сохранить» снова архивировал бы.
+        // Как у счетов и валют — на страницу правки, причина — во всплывающем сообщении.
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => {
+            let edit = format!("/categories/{}/edit", kernel::web::url_segment(&code));
+            Ok(see_other_flash(&page.config, &edit, Flash::error(e.to_string())))
         }
         Err(e) => Err(PageError(e)),
     }
@@ -194,7 +196,7 @@ async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code
 async fn restore(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
     match svc.restore(page.session.project_id, &code).await {
         Ok(()) => Ok(see_other_flash(&page.config, "/categories", Flash::ok(format!("{} · {code}", page.t("toast.restored"))))),
-        Err(AppError::Validation(m)) => Ok(see_other_flash(&page.config, "/categories", Flash::error(m))),
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => Ok(see_other_flash(&page.config, "/categories", Flash::error(e.to_string()))),
         Err(e) => Err(PageError(e)),
     }
 }

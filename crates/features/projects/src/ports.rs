@@ -40,6 +40,8 @@ pub trait ProjectRepository: Send + Sync {
     async fn projects_of(&self, user_id: Uuid) -> AppResult<Vec<(Project, Member)>>;
     /// Участники проекта с пользователями.
     async fn members(&self, project_id: Uuid) -> AppResult<Vec<(Member, User)>>;
+    /// Участники всех проектов с пользователями (записи участников в справочнике людей при запуске).
+    async fn all_members(&self) -> AppResult<Vec<(Member, User)>>;
     async fn upsert_member(&self, member: &Member) -> AppResult<()>;
     /// Сменить роль участника; `false` — такого участника в проекте нет (никого не добавляет).
     async fn update_role(&self, project_id: Uuid, user_id: Uuid, role: Role) -> AppResult<bool>;
@@ -130,8 +132,20 @@ pub trait ProjectPurge: Send + Sync {
     async fn purge(&self, project_id: Uuid) -> AppResult<()>;
 }
 
+/// Записи участников в справочнике людей (фича `people`, docs/group-1.md, 5.9) — «Для кого» в операциях.
+#[async_trait]
+pub trait MemberDirectory: Send + Sync {
+    /// Участник вступил в проект (или уже в нём состоит): запись с именем из профиля; прежняя — из архива.
+    async fn joined(&self, project_id: Uuid, user_id: Uuid, name: &str) -> AppResult<()>;
+    /// Участник вышел из проекта: запись — в архив.
+    async fn left(&self, project_id: Uuid, user_id: Uuid) -> AppResult<()>;
+    /// Аккаунт удалён: во всех проектах запись теряет имя и связь с пользователем.
+    async fn account_deleted(&self, user_id: Uuid) -> AppResult<()>;
+}
+
 pub struct Deps {
     pub bootstrap: Arc<dyn ProjectBootstrap>,
     pub purge: Arc<dyn ProjectPurge>,
     pub identity: Arc<dyn IdentityProvider>,
+    pub people: Arc<dyn MemberDirectory>,
 }

@@ -4,6 +4,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use kernel::auth::{RequestMeta, Role, scope_allows};
 use kernel::i18n::Lang;
+use kernel::search::Found;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -26,12 +27,22 @@ impl Right {
 }
 
 /// Права доступа ассистента, которые можно выдать в браузере. «Просмотр» есть всегда.
-pub const GRANT_SCOPES: [&str; 8] =
-    ["read", "transactions:write", "currencies:write", "accounts:write", "categories:write", "rates:write", "limits:write", "planning:write"];
+pub const GRANT_SCOPES: [&str; 10] = [
+    "read",
+    "transactions:write",
+    "currencies:write",
+    "accounts:write",
+    "categories:write",
+    "places:write",
+    "people:write",
+    "rates:write",
+    "limits:write",
+    "planning:write",
+];
 /// Отмечены по умолчанию: просмотр всего и операции.
 pub const DEFAULT_GRANT_SCOPES: [&str; 2] = ["read", "transactions:write"];
 /// Справочники: их разом отмечает флажок «Справочники».
-pub const DIRECTORY_SCOPES: [&str; 4] = ["currencies:write", "accounts:write", "categories:write", "rates:write"];
+pub const DIRECTORY_SCOPES: [&str; 6] = ["currencies:write", "accounts:write", "categories:write", "places:write", "people:write", "rates:write"];
 /// Значение флажка «Справочники» в форме — все права из `DIRECTORY_SCOPES` (форма работает и без JS).
 pub const ALL_DIRECTORIES: &str = "directories";
 
@@ -172,13 +183,25 @@ pub struct CategoryInfo {
     pub kind: String,
     pub title: String,
     pub depth: usize,
-    /// Оригинал и переводы названия через пробел.
+    /// Оригинал, переводы названия и код через `kernel::search::SEP`.
     pub search: String,
     pub limit: Option<Decimal>,
     pub available: Option<Decimal>,
 }
 
-/// Всё, чтобы быстро записать операцию: счета, категории, частые, счёт по умолчанию.
+/// Активное место (справочник `places`): что оно подставит в операцию.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaceInfo {
+    pub code: String,
+    /// «7-Eleven · Сукхумвит 24»
+    pub title: String,
+    /// Название, варианты написания и код через `kernel::search::SEP`.
+    pub search: String,
+    pub category_code: Option<String>,
+    pub account_code: Option<String>,
+}
+
+/// Всё, чтобы быстро записать операцию: счета, категории, места, частые, счёт по умолчанию.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct QuickInfo {
     pub default_account: Option<String>,
@@ -186,13 +209,36 @@ pub struct QuickInfo {
     pub categories: Vec<CategoryInfo>,
     pub frequent_expense: Vec<String>,
     pub frequent_income: Vec<String>,
+    /// Активные места: сначала частые.
+    pub places: Vec<PlaceInfo>,
+    pub frequent_places: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct TxLine {
-    pub category_code: String,
-    pub amount: Decimal,
+/// Позиция чека. В черновике пустое поле — значение по умолчанию (1 шт, без цены и скидки), а у позиции с `id`
+/// при правке — прежнее значение. У сохранённой операции заполнены `id`, категория, количество, единица,
+/// скидка и сумма.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct TxItem {
+    pub id: Option<Uuid>,
+    pub category_code: Option<String>,
+    pub name: Option<String>,
+    pub quantity: Option<Decimal>,
+    /// pcs, kg, l, g
+    pub unit: Option<String>,
+    pub price: Option<Decimal>,
+    pub discount: Option<Decimal>,
+    pub amount: Option<Decimal>,
     pub note: Option<String>,
+    /// Для кого (код человека): в черновике `None` — не указано (как в шапке, у позиции с `id` — как было),
+    /// `Some(None)` — «Для всех»; у сохранённой операции всегда `Some`.
+    pub for_person: Option<Option<String>>,
+}
+
+impl TxItem {
+    /// Позиция «категория и сумма».
+    pub fn simple(category_code: String, amount: Decimal) -> Self {
+        Self { category_code: Some(category_code), amount: Some(amount), ..Default::default() }
+    }
 }
 
 /// Операция для создания или изменения (как форма в интерфейсе).
@@ -203,7 +249,13 @@ pub struct TxDraft {
     pub kind: String,
     pub account_code: String,
     pub refund: bool,
-    pub lines: Vec<TxLine>,
+    /// Позиции: с `id` — изменить, без `id` — добавить.
+    pub items: Vec<TxItem>,
+    /// `items` — весь чек (новая операция): не названные позиции удаляются.
+    pub replace_items: bool,
+    pub remove_item_ids: Vec<Uuid>,
+    /// Скидка на чек: делится по позициям пропорционально сумме.
+    pub discount_total: Option<Decimal>,
     pub to_account_code: Option<String>,
     pub amount: Option<Decimal>,
     pub to_amount: Option<Decimal>,
@@ -216,6 +268,10 @@ pub struct TxDraft {
     pub description_th: Option<String>,
     pub plan_id: Option<Uuid>,
     pub plan_date: Option<NaiveDate>,
+    /// Место (расход и доход).
+    pub place_code: Option<String>,
+    /// Для кого по умолчанию (расход и доход): `None` — не указано, `Some(None)` — «Для всех».
+    pub for_person: Option<Option<String>>,
 }
 
 /// Сохранённая операция.
@@ -227,7 +283,7 @@ pub struct Tx {
     pub account_code: String,
     pub to_account_code: Option<String>,
     pub refund: bool,
-    pub lines: Vec<TxLine>,
+    pub items: Vec<TxItem>,
     pub total: Decimal,
     pub currency: String,
     pub to_amount: Option<Decimal>,
@@ -242,6 +298,10 @@ pub struct Tx {
     pub created_by: Uuid,
     pub plan_id: Option<Uuid>,
     pub plan_date: Option<NaiveDate>,
+    pub place_code: Option<String>,
+    /// Общий получатель всех позиций; `None` — «Для всех» или разные (`recipients_differ`).
+    pub for_person_code: Option<String>,
+    pub recipients_differ: bool,
 }
 
 impl Tx {
@@ -252,7 +312,11 @@ impl Tx {
             kind: self.kind.clone(),
             account_code: self.account_code.clone(),
             refund: self.refund,
-            lines: self.lines.clone(),
+            // Позиции не меняются, пока их не назвали.
+            items: Vec::new(),
+            replace_items: false,
+            remove_item_ids: Vec::new(),
+            discount_total: None,
             to_account_code: self.to_account_code.clone(),
             amount: (self.kind == "TRANSFER").then_some(self.total),
             to_amount: self.to_amount,
@@ -265,6 +329,8 @@ impl Tx {
             description_th: self.description_th.clone(),
             plan_id: self.plan_id,
             plan_date: self.plan_date,
+            place_code: self.place_code.clone(),
+            for_person: None,
         }
     }
 
@@ -287,6 +353,9 @@ pub struct TxFilter {
     pub to: Option<NaiveDate>,
     pub account_code: Option<String>,
     pub kind: Option<String>,
+    pub place_code: Option<String>,
+    /// С позицией для этого человека; `Some(None)` — с позицией «Для всех».
+    pub for_person: Option<Option<String>>,
 }
 
 /// Строка бюджета по категории (суммы по поддереву, в базовой валюте).
@@ -377,9 +446,9 @@ impl Name {
         kernel::i18n::pick(lang, &self.text, self.lang, self.ru.as_deref(), self.en.as_deref(), self.th.as_deref())
     }
 
-    /// Оригинал и переводы через `\u{1f}` — для поиска по названию на любом языке (`resolve`).
+    /// Оригинал и переводы через `kernel::search::SEP` — для поиска по названию на любом языке (`resolve`).
     pub fn search(&self) -> String {
-        [Some(self.text.as_str()), self.ru.as_deref(), self.en.as_deref(), self.th.as_deref()].into_iter().flatten().collect::<Vec<_>>().join("\u{1f}")
+        kernel::search::join([Some(self.text.as_str()), self.ru.as_deref(), self.en.as_deref(), self.th.as_deref()].into_iter().flatten())
     }
 }
 
@@ -502,7 +571,45 @@ pub struct Plan {
     pub draft: PlanDraft,
 }
 
+/// Место (справочник `places`): название не переводится — имя собственное.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Place {
+    pub code: String,
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub category_code: Option<String>,
+    pub account_code: Option<String>,
+    /// SHOP / CAFE / MARKET / ONLINE / SERVICE / OTHER
+    pub kind: String,
+    pub location: Option<String>,
+    pub archived: bool,
+}
+
+impl Place {
+    /// «7-Eleven · Сукхумвит 24»
+    pub fn title(&self) -> String {
+        match &self.location {
+            Some(l) => format!("{} · {l}", self.name),
+            None => self.name.clone(),
+        }
+    }
+}
+
+/// Человек (справочник `people`): для кого покупка. Имя не переводится; у удалённого участника — пустое.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Person {
+    pub code: String,
+    pub name: String,
+    pub aliases: Vec<String>,
+    /// Участник проекта; `None` — человек без аккаунта.
+    pub user_id: Option<Uuid>,
+    /// Участник удалил аккаунт.
+    pub former_member: bool,
+    pub archived: bool,
+}
+
 pub const ACCOUNT_KINDS: [&str; 4] = ["CASH", "CARD", "BANK", "SAVINGS"];
+pub const PLACE_KINDS: [&str; 6] = ["SHOP", "CAFE", "MARKET", "ONLINE", "SERVICE", "OTHER"];
 pub const CATEGORY_KINDS: [&str; 2] = ["EXPENSE", "INCOME"];
 pub const PLAN_KINDS: [&str; 3] = ["EXPENSE", "INCOME", "TRANSFER"];
 pub const LIMIT_PERIODS: [&str; 3] = ["WEEK", "MONTH", "YEAR"];
@@ -511,7 +618,7 @@ pub const RECURRENCES: [&str; 5] = ["ONCE", "DAILY", "WEEKLY", "MONTHLY", "YEARL
 /// Запись справочника, на которую ссылаются по коду или названию.
 pub trait Record {
     fn code(&self) -> &str;
-    /// Названия на всех языках через `\u{1f}`.
+    /// Названия на всех языках через `kernel::search::SEP`.
     fn names(&self) -> String;
     fn archived(&self) -> bool;
 }
@@ -521,7 +628,7 @@ impl Record for Currency {
         &self.code
     }
     fn names(&self) -> String {
-        format!("{}\u{1f}{}", self.name.search(), self.symbol)
+        kernel::search::join([self.name.search().as_str(), self.symbol.as_str()])
     }
     fn archived(&self) -> bool {
         self.archived
@@ -546,6 +653,30 @@ impl Record for Category {
     }
     fn names(&self) -> String {
         self.name.search()
+    }
+    fn archived(&self) -> bool {
+        self.archived
+    }
+}
+
+impl Record for Place {
+    fn code(&self) -> &str {
+        &self.code
+    }
+    fn names(&self) -> String {
+        kernel::search::join(std::iter::once(self.name.as_str()).chain(self.aliases.iter().map(String::as_str)))
+    }
+    fn archived(&self) -> bool {
+        self.archived
+    }
+}
+
+impl Record for Person {
+    fn code(&self) -> &str {
+        &self.code
+    }
+    fn names(&self) -> String {
+        kernel::search::join(std::iter::once(self.name.as_str()).chain(self.aliases.iter().map(String::as_str)))
     }
     fn archived(&self) -> bool {
         self.archived
@@ -586,13 +717,10 @@ pub fn find_record<'a, T: Record>(field: &str, query: &str, items: &'a [T]) -> R
 
 // ---------------------------------------------------------------- разбор параметров
 
-/// Код новой записи справочника: UPPER_SNAKE (буквы, цифры, `_`, первая — буква), до 40 знаков.
+/// Код новой записи справочника — правило ядра (`kernel::code::new_code`), подсказка — для ассистента.
 pub fn parse_code(field: &str, value: &str) -> Result<String, String> {
-    let code = value.trim().to_uppercase();
-    let ok = code.chars().next().is_some_and(|c| c.is_ascii_uppercase())
-        && code.len() <= 40
-        && code.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
-    if ok { Ok(code) } else { Err(format!("{field}: '{}' — use UPPER_SNAKE: Latin letters, digits and _, starting with a letter (e.g. KBANK, CARD_KBANK)", value.trim())) }
+    kernel::code::new_code(field, value)
+        .map_err(|_| format!("{field}: '{}' — use UPPER_SNAKE: Latin letters, digits and _, up to {} characters (e.g. KBANK, CARD_KBANK)", value.trim(), kernel::code::MAX_CODE))
 }
 
 /// Значение из списка без учёта регистра: `cash` → `CASH`.
@@ -639,27 +767,18 @@ pub fn parse_date(field: &str, value: Option<&str>, today: NaiveDate) -> Result<
     }
 }
 
-/// Найти код по коду или названию на любом языке. Ошибка — с вариантами, чтобы ассистент уточнил.
+/// Найти код по коду или названию на любом языке (`kernel::search`). Ошибка — с вариантами, чтобы ассистент уточнил.
 pub fn resolve<'a, T>(field: &str, query: &str, items: &'a [T], code: impl Fn(&T) -> &str, names: impl Fn(&T) -> String) -> Result<&'a T, String> {
     let q = query.trim();
     if q.is_empty() {
         return Err(format!("{field}: empty"));
     }
-    if let Some(x) = items.iter().find(|x| code(x).eq_ignore_ascii_case(q)) {
-        return Ok(x);
-    }
-    let low = q.to_lowercase();
-    let exact: Vec<&T> = items.iter().filter(|x| names(x).to_lowercase().split('\u{1f}').any(|n| n.trim() == low)).collect();
-    if exact.len() == 1 {
-        return Ok(exact[0]);
-    }
-    let partial: Vec<&T> = items.iter().filter(|x| names(x).to_lowercase().contains(&low)).collect();
-    match partial.len() {
-        1 => Ok(partial[0]),
-        0 => Err(format!("{field}: '{q}' not found; call get_context for valid codes")),
-        _ => Err(format!(
+    match kernel::search::find(q, items, &code, names) {
+        Found::One(x) => Ok(x),
+        Found::None => Err(format!("{field}: '{q}' not found; call get_context for valid codes")),
+        Found::Many(many) => Err(format!(
             "{field}: '{q}' is ambiguous: {}; pass the exact code",
-            partial.iter().take(8).map(|x| code(x)).collect::<Vec<_>>().join(", ")
+            many.iter().take(8).map(|x| code(x)).collect::<Vec<_>>().join(", ")
         )),
     }
 }

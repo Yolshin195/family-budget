@@ -54,6 +54,12 @@ pub struct ListTransactionsArgs {
     pub category: Option<String>,
     /// Text to search in descriptions and line notes (any language)
     pub text: Option<String>,
+    /// Place code or name: only transactions at this place
+    pub place: Option<String>,
+    /// Person code or name (get_context → people): only transactions with an item for this person;
+    /// "all" — with an item for everyone
+    #[serde(rename = "for")]
+    pub for_whom: Option<String>,
     /// Page size, 1–200 (default 50)
     pub limit: Option<u32>,
     /// Skip this many transactions (paging)
@@ -76,16 +82,42 @@ pub struct UpcomingArgs {
     pub to: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ItemArgs {
-    /// Category code or name (expense category for expenses, income category for income)
-    pub category: String,
-    /// Amount in the account currency, e.g. "120.50"
-    #[serde(deserialize_with = "amount")]
-    #[schemars(with = "String")]
-    pub amount: String,
-    /// Optional note for this line
+    /// update_transaction only: id of an existing item of this transaction (from list_transactions) to change;
+    /// omit to add a new item. Omitted fields of an existing item keep their values; a new quantity, price or
+    /// discount recomputes the amount, an amount without a price removes the price. Error fields like
+    /// items[3].amount count items in the receipt after the edit
+    pub id: Option<String>,
+    /// Category code or name (expense category for expenses, income category for income); required for new items
+    pub category: Option<String>,
+    /// Item name as on the receipt, in the language it was written ("Croissant", "Круассан"); not translated
+    pub name: Option<String>,
+    /// Quantity, e.g. "2" or "0.45" (default 1)
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub quantity: Option<String>,
+    /// Unit of the quantity: pcs | kg | l | g (default pcs)
+    pub unit: Option<String>,
+    /// Price per unit from the price tag; with a price the amount is computed: round(quantity × price) − discount
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub price: Option<String>,
+    /// Discount on this item in the account currency
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub discount: Option<String>,
+    /// Item amount in the account currency, e.g. "120.50" — required without a price; with a price it must match
+    /// the computed amount (otherwise the error code is AMOUNT_MISMATCH)
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub amount: Option<String>,
+    /// Optional note for this item
     pub note: Option<String>,
+    /// Who this item is for: person code or name (get_context → people), "all" — for everyone. Omit to use the
+    /// transaction's "for" (an existing item keeps its recipient)
+    #[serde(rename = "for")]
+    pub for_whom: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -96,8 +128,12 @@ pub struct AddFlowArgs {
     pub amount: Option<String>,
     /// Category code or name for a single-line transaction
     pub category: Option<String>,
-    /// Several lines (a receipt split into categories) instead of amount+category
+    /// Receipt items (with names, quantities and prices when visible) instead of amount+category
     pub items: Option<Vec<ItemArgs>>,
+    /// Discount on the whole receipt, split across items in proportion to their amounts
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub discount_total: Option<String>,
     /// Account code or name (default: the user's last used account)
     pub account: Option<String>,
     /// Date YYYY-MM-DD, or "today" / "yesterday" (default: today)
@@ -110,6 +146,13 @@ pub struct AddFlowArgs {
     pub translations: Option<Translations>,
     /// Expenses only: this is a refund (money returned to the account)
     pub refund: Option<bool>,
+    /// Place (shop, café, market) code, name or other spelling — only an existing one (get_context, list_places);
+    /// fills in its category and account unless you pass them
+    pub place: Option<String>,
+    /// Who the purchase is for: person code or name (get_context → people; my_person_code is the user), "all" —
+    /// for everyone (default). Items without their own "for" get it. Pass it only when the user says so
+    #[serde(rename = "for")]
+    pub for_whom: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -138,6 +181,9 @@ pub struct AddTransferArgs {
     /// Language of `description`: ru | en | th (default: the user's language)
     pub description_lang: Option<String>,
     pub translations: Option<Translations>,
+    /// Not for transfers: a transfer has no recipient (an error if passed)
+    #[serde(rename = "for")]
+    pub for_whom: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -148,14 +194,26 @@ pub struct UpdateTransactionArgs {
     pub date: Option<String>,
     /// New account (source account for transfers)
     pub account: Option<String>,
-    /// New amount: for a single-line expense/income or a transfer
+    /// New amount: for a single-item expense/income or a transfer
     #[serde(default, deserialize_with = "opt_amount")]
     #[schemars(with = "Option<String>")]
     pub amount: Option<String>,
-    /// New category for a single-line expense/income
+    /// New category for a single-item expense/income
     pub category: Option<String>,
-    /// Replace all lines of an expense/income
+    /// New place code or name (expense and income); "" removes the place
+    pub place: Option<String>,
+    /// Who it is for (expense and income): person code or name, "all" — for everyone. Changes the items that had
+    /// the previous common recipient; an item's own "for" wins
+    #[serde(rename = "for")]
+    pub for_whom: Option<String>,
+    /// Expense/income items to change (with id) or add (without id); items not listed stay as they are
     pub items: Option<Vec<ItemArgs>>,
+    /// Ids of items to delete from this expense/income
+    pub remove_item_ids: Option<Vec<String>>,
+    /// Discount on the whole receipt added to the items' discounts, split in proportion to their amounts
+    #[serde(default, deserialize_with = "opt_amount")]
+    #[schemars(with = "Option<String>")]
+    pub discount_total: Option<String>,
     /// Transfers: new destination account
     pub to_account: Option<String>,
     /// Transfers: new received amount (exchange)
@@ -312,6 +370,78 @@ pub struct UpdateCategoryArgs {
     pub parent: Option<String>,
     /// New position among siblings, smaller first
     pub sort_order: Option<i32>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListPlacesArgs {
+    /// Text to find in names and other spellings (any language, case and accents ignored)
+    pub text: Option<String>,
+    /// Include archived places (default false)
+    pub include_archived: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AddPlaceArgs {
+    /// New place code, UPPER_SNAKE: Latin letters, digits and _, e.g. "SEVEN_ELEVEN" or "CAFE_AMAZON_SUKHUMVIT"
+    pub code: String,
+    /// Name as on the sign, not translated, e.g. "7-Eleven"
+    pub name: String,
+    /// Other spellings to find it by, any language, e.g. ["7-11", "เซเว่น"]
+    pub aliases: Option<Vec<String>>,
+    /// Default category code or name for its items (usually an expense category)
+    pub category: Option<String>,
+    /// Default account code or name, e.g. cash for a market
+    pub account: Option<String>,
+    /// shop | cafe | market | online | service | other (default other)
+    pub kind: Option<String>,
+    /// Branch or address, to tell branches apart, e.g. "Sukhumvit 24"
+    pub location: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct UpdatePlaceArgs {
+    /// Place code (or name) to change
+    pub code: String,
+    /// New name
+    pub name: Option<String>,
+    /// Replace the other spellings with this list ([] removes them all)
+    pub aliases: Option<Vec<String>>,
+    /// New default category code or name; "" removes it
+    pub category: Option<String>,
+    /// New default account code or name; "" removes it
+    pub account: Option<String>,
+    /// shop | cafe | market | online | service | other
+    pub kind: Option<String>,
+    /// New branch or address; "" removes it
+    pub location: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListPeopleArgs {
+    /// Text to find in names and other names (any language, case and accents ignored)
+    pub text: Option<String>,
+    /// Include archived people (default false)
+    pub include_archived: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AddPersonArgs {
+    /// New person code, UPPER_SNAKE: Latin letters, digits and _, e.g. "PINPAN" (not "ALL")
+    pub code: String,
+    /// Name as the family calls them, not translated, e.g. "Pinpan"
+    pub name: String,
+    /// Other names to find them by, any language, e.g. ["Пинпан", "ปิ่นปั่น"]
+    pub aliases: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct UpdatePersonArgs {
+    /// Person code (or name) to change
+    pub code: String,
+    /// New name
+    pub name: Option<String>,
+    /// Replace the other names with this list ([] removes them all)
+    pub aliases: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]

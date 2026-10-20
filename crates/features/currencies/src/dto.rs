@@ -9,7 +9,7 @@ use crate::domain::{CurrencyNameLang, NewCurrency, Currency, CurrencyChanges};
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateCurrencyDto {
-    /// Уникальный код (верхний регистр, без пробелов)
+    /// Уникальный код: латиница, цифры и `_`, до 40 знаков
     #[schema(example = "THB")]
     pub code: String,
     pub name: String,

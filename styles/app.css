@@ -296,6 +296,12 @@
   .combo-list [role='option'] { @apply flex min-h-9 cursor-pointer items-center gap-2 rounded-md px-3 text-sm; }
   .combo-list [role='option'][aria-selected='true'], .combo-list [role='option']:hover { @apply bg-sunken; }
   .combo-list .opt-path { @apply truncate text-xs text-subtle; }
+  /* Группы поиска быстрого ввода: «Категории», «Места» (шаг 5). */
+  .combo-list .opt-group { @apply px-3 pb-1 pt-2 text-xs font-medium text-subtle; }
+  .combo-list .opt-text { @apply flex min-w-0 flex-col py-1; }
+  /* Выбранное место — метка с крестиком над частыми категориями. */
+  .place-pick { @apply mb-2 inline-flex min-h-9 max-w-full items-center gap-2 rounded-full bg-sunken pl-3 pr-1 text-sm font-medium; }
+  .place-pick > span { @apply truncate; }
   .limit-note { @apply text-sm text-muted; }
   .limit-note:empty { @apply hidden; }
   .limit-note.warn { @apply text-warn; }
@@ -384,11 +390,42 @@
   .postings li { @apply flex justify-between gap-3; }
   .tx-lines { @apply mt-2 max-w-lg space-y-0.5 text-sm text-muted; }
   .tx-lines li { @apply flex justify-between gap-3; }
+  .tx-lines li.tx-item { @apply block pl-3 text-xs text-subtle; }
   .tx-side { @apply flex flex-none flex-col items-end gap-1 text-right; }
   .lines { @apply space-y-2; }
-  .line { @apply grid items-start gap-2; grid-template-columns: minmax(0, 1fr) 8rem 2.5rem; }
-  @media (min-width: 640px) { .line { grid-template-columns: minmax(0, 1fr) 9rem minmax(0, 1fr) 2.5rem; } }
-  .line-note { @apply hidden sm:block; }
+  /* Позиция чека (docs/group-1.md, 3.2): категория, сумма, название, «× цена», убрать; под строкой —
+     количество × цена − скидка = сумма. «× цена» — флажок: панель видна через :has() и без JS. */
+  .item-head { @apply mb-1 hidden gap-2 text-xs text-subtle sm:grid; grid-template-columns: minmax(0, 1fr) 7rem minmax(0, 1.3fr) 5.5rem 2.5rem; }
+  .item-row { @apply grid items-center gap-2; grid-template-columns: minmax(0, 1fr) 6rem 2.5rem; grid-template-areas: "cat amt rm" "name pill pill"; }
+  .item-row > select { grid-area: cat; }
+  .item-row > [data-amount] { grid-area: amt; }
+  .item-row > .item-name { grid-area: name; }
+  .item-row > .price-pill { grid-area: pill; }
+  .item-row > [data-remove-line] { grid-area: rm; }
+  @media (min-width: 640px) {
+    .item-row { grid-template-columns: minmax(0, 1fr) 7rem minmax(0, 1.3fr) 5.5rem 2.5rem; grid-template-areas: "cat amt name pill rm"; }
+  }
+  .price-toggle { @apply sr-only; }
+  .price-pill { @apply flex min-h-10 cursor-pointer select-none items-center justify-center whitespace-nowrap rounded-lg border border-line-strong bg-surface px-2 text-sm text-muted hover:bg-sunken; }
+  .price-toggle:checked + .price-pill { @apply border-accent bg-accent-soft text-accent-text; }
+  .price-toggle:focus-visible + .price-pill { outline: 2px solid rgb(var(--focus)); outline-offset: 1px; }
+  .item-price { @apply mt-2 hidden flex-wrap items-end gap-x-2 gap-y-3 rounded-lg bg-sunken p-3; }
+  .item-price .field { @apply w-24 sm:w-28; }
+  .item:has(> .item-row > .price-toggle:checked) > .item-price { @apply flex; }
+  @supports not selector(:has(*)) { .item-price { @apply flex; } }
+  .item-price .op { @apply pb-2.5 text-muted; }
+  .item-sum { @apply pb-2.5 font-semibold tabular-nums; }
+  /* Для кого (шаг 6, раздел 3.2): строка у позиции и сводка видны при «Разные получатели в чеке» — через :has()
+     и без JS. «Сбросить всё на …?» — строка под переключателем, не окно. */
+  .item-for { @apply mt-2 hidden flex-wrap items-center gap-x-3 gap-y-1 text-sm; }
+  .item-for > select { @apply w-auto min-w-40; }
+  form:has(#for_split:checked) .item-for { @apply flex; }
+  @supports not selector(:has(*)) { .item-for { @apply flex; } }
+  .for-summary { @apply mt-2 hidden text-sm text-muted; }
+  form:has(#for_split:checked) .for-summary { @apply block; }
+  .for-reset { @apply mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-warn-soft px-3 py-2 text-sm; }
+  .for-reset > span { @apply w-full; }
+  .tx-for { @apply ml-1 rounded-full bg-sunken px-1.5 text-xs text-muted; }
 
   /* календарь: сетка на компьютере, список дней на телефоне */
   .calendar { @apply hidden overflow-hidden md:block; }

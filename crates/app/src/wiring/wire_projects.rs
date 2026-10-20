@@ -2,7 +2,7 @@
 //! `currencies`, `categories` и `accounts` — базовая валюта, стартовое дерево категорий на трёх
 //! языках и счёт в базовой валюте (чтобы сразу можно было вносить операции);
 //! удаление всех данных проекта во всех фичах (удаление проекта, аккаунта, сброс демо);
-//! сессия страницы с символами валют проекта.
+//! записи участников в справочнике `people`; сессия страницы с символами валют проекта.
 
 use std::sync::{Arc, OnceLock};
 
@@ -137,6 +137,41 @@ impl ::projects::ProjectBootstrap for BootstrapAdapter {
     }
 }
 
+/// Порт `MemberDirectory`: записи участников в справочнике людей (без фичи `people` — ничего).
+#[derive(Default)]
+pub struct MemberDirectoryAdapter {
+    #[cfg(feature = "people")]
+    pub people: Option<Arc<::people::Service>>,
+}
+
+#[async_trait]
+impl ::projects::MemberDirectory for MemberDirectoryAdapter {
+    async fn joined(&self, project_id: Uuid, user_id: Uuid, name: &str) -> AppResult<()> {
+        #[cfg(feature = "people")]
+        if let Some(people) = &self.people {
+            people.member_joined(project_id, user_id, name).await?;
+        }
+        let _ = (project_id, user_id, name);
+        Ok(())
+    }
+    async fn left(&self, project_id: Uuid, user_id: Uuid) -> AppResult<()> {
+        #[cfg(feature = "people")]
+        if let Some(people) = &self.people {
+            people.member_left(project_id, user_id).await?;
+        }
+        let _ = (project_id, user_id);
+        Ok(())
+    }
+    async fn account_deleted(&self, user_id: Uuid) -> AppResult<()> {
+        #[cfg(feature = "people")]
+        if let Some(people) = &self.people {
+            people.account_deleted(user_id).await?;
+        }
+        let _ = user_id;
+        Ok(())
+    }
+}
+
 /// Кто хранит данные проекта: сервисы фич с `purge_project`. Заполняется в конце сборки.
 #[derive(Default)]
 pub struct PurgeTargets {
@@ -164,6 +199,8 @@ purge_one!("transactions", ::transactions::Service);
 purge_one!("planning", ::planning::Service);
 purge_one!("limits", ::limits::Service);
 purge_one!("rates", ::rates::Service);
+purge_one!("places", ::places::Service);
+purge_one!("people", ::people::Service);
 purge_one!("accounts", ::accounts::Service);
 purge_one!("categories", ::categories::Service);
 purge_one!("currencies", ::currencies::Service);

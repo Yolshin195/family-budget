@@ -10,6 +10,8 @@
 mod assets;
 #[cfg(feature = "seed")]
 mod seed;
+#[cfg(test)]
+mod tests;
 mod wiring;
 
 use std::env;
@@ -22,6 +24,7 @@ use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::routing::get;
 use axum::{Router, middleware};
 use sqlx::postgres::PgPoolOptions;
+use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
@@ -89,6 +92,11 @@ async fn main() -> anyhow::Result<()> {
     let wired = wiring::features(&ctx);
     let feats = kernel::feature::assemble(&ctx, wired.features).await?;
     println!("Включённые фичи: {:?}", feats.names);
+    // Справочник людей (группа 1, шаг 6): записи участникам проектов, созданных до него.
+    // Сбой не мешает запуску: недостающие записи создадутся при следующем запуске или вступлении в проект.
+    if let Err(e) = wired.projects.sync_people().await {
+        eprintln!("записи участников в справочнике людей: {e}");
+    }
 
     #[cfg(feature = "seed")]
     {
@@ -197,6 +205,8 @@ async fn main() -> anyhow::Result<()> {
 
     let app = app
         .fallback(not_found)
+        // Паника в обработчике — ответ 500 со страницей ошибки, а не оборванное соединение (техдолг #20).
+        .layer(CatchPanicLayer::new())
         .layer(middleware::from_fn_with_state(config.clone(), error_pages))
         .layer(middleware::from_fn_with_state(config.clone(), security_headers))
         .layer(middleware::from_fn_with_state(config.clone(), attach_meta))

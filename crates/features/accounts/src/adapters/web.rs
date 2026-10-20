@@ -173,7 +173,7 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): F
         // Счёт создан, а начальный остаток не принят: дальше — форма редактирования с ошибкой.
         Ok(Some((code, AppError::Validation(m)))) => {
             let text = m.split_once(": ").map(|x| x.1.to_string()).unwrap_or(m);
-            Ok(see_other_flash(&page.config, &format!("/accounts/{}/edit", kernel::web::url_encode(&code)), Flash::error(text)))
+            Ok(see_other_flash(&page.config, &format!("/accounts/{}/edit", kernel::web::url_segment(&code)), Flash::error(text)))
         }
         Ok(Some((_, e))) => Err(PageError(e)),
         Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, true, f, Some(m)).await,
@@ -227,11 +227,11 @@ async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code
         Ok(()) => {}
         Err(AppError::Conflict(m)) => {
             let text = m.split_once(": ").map(|x| x.1.to_string()).unwrap_or(m);
-            return Ok(see_other_flash(&page.config, &format!("/accounts/{}/edit", kernel::web::url_encode(&code)), Flash::error(text)));
+            return Ok(see_other_flash(&page.config, &format!("/accounts/{}/edit", kernel::web::url_segment(&code)), Flash::error(text)));
         }
         Err(e) => return Err(PageError(e)),
     }
-    let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/accounts/{}/restore", kernel::web::url_encode(&code)));
+    let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/accounts/{}/restore", kernel::web::url_segment(&code)));
     Ok(see_other_flash(&page.config, "/accounts", flash))
 }
 

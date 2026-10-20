@@ -9,9 +9,12 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
-use crate::domain::{Body, Description, Fee, Line, Transaction, TransactionData, TxKind};
+use kernel::error::Problem;
 
-/// Позиция чека (расход и доход).
+use crate::domain::{Body, Description, Draft, Fee, Item, ItemDraft, ItemsDraft, Transaction, TransactionData, TxKind};
+
+/// Позиция чека в старом формате `lines`: категория и сумма. Принимается по-прежнему — как позиция
+/// «1 шт» с названием из `note`; `lines` заменяют все позиции операции.
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct LineDto {
     /// Категория; расход — `EXPENSE`, доход — `INCOME`
@@ -22,6 +25,124 @@ pub struct LineDto {
     pub amount: Decimal,
     #[serde(default)]
     pub note: Option<String>,
+}
+
+/// Позиция чека в запросе (docs/group-1.md, 5.1): категория и сумма или количество × цена − скидка.
+/// При правке: с `id` — изменить позицию (пустые категория и название остаются прежними, пустые все
+/// денежные поля — тоже), без `id` — добавить.
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+pub struct ItemInput {
+    /// Позиция этой операции (при правке)
+    #[serde(default)]
+    pub id: Option<Uuid>,
+    /// Категория; расход — `EXPENSE`, доход — `INCOME`
+    #[serde(default)]
+    #[schema(example = "FOOD_SNACKS")]
+    pub category_code: Option<String>,
+    /// Название на языке ввода
+    #[serde(default)]
+    #[schema(example = "Круассан")]
+    pub name: Option<String>,
+    /// Количество > 0, до 6 знаков после запятой (по умолчанию 1)
+    #[serde(default)]
+    #[schema(value_type = Option<String>, example = "2")]
+    pub quantity: Option<Decimal>,
+    /// pcs, kg, l, g (по умолчанию pcs)
+    #[serde(default)]
+    #[schema(example = "pcs")]
+    pub unit: Option<String>,
+    /// Цена за единицу ≥ 0; с ценой сумма считается сама: round(quantity × price_per_unit) − discount
+    #[serde(default)]
+    #[schema(value_type = Option<String>, example = "25")]
+    pub price_per_unit: Option<Decimal>,
+    /// Скидка на позицию ≥ 0
+    #[serde(default)]
+    #[schema(value_type = Option<String>, example = "3")]
+    pub discount: Option<Decimal>,
+    /// Сумма позиции > 0 в валюте счёта; вместе с ценой — сверяется с ней (допуск — единица младшего разряда)
+    #[serde(default)]
+    #[schema(value_type = Option<String>, example = "47")]
+    pub amount: Option<Decimal>,
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Для кого (код из справочника людей); `all` или "" — «Для всех». Не указано — как в шапке
+    /// (`for_person_code` операции), у позиции с `id` — прежний получатель
+    #[serde(default)]
+    #[schema(example = "PINPAN")]
+    pub for_person_code: Option<String>,
+}
+
+/// Получатель из запроса: `all` или пусто — «Для всех» явно.
+pub fn recipient_of(value: Option<String>) -> Option<Option<String>> {
+    value.map(|v| Some(v.trim().to_string()).filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case(ALL)))
+}
+
+/// «Для всех» в запросах и фильтрах (код человека не может быть таким — его занимает справочник).
+pub const ALL: &str = "all";
+
+impl ItemInput {
+    fn into_draft(self) -> ItemDraft {
+        ItemDraft {
+            id: self.id,
+            category_code: self.category_code,
+            name: self.name,
+            quantity: self.quantity,
+            unit: self.unit,
+            price: self.price_per_unit,
+            discount: self.discount,
+            amount: self.amount,
+            note: self.note,
+            for_person: recipient_of(self.for_person_code),
+        }
+    }
+}
+
+/// Позиция чека в ответе.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ItemDto {
+    pub id: Uuid,
+    #[schema(example = "FOOD_SNACKS")]
+    pub category_code: String,
+    pub name: Option<String>,
+    #[schema(value_type = String, example = "2")]
+    pub quantity: Decimal,
+    /// pcs, kg, l, g
+    #[schema(example = "pcs")]
+    pub unit: String,
+    #[schema(value_type = Option<String>, example = "25")]
+    pub price_per_unit: Option<Decimal>,
+    #[schema(value_type = String, example = "3")]
+    pub discount: Decimal,
+    /// Сумма позиции (после скидки)
+    #[schema(value_type = String, example = "47")]
+    pub amount: Decimal,
+    pub note: Option<String>,
+    /// Для кого (код из справочника людей); пусто — «Для всех»
+    pub for_person_code: Option<String>,
+}
+
+impl From<Item> for ItemDto {
+    fn from(x: Item) -> Self {
+        Self {
+            id: x.id,
+            category_code: x.category_code,
+            name: x.name,
+            quantity: x.quantity.normalize(),
+            unit: x.unit.as_str().to_string(),
+            price_per_unit: x.price.map(|p| p.normalize()),
+            discount: x.discount,
+            amount: x.amount,
+            note: x.note,
+            for_person_code: x.for_person,
+        }
+    }
+}
+
+impl ItemDto {
+    /// Одна штука без названия, цены и скидки — как обычная операция.
+    pub fn is_simple(&self) -> bool {
+        self.name.is_none() && self.price_per_unit.is_none() && self.quantity == Decimal::ONE && self.unit == "pcs" && self.discount.is_zero()
+    }
 }
 
 /// Проводка: куда относится, валюта и сумма со знаком. Сумма проводок по каждой валюте = 0.
@@ -42,22 +163,39 @@ pub struct PostingDto {
 
 /// Тело запроса на создание и изменение: тип и поля формы.
 ///
-/// - `EXPENSE` / `INCOME`: `account_code`, `lines`, необязательно `refund` (возврат — обратные знаки).
+/// - `EXPENSE` / `INCOME`: `account_code`, `items` (или старый формат `lines`), необязательно `refund` (возврат —
+///   обратные знаки) и `discount_total` (скидка на чек). При правке позиции — по `id`, `remove_item_ids` удаляет.
 /// - `TRANSFER`: `account_code` (откуда), `to_account_code` (куда), `amount` (списано всего, вместе с
 ///   комиссией), `to_amount` (зачислено — только при разных валютах), необязательно
 ///   `fee_category_code` + `fee_amount` (комиссия, расход в валюте списания).
 /// - `OPENING`: `account_code`, `amount` (начальный остаток, может быть отрицательным).
-#[derive(Debug, Deserialize, ToSchema)]
+#[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct TransactionInput {
     pub occurred_on: NaiveDate,
     #[schema(example = "EXPENSE")]
     pub tx_kind: String,
+    /// Счёт (у перевода — счёт списания); можно не передавать, если у места есть счёт по умолчанию
+    #[serde(default)]
     #[schema(example = "CARD_KBANK")]
     pub account_code: String,
     #[serde(default)]
     pub refund: bool,
+    /// Позиции чека (расход и доход)
+    #[serde(default)]
+    pub items: Vec<ItemInput>,
+    /// Удалить позиции операции (при правке)
+    #[serde(default)]
+    pub remove_item_ids: Vec<Uuid>,
+    /// Скидка на чек: делится по позициям пропорционально сумме; при правке прибавляется к записанным скидкам
+    #[serde(default)]
+    #[schema(value_type = Option<String>, example = "10")]
+    pub discount_total: Option<Decimal>,
+    /// Старый формат позиций: категория, сумма, уточнение. Заменяет все позиции операции
     #[serde(default)]
     pub lines: Vec<LineDto>,
+    /// Позиции из формы — весь чек: не названные в `items` удаляются
+    #[serde(skip)]
+    pub replace_items: bool,
     #[serde(default)]
     pub to_account_code: Option<String>,
     #[serde(default)]
@@ -88,6 +226,15 @@ pub struct TransactionInput {
     pub plan_id: Option<Uuid>,
     #[serde(default)]
     pub plan_date: Option<NaiveDate>,
+    /// Место (расход и доход): подставляет счёт и категорию новых позиций, если их не указали
+    #[serde(default)]
+    #[schema(example = "SEVEN_ELEVEN")]
+    pub place_code: Option<String>,
+    /// Для кого по умолчанию (расход и доход): код из справочника людей, `all` — «Для всех». Получают позиции без
+    /// своего `for_person_code`; при правке — ещё и позиции с прежним общим получателем
+    #[serde(default)]
+    #[schema(example = "PINPAN")]
+    pub for_person_code: Option<String>,
 }
 
 /// Переводы описания (оригинал не меняется).
@@ -113,7 +260,9 @@ pub struct TransactionDto {
     pub to_account_code: Option<String>,
     /// Возврат (расход или доход с обратными знаками)
     pub refund: bool,
-    /// Позиции (расход и доход)
+    /// Позиции чека (расход и доход)
+    pub items: Vec<ItemDto>,
+    /// Старый формат позиций — для прежних клиентов API: категория, сумма, название в `note`. Новое — `items`
     pub lines: Vec<LineDto>,
     /// Сумма транзакции: сумма позиций; у перевода — списано всего; у начального остатка — остаток
     #[schema(value_type = String)]
@@ -138,6 +287,12 @@ pub struct TransactionDto {
     pub created_by: Uuid,
     pub plan_id: Option<Uuid>,
     pub plan_date: Option<NaiveDate>,
+    /// Место (расход и доход)
+    pub place_code: Option<String>,
+    /// Для кого: общий получатель всех позиций; пусто — «Для всех» или разные (`recipients_differ`)
+    pub for_person_code: Option<String>,
+    /// У позиций разные получатели
+    pub recipients_differ: bool,
     pub postings: Vec<PostingDto>,
 }
 
@@ -153,18 +308,26 @@ pub struct ListQuery {
     pub created_by: Option<Uuid>,
     /// Только без перевода описания на этот язык (ru / en / th)
     pub untranslated: Option<String>,
+    /// Только операции в этом месте
+    pub place_code: Option<String>,
+    /// Только операции с позицией для этого человека (`all` — для всех); итоги ленты — по этим позициям
+    pub for_person_code: Option<String>,
 }
 
 impl From<Transaction> for TransactionDto {
     fn from(x: Transaction) -> Self {
         let total = x.total();
         let currency_of = |code: &str| x.postings.iter().find(|p| p.is_account(code)).map(|p| p.currency.clone()).unwrap_or_default();
-        let (account_code, to_account_code, refund, lines, to_amount, fee) = match x.body() {
-            Body::Flow { account, lines, refund, .. } => (account, None, refund, lines, None, None),
+        let (account_code, to_account_code, refund, items, to_amount, fee) = match x.body() {
+            Body::Flow { account, items, refund, .. } => (account, None, refund, items, None, None),
             Body::Transfer { from, to, to_amount, fee, .. } => (from, Some(to), false, Vec::new(), to_amount, fee),
             Body::Opening { account, .. } => (account, None, false, Vec::new(), None, None),
         };
+        let for_person_code = crate::domain::common_recipient(&items);
+        let recipients_differ = items.iter().any(|i| i.for_person != items[0].for_person);
         Self {
+            for_person_code,
+            recipients_differ,
             id: x.id,
             occurred_on: x.occurred_on,
             tx_kind: x.tx_kind.as_str().to_string(),
@@ -173,7 +336,8 @@ impl From<Transaction> for TransactionDto {
             account_code,
             to_account_code,
             refund,
-            lines: lines.into_iter().map(|l| LineDto { category_code: l.category_code, amount: l.amount, note: l.note }).collect(),
+            lines: items.iter().map(|x| LineDto { category_code: x.category_code.clone(), amount: x.amount, note: x.name.clone() }).collect(),
+            items: items.into_iter().map(Into::into).collect(),
             total,
             to_amount,
             fee_category_code: fee.as_ref().map(|f| f.category_code.clone()),
@@ -186,6 +350,7 @@ impl From<Transaction> for TransactionDto {
             created_by: x.created_by,
             plan_id: x.plan.map(|p| p.0),
             plan_date: x.plan.map(|p| p.1),
+            place_code: x.place_code,
             postings: x
                 .postings
                 .into_iter()
@@ -196,39 +361,52 @@ impl From<Transaction> for TransactionDto {
 }
 
 impl TransactionInput {
-    pub fn into_domain(self) -> Result<TransactionData, String> {
-        let tx_kind = TxKind::parse(&self.tx_kind)
-            .ok_or_else(|| format!("tx_kind: недопустимое значение '{}', ожидается одно из {:?}", self.tx_kind, TxKind::VALUES))?;
-        let lang = Lang::parse(&self.description_lang)
-            .ok_or_else(|| format!("description_lang: недопустимое значение '{}', ожидается RU, EN или TH", self.description_lang))?;
+    pub fn into_domain(self) -> Result<TransactionData, Problem> {
+        let err = |field: &str, key: &str, args: &[(&str, &dyn std::fmt::Display)]| Problem::validation(field, kernel::i18n::tr(Some(crate::i18n::dict), key, args));
+        let tx_kind = TxKind::parse(&self.tx_kind).ok_or_else(|| err("tx_kind", "err.kind_invalid", &[("value", &self.tx_kind)]))?;
+        let lang = Lang::parse(&self.description_lang).ok_or_else(|| err("description_lang", "err.lang_invalid", &[("value", &self.description_lang)]))?;
         let plan = match (self.plan_id, self.plan_date) {
             (Some(id), Some(date)) => Some((id, date)),
             (None, None) => None,
-            _ => return Err("plan_id и plan_date задаются вместе".into()),
+            _ => return Err(err("plan_id", "err.plan_pair", &[])),
         };
-        let lines = || self.lines.iter().map(|l| Line { category_code: l.category_code.clone(), amount: l.amount, note: l.note.clone() }).collect();
         let body = match tx_kind {
             TxKind::Expense | TxKind::Income => {
-                Body::Flow { income: tx_kind == TxKind::Income, account: self.account_code.clone(), lines: lines(), refund: self.refund }
+                let items = match (self.lines.is_empty(), self.items.is_empty()) {
+                    (false, false) => return Err(err("items", "err.lines_and_items", &[])),
+                    // Старый формат: категория, сумма, уточнение → название; весь чек целиком.
+                    (false, true) => ItemsDraft::replace(
+                        self.lines.into_iter().map(|l| ItemDraft { name: l.note, ..ItemDraft::simple(&l.category_code, l.amount) }).collect(),
+                    ),
+                    _ => ItemsDraft {
+                        items: self.items.into_iter().map(ItemInput::into_draft).collect(),
+                        replace: self.replace_items,
+                        remove: self.remove_item_ids,
+                        ..Default::default()
+                    },
+                };
+                let items = ItemsDraft { discount_total: self.discount_total, for_default: recipient_of(self.for_person_code), ..items };
+                Draft::Flow { income: tx_kind == TxKind::Income, account: self.account_code.clone(), items, refund: self.refund }
             }
-            TxKind::Transfer => Body::Transfer {
+            TxKind::Transfer => Draft::Transfer {
                 from: self.account_code.clone(),
-                to: self.to_account_code.clone().filter(|s| !s.trim().is_empty()).ok_or("to_account_code: выберите счёт зачисления")?,
-                amount: self.amount.ok_or("amount: введите сумму списания")?,
+                to: self.to_account_code.clone().filter(|s| !s.trim().is_empty()).ok_or_else(|| err("to_account_code", "err.to_account_required", &[]))?,
+                amount: self.amount.ok_or_else(|| err("amount", "err.amount_required", &[]))?,
                 to_amount: self.to_amount,
                 fee: match (self.fee_category_code.clone().filter(|s| !s.trim().is_empty()), self.fee_amount) {
                     (Some(category_code), Some(amount)) => Some(Fee { category_code, amount }),
                     (None, None) => None,
-                    (None, Some(_)) => return Err("fee_category_code: выберите категорию комиссии".into()),
-                    (Some(_), None) => return Err("fee_amount: введите сумму комиссии".into()),
+                    (None, Some(_)) => return Err(err("fee_category_code", "err.fee_category_required", &[])),
+                    (Some(_), None) => return Err(err("fee_amount", "err.fee_amount_required", &[])),
                 },
             },
-            TxKind::Opening => Body::Opening { account: self.account_code.clone(), amount: self.amount.ok_or("amount: введите остаток")? },
+            TxKind::Opening => Draft::Opening { account: self.account_code.clone(), amount: self.amount.ok_or_else(|| err("amount", "err.opening_required", &[]))? },
         };
         Ok(TransactionData {
             occurred_on: self.occurred_on,
             description: Description { text: self.description, lang, ru: self.description_ru, en: self.description_en, th: self.description_th },
             plan,
+            place_code: self.place_code,
             body,
         })
     }
@@ -308,7 +486,7 @@ pub struct QuickCategoryDto {
     /// Название на языке интерфейса
     pub title: String,
     pub depth: usize,
-    /// Оригинал и переводы — для поиска на любом из трёх языков
+    /// Оригинал, переводы и код через `\u{1f}` — для поиска на любом из трёх языков
     pub search: String,
     /// Лимит узла за месяц (в базовой валюте), если задан
     #[schema(value_type = Option<String>)]
@@ -336,6 +514,24 @@ pub struct QuickDefaultsDto {
     /// До 6 частых категорий доходов
     pub frequent_income: Vec<String>,
     pub categories: Vec<QuickCategoryDto>,
+    /// Активные места: сначала частые в расходах пользователя за 30 дней, затем по названию. Пусто — мест нет
+    pub places: Vec<QuickPlaceDto>,
+    /// Коды частых мест (из `places`)
+    pub frequent_places: Vec<String>,
+}
+
+/// Место в форме быстрого расхода: что оно подставит.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct QuickPlaceDto {
+    pub code: String,
+    /// «7-Eleven · Сукхумвит 24»
+    pub title: String,
+    /// Название, варианты написания и код через `\u{1f}` — для поиска
+    pub search: String,
+    /// Категория по умолчанию (если активна)
+    pub category: Option<String>,
+    /// Счёт по умолчанию (если активен)
+    pub account: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
