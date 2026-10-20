@@ -119,7 +119,7 @@ fn person_choices(people: &[PersonInfo], me: Uuid, me_label: &str, keep: &[&str]
             (!mine, PersonChoice { code: p.code.clone(), label: if mine { me_label.to_string() } else { p.title.clone() } })
         })
         .collect();
-    out.sort_by(|a, b| (a.0, a.1.label.to_lowercase()).cmp(&(b.0, b.1.label.to_lowercase())));
+    out.sort_by_key(|a| (a.0, a.1.label.to_lowercase()));
     out.into_iter().map(|x| x.1).collect()
 }
 

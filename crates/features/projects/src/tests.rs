@@ -38,9 +38,12 @@ impl ProjectPurge for Arc<FakePurge> {
     }
 }
 
-/// Справочник людей понарошку: что ему сообщили (событие, проект, пользователь, имя).
+/// Событие справочника людей: (событие, проект, пользователь, имя).
+type PeopleEvent = (&'static str, Option<Uuid>, Uuid, String);
+
+/// Справочник людей понарошку: что ему сообщили.
 #[derive(Default)]
-struct FakePeople(Mutex<Vec<(&'static str, Option<Uuid>, Uuid, String)>>);
+struct FakePeople(Mutex<Vec<PeopleEvent>>);
 
 #[async_trait]
 impl MemberDirectory for Arc<FakePeople> {
