@@ -179,10 +179,17 @@ async fn tree_rules() {
     // цикл: FOOD под CAFE
     let cyc = UpdateCategoryDto { parent_code: Some("CAFE".into()), ..update_dto("Еда") };
     assert!(matches!(svc.update(p, "FOOD", cyc).await.unwrap_err(), AppError::Validation(_)));
-    // архив родителя при активном потомке запрещён
-    assert!(matches!(svc.archive(p, "FOOD").await.unwrap_err(), AppError::Validation(_)));
+    // архив родителя при активном потомке запрещён — с причиной на языке запроса (техдолг #9)
+    let en = kernel::i18n::scope(kernel::i18n::Lang::En, async { svc.archive(p, "FOOD").await.unwrap_err() }).await;
+    assert!(matches!(&en, AppError::Invalid(_)));
+    assert_eq!(en.to_string(), "Category “Пример” has subcategories — archive them first");
     svc.archive(p, "CAFE").await.unwrap();
     svc.archive(p, "FOOD").await.unwrap();
+    // вернуть подкатегорию можно только после родителя
+    let th = kernel::i18n::scope(kernel::i18n::Lang::Th, async { svc.restore(p, "CAFE").await.unwrap_err().to_string() }).await;
+    assert_eq!(th, "หากต้องการกู้คืน “Пример” ให้กู้คืน “Пример” ก่อน");
+    svc.restore(p, "FOOD").await.unwrap();
+    svc.restore(p, "CAFE").await.unwrap();
 }
 
 #[tokio::test]
