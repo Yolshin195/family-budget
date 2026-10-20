@@ -282,9 +282,9 @@ impl Default for FakeDirs {
                     account_code: Some("CARD".into()),
                     kind: "SHOP".into(),
                     location: Some("Сукхумвит 24".into()),
-                    archived: false,
+                    ..Default::default()
                 },
-                Place { code: "OLD".into(), name: "Old market".into(), aliases: vec![], category_code: None, account_code: None, kind: "MARKET".into(), location: None, archived: true },
+                Place { code: "OLD".into(), name: "Old market".into(), kind: "MARKET".into(), archived: true, ..Default::default() },
             ]),
             people: Mutex::new(vec![
                 Person { code: "PINPAN".into(), name: "Pinpan".into(), aliases: vec!["ปิ่นปั่น".into()], user_id: None, former_member: false, archived: false },
@@ -1358,6 +1358,7 @@ async fn places_directory_tools() {
         account: Some("Наличные".into()),
         kind: Some("cafe".into()),
         location: Some("Он Нут".into()),
+        parent: None,
     };
     assert!(e.svc.add_place(&c, add()).await.unwrap_err().0.contains("places:write"));
     e.grant(&["read", "directories"]).await;
@@ -1375,6 +1376,12 @@ async fn places_directory_tools() {
     let p = e.dirs.places.lock().unwrap().iter().find(|p| p.code == "CAFE_AMAZON").cloned().unwrap();
     assert_eq!((p.aliases.len(), p.category_code), (0, None));
     assert!(e.svc.update_place(&c, UpdatePlaceArgs { code: "CAFE_AMAZON".into(), ..Default::default() }).await.unwrap_err().0.contains("nothing to change"));
+    // Дерево: конкретный магазин сети — по названию или коду сети; "" делает место верхнего уровня.
+    let shop = AddPlaceArgs { code: "SEVEN_ASOK".into(), name: "7-Eleven".into(), parent: Some("7-11".into()), location: Some("Asok".into()), ..Default::default() };
+    let out = e.svc.add_place(&c, shop).await.unwrap();
+    assert_eq!(out.data["place"]["parent"], "SEVEN_ELEVEN");
+    e.svc.update_place(&c, UpdatePlaceArgs { code: "SEVEN_ASOK".into(), parent: Some("".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(e.dirs.places.lock().unwrap().iter().find(|p| p.code == "SEVEN_ASOK").unwrap().parent_code, None);
 }
 
 // ---------------------------------------------------------------- люди и «Для кого» (шаг 6)

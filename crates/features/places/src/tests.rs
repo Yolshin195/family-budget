@@ -84,16 +84,17 @@ on_each_repo! {
                 default_account_code: Some("CASH".into()),
                 place_kind: "shop".into(),
                 location: Some(" Сукхумвит 24 ".into()),
+                parent_code: None,
             },
         };
         let created = svc.create(p, dto).await.unwrap();
         assert_eq!((created.code.as_str(), created.name.as_str(), created.place_kind.as_str()), ("SEVEN_ELEVEN", "7-Eleven", "SHOP"));
         assert_eq!(created.aliases, vec!["7-11", "เซเว่น"], "без пустых, повторов и самого названия");
         assert_eq!((created.default_category_code.as_deref(), created.default_account_code.as_deref()), (Some("FOOD"), Some("CASH")));
-        assert_eq!(created.title(), "7-Eleven · Сукхумвит 24");
+        assert_eq!(created.title, "7-Eleven · Сукхумвит 24");
         let got = svc.get(p, "seven_eleven").await.unwrap();
         assert_eq!((got.id, got.aliases.clone()), (created.id, created.aliases.clone()));
-        assert!(kernel::search::fold(&got.search()).contains("เซเว่น"));
+        assert!(kernel::search::fold(&got.search).contains("เซเว่น"));
     }
 }
 
@@ -142,6 +143,62 @@ on_each_repo! {
         assert!(matches!(svc.get(other, "MAKRO").await.unwrap_err(), AppError::NotFound(_)));
         assert_eq!(svc.purge_project(p).await.unwrap(), 2);
         assert!(svc.all(p, true).await.unwrap().is_empty());
+    }
+}
+
+fn child(code: &str, name: &str, parent: &str) -> CreatePlaceDto {
+    CreatePlaceDto { code: code.into(), data: PlaceFields { parent_code: Some(parent.into()), ..fields(name) } }
+}
+
+on_each_repo! {
+    /// Сеть → магазин: магазин идёт сразу за сетью, берёт у неё категорию и счёт, если своих нет;
+    /// полное название без повтора имени сети; варианты написания сети находят и магазин.
+    async fn tree_inherits_from_chain(svc) {
+        let p = Uuid::new_v4();
+        let chain = PlaceFields { aliases: vec!["7-11".into()], default_category_code: Some("FOOD".into()), default_account_code: Some("CARD".into()), ..fields("7-Eleven") };
+        svc.create(p, CreatePlaceDto { code: "SEVEN".into(), data: chain }).await.unwrap();
+        svc.create(p, place("AMAZON", "Café Amazon")).await.unwrap();
+        let asok = CreatePlaceDto { code: "SEVEN_ASOK".into(), data: PlaceFields { parent_code: Some("seven".into()), location: Some("Asok".into()), ..fields("7-Eleven") } };
+        let shop = svc.create(p, asok).await.unwrap();
+        assert_eq!((shop.parent_code.as_deref(), shop.depth, shop.title.as_str()), (Some("SEVEN"), 1, "7-Eleven · Asok"));
+        assert_eq!((shop.default_category_code.as_deref(), shop.effective_category_code.as_deref(), shop.effective_account_code.as_deref()), (None, Some("FOOD"), Some("CARD")));
+        assert!(kernel::search::fold(&shop.search).contains("7-11"), "{}", shop.search);
+        let own = CreatePlaceDto { code: "SEVEN_MALL".into(), data: PlaceFields { default_account_code: Some("CASH".into()), ..child("SEVEN_MALL", "Terminal 21", "SEVEN").data } };
+        let mall = svc.create(p, own).await.unwrap();
+        assert_eq!((mall.title.as_str(), mall.effective_account_code.as_deref()), ("7-Eleven › Terminal 21", Some("CASH")), "своё значение важнее сети");
+        let codes: Vec<String> = svc.all(p, false).await.unwrap().into_iter().map(|x| x.code).collect();
+        assert_eq!(codes, vec!["SEVEN", "SEVEN_ASOK", "SEVEN_MALL", "AMAZON"], "магазины — сразу за сетью, соседи по названию");
+        assert_eq!(svc.active(p, "seven_asok").await.unwrap().unwrap().effective_category_code.as_deref(), Some("FOOD"));
+    }
+}
+
+on_each_repo! {
+    /// Родитель существует и активен, нет цикла, глубина ≤ 3; сеть с активными магазинами не архивируется,
+    /// магазин в архивной сети не возвращается.
+    async fn tree_rules(svc) {
+        let p = Uuid::new_v4();
+        svc.create(p, place("A", "A")).await.unwrap();
+        svc.create(p, child("B", "B", "A")).await.unwrap();
+        svc.create(p, child("C", "C", "B")).await.unwrap();
+        let field = |e: AppError| matches!(e, AppError::Invalid(ref x) if x.field == "parent_code");
+        assert!(field(svc.create(p, child("D", "D", "C")).await.unwrap_err()), "четвёртый уровень");
+        assert!(field(svc.create(p, child("X", "X", "NOPE")).await.unwrap_err()));
+        assert!(field(svc.update(p, "A", PlaceFields { parent_code: Some("C".into()), ..fields("A") }).await.unwrap_err()), "цикл");
+        assert!(field(svc.update(p, "A", PlaceFields { parent_code: Some("A".into()), ..fields("A") }).await.unwrap_err()), "сам в себя");
+        svc.create(p, place("Z", "Z")).await.unwrap();
+        svc.update(p, "B", PlaceFields { parent_code: Some("Z".into()), ..fields("B") }).await.unwrap();
+        assert_eq!(svc.get(p, "C").await.unwrap().title, "Z › B › C", "перенос вместе с магазинами");
+        svc.create(p, place("ROOT", "Root")).await.unwrap();
+        assert!(field(svc.update(p, "Z", PlaceFields { parent_code: Some("ROOT".into()), ..fields("Z") }).await.unwrap_err()), "с поддеревом глубже 3");
+        let toast = |e: AppError| matches!(e, AppError::Invalid(ref x) if x.field.is_empty());
+        assert!(toast(svc.archive(p, "Z").await.unwrap_err()), "в Z есть активный B");
+        svc.archive(p, "C").await.unwrap();
+        svc.archive(p, "B").await.unwrap();
+        svc.archive(p, "Z").await.unwrap();
+        assert!(toast(svc.restore(p, "B").await.unwrap_err()), "сначала сеть");
+        assert!(field(svc.create(p, child("Y", "Y", "Z")).await.unwrap_err()), "в архивную сеть нельзя");
+        svc.restore(p, "Z").await.unwrap();
+        svc.restore(p, "B").await.unwrap();
     }
 }
 

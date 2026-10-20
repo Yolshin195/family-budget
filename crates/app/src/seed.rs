@@ -333,7 +333,7 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
     account(s, p, me, "TINKOFF_RUB", "CARD", "RUB", "120000", Some(me), ru, ("Тинькофф рубли", "Tinkoff RUB", "Tinkoff รูเบิล")).await?;
     // Места (шаг 5): названия — как на вывеске, не переводятся; варианты написания — для поиска на любом языке.
     for (code, name, aliases, kind, category, account, location) in [
-        ("SEVEN_ELEVEN", "7-Eleven", &["7-11", "เซเว่น อีเลฟเว่น", "Севен"][..], "SHOP", "FOOD_GROCERIES", "CARD_KBANK", Some("Sukhumvit 24")),
+        ("SEVEN_ELEVEN", "7-Eleven", &["7-11", "เซเว่น อีเลฟเว่น", "Севен"][..], "SHOP", "FOOD_GROCERIES", "CARD_KBANK", None),
         ("CAFE_AMAZON", "Café Amazon", &["Кафе Амазон", "คาเฟ่ อเมซอน"][..], "CAFE", "FOOD_CAFE", "CASH", Some("On Nut")),
         ("TOPS", "Tops", &["ท็อปส์", "Топс"][..], "SHOP", "FOOD_GROCERIES", "CARD_SCB", None),
         ("BIG_C", "Big C", &["บิ๊กซี", "Биг Си"][..], "SHOP", "FOOD_GROCERIES", "CARD_SCB", None),
@@ -342,11 +342,23 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
     ] {
         let data = places::dto::PlaceFields {
             name: name.into(),
+            parent_code: None,
             aliases: aliases.iter().map(|a| (*a).into()).collect(),
             default_category_code: Some(category.into()),
             default_account_code: Some(account.into()),
             place_kind: kind.into(),
             location: location.map(Into::into),
+        };
+        s.places.create(p, places::dto::CreatePlaceDto { code: code.into(), data }).await?;
+    }
+    // Дерево мест: конкретные магазины сети 7-Eleven берут у неё категорию и счёт.
+    for (code, location) in [("SEVEN_ELEVEN_SUKHUMVIT_24", "Sukhumvit 24"), ("SEVEN_ELEVEN_ON_NUT", "On Nut")] {
+        let data = places::dto::PlaceFields {
+            name: "7-Eleven".into(),
+            parent_code: Some("SEVEN_ELEVEN".into()),
+            place_kind: "SHOP".into(),
+            location: Some(location.into()),
+            ..Default::default()
         };
         s.places.create(p, places::dto::CreatePlaceDto { code: code.into(), data }).await?;
     }
@@ -410,7 +422,7 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
         tx(s, p, Tx { date: day(back, 4), account: "CASH", kind: "EXPENSE", desc: Some(("Grab до офиса", ru)), tr: (None, None, None), lines: vec![("TRANSPORT_TAXI", "210", None)], plan: None, place: Some("GRAB"), by: me }).await?;
         // Чек с ценами: количество × цена − скидка; бананы — на вес.
         // Названия — как на чеке (по-английски), их не переводят.
-        receipt(s, p, day(back, 12), "SEVEN_ELEVEN", ("Завтрак в 7-Eleven", ru), (None, Some("Breakfast at 7-Eleven"), Some("อาหารเช้าที่เซเว่น")),
+        receipt(s, p, day(back, 12), "SEVEN_ELEVEN_SUKHUMVIT_24", ("Завтрак в 7-Eleven", ru), (None, Some("Breakfast at 7-Eleven"), Some("อาหารเช้าที่เซเว่น")),
             &[("FOOD_GROCERIES", "Water 1.5 L", "1", "pcs", "14", "0"), ("FOOD_CAFE", "Latte", "1", "pcs", "45", "0"), ("FOOD_CAFE", "Croissant", "2", "pcs", "25", "3"), ("FOOD_GROCERIES", "Bananas", "0.45", "kg", "60", "0")], me).await?;
         // Обмен через приложение: списано 20 050 ₽ (из них 50 ₽ комиссия), зачислено по курсу хуже справочного.
         let got = if back == 1 { "7640" } else { "7280" };

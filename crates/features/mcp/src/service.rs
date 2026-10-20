@@ -1146,7 +1146,11 @@ impl McpService {
         let list: Vec<&Place> = all
             .iter()
             .filter(|p| with_archived || !p.archived)
-            .filter(|p| needle.as_ref().is_none_or(|n| kernel::search::fold(&format!("{}{}{}", p.names(), kernel::search::SEP, p.code)).contains(n.as_str())))
+            .filter(|p| {
+                // С родителями: «7-11» находит и сеть, и её магазины.
+                let text = if p.search.is_empty() { format!("{}{}{}", p.names(), kernel::search::SEP, p.code) } else { p.search.clone() };
+                needle.as_ref().is_none_or(|n| kernel::search::fold(&text).contains(n.as_str()))
+            })
             .collect();
         Ok(ToolOutput {
             summary: format!("{} places.", list.len()),
@@ -1165,6 +1169,10 @@ impl McpService {
         let place = Place {
             code,
             name: a.name.trim().to_string(),
+            parent_code: match clean(a.parent) {
+                Some(p) => Some(find_record("parent", &p, &all)?.code.clone()),
+                None => None,
+            },
             aliases: a.aliases.unwrap_or_default(),
             category_code: match clean(a.category) {
                 Some(c) => Some(self.any_category(caller, "category", &c).await?),
@@ -1176,7 +1184,7 @@ impl McpService {
             },
             kind: a.kind.as_deref().map(|k| parse_choice("kind", k, &PLACE_KINDS)).transpose()?.unwrap_or_else(|| "OTHER".into()),
             location: clean(a.location),
-            archived: false,
+            ..Default::default()
         };
         let p = self.deps.directories.create_place(caller.project_id, &place).await?;
         self.audit_write(caller, "add_place", &[("place", p.code.clone())]).await;
@@ -1185,13 +1193,19 @@ impl McpService {
 
     pub async fn update_place(&self, caller: &Caller, a: UpdatePlaceArgs) -> ToolResult {
         self.check(caller, Right::write("places"))?;
-        if a.name.is_none() && a.aliases.is_none() && a.category.is_none() && a.account.is_none() && a.kind.is_none() && a.location.is_none() {
+        if a.name.is_none() && a.parent.is_none() && a.aliases.is_none() && a.category.is_none() && a.account.is_none() && a.kind.is_none() && a.location.is_none() {
             return Err(nothing_to_change());
         }
         let all = self.deps.directories.places(caller.project_id).await?;
         let mut p = find_record("code", &a.code, &all)?.clone();
         if let Some(n) = a.name {
             p.name = n.trim().to_string();
+        }
+        if let Some(parent) = a.parent {
+            p.parent_code = match parent.trim() {
+                "" => None,
+                parent => Some(find_record("parent", parent, &all)?.code.clone()),
+            };
         }
         if let Some(list) = a.aliases {
             p.aliases = list;
@@ -1872,8 +1886,8 @@ fn place_info_json(p: &PlaceInfo) -> Value {
 
 fn place_json(p: &Place) -> Value {
     json!({
-        "code": p.code, "name": p.name, "location": p.location, "aliases": p.aliases, "kind": p.kind.to_lowercase(),
-        "category": p.category_code, "account": p.account_code, "archived": p.archived,
+        "code": p.code, "name": p.name, "title": p.title(), "parent": p.parent_code, "location": p.location, "aliases": p.aliases,
+        "kind": p.kind.to_lowercase(), "category": p.category_code, "account": p.account_code, "archived": p.archived,
     })
 }
 

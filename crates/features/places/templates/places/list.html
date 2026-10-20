@@ -18,12 +18,15 @@
     <tbody>
     {% for p in rows %}
       <tr{% if p.archived %} class="row-muted"{% endif %}>
-        <td><span class="font-medium">{{ p.title() }}</span>{% if p.archived %} <span class="badge">{{ page.t("archived") }}</span>{% endif %}
+        <td class="indent-{{ p.depth }}">{% if p.depth > 0 %}<span class="tree-branch inline-block mr-1" aria-hidden="true"></span>{% endif %}<span class="{% if p.depth == 0 %}font-medium{% endif %}">{% if p.depth > 0 %}{{ p.name }}{% if let Some(l) = p.location %} · {{ l }}{% endif %}{% else %}{{ p.title }}{% endif %}</span>{% if p.archived %} <span class="badge">{{ page.t("archived") }}</span>{% endif %}
           {% if !p.aliases.is_empty() %}<span class="block text-xs text-subtle">{{ p.aliases.join(", ") }}</span>{% endif %}</td>
         <td class="hidden sm:table-cell">{{ page.t(&format!("kind.{}", p.place_kind)) }}</td>
-        <td>{{ self.fills(p) }}</td>
+        <td>{{ self.fills(p) }}{% if self.inherited(p) %} <span class="text-xs text-subtle">· {{ page.t("inherited") }}</span>{% endif %}</td>
         <td class="hidden sm:table-cell font-mono text-xs text-subtle">{{ p.code }}</td>
-        <td class="text-right">{% if page.can_write() %}<a class="btn-ghost btn-sm" href="/places/{{ kernel::web::url_segment(p.code) }}/edit" aria-label="{{ page.t("edit") }} {{ p.name }}">{{ page.t("edit") }}</a>{% endif %}</td>
+        <td class="text-right whitespace-nowrap">{% if page.can_write() %}
+          {% if !p.archived && p.depth + 1 < max_depth %}<a class="btn-ghost btn-sm" href="/places/new?parent={{ kernel::web::url_encode(p.code) }}" aria-label="{{ page.t("add_child") }}: {{ p.title }}">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg><span class="hide-sm">{{ page.t("add_child") }}</span></a>{% endif %}
+          <a class="btn-ghost btn-sm" href="/places/{{ kernel::web::url_segment(p.code) }}/edit" aria-label="{{ page.t("edit") }} {{ p.title }}">{{ page.t("edit") }}</a>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>

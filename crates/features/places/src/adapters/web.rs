@@ -3,14 +3,14 @@
 use std::sync::Arc;
 
 use askama::Template;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use kernel::error::AppError;
 use kernel::web::{Choice, Flash, PageCtx, PageError, PageResult, render, see_other, see_other_flash, url_segment};
 use serde::Deserialize;
 
-use crate::domain::{PlaceKind, split_aliases};
+use crate::domain::{MAX_DEPTH, PlaceKind, split_aliases};
 use crate::dto::{CreatePlaceDto, PlaceDto, PlaceFields};
 use crate::service::PlaceService;
 
@@ -44,15 +44,21 @@ struct ListPage {
     rows: Vec<PlaceDto>,
     categories: Vec<Choice>,
     accounts: Vec<Choice>,
+    max_depth: usize,
 }
 
 impl ListPage {
-    /// «Продукты · Наличные» — что место подставит; код, если записи уже нет среди активных.
+    /// «Продукты · Наличные» — что место подставит (своё или от сети); код, если записи уже нет среди активных.
     fn fills(&self, p: &PlaceDto) -> String {
         let label = |list: &[Choice], code: &Option<String>| {
             code.as_ref().map(|c| list.iter().find(|x| x.code == *c).map(|x| x.label.clone()).unwrap_or_else(|| c.clone()))
         };
-        [label(&self.categories, &p.default_category_code), label(&self.accounts, &p.default_account_code)].into_iter().flatten().collect::<Vec<_>>().join(" · ")
+        [label(&self.categories, &p.effective_category_code), label(&self.accounts, &p.effective_account_code)].into_iter().flatten().collect::<Vec<_>>().join(" · ")
+    }
+
+    /// Подставляемое взято у сети, а не задано у самого места.
+    fn inherited(&self, p: &PlaceDto) -> bool {
+        (p.default_category_code.is_none() && p.effective_category_code.is_some()) || (p.default_account_code.is_none() && p.effective_account_code.is_some())
     }
 }
 
@@ -63,9 +69,21 @@ struct FormPage {
     is_new: bool,
     f: PlaceForm,
     kinds: &'static [&'static str],
+    /// Куда можно вложить место: активные места, кроме него самого и его потомков.
+    parents: Vec<PlaceDto>,
     categories: Vec<Choice>,
     accounts: Vec<Choice>,
     error: Option<String>,
+}
+
+impl FormPage {
+    /// Пустая категория или счёт: «как у сети», если место в неё входит.
+    fn none_label(&self) -> String {
+        match self.parents.iter().find(|p| p.code == self.f.parent_code) {
+            Some(p) => self.page.t("inherit").replace("{name}", &p.title),
+            None => self.page.t("none"),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -73,6 +91,7 @@ struct FormPage {
 pub struct PlaceForm {
     code: String,
     name: String,
+    parent_code: String,
     /// Через запятую или с новой строки.
     aliases: String,
     default_category_code: String,
@@ -90,6 +109,7 @@ impl PlaceForm {
         Self {
             code: p.code,
             name: p.name,
+            parent_code: p.parent_code.unwrap_or_default(),
             aliases: p.aliases.join(", "),
             default_category_code: p.default_category_code.unwrap_or_default(),
             default_account_code: p.default_account_code.unwrap_or_default(),
@@ -101,6 +121,7 @@ impl PlaceForm {
     fn fields(&self) -> PlaceFields {
         PlaceFields {
             name: self.name.clone(),
+            parent_code: opt(&self.parent_code),
             aliases: split_aliases(&self.aliases),
             default_category_code: opt(&self.default_category_code),
             default_account_code: opt(&self.default_account_code),
@@ -113,17 +134,47 @@ impl PlaceForm {
 async fn form_page(svc: &PlaceService, page: PageCtx, is_new: bool, f: PlaceForm, error: Option<String>) -> PageResult {
     let (categories, accounts) = svc.choices(page.session.project_id, page.lang).await?;
     let categories = categories.into_iter().filter(|c| c.tag == "EXPENSE" || c.code == f.default_category_code).collect();
-    render(&FormPage { page: form_ctx(page), is_new, f, kinds: PlaceKind::VALUES, categories, accounts, error })
+    let parents = parent_choices(svc.all(page.session.project_id, false).await?, &f.code);
+    render(&FormPage { page: form_ctx(page), is_new, f, kinds: PlaceKind::VALUES, parents, categories, accounts, error })
+}
+
+/// Активные места, в которые можно вложить место `code`: не оно само, не его потомки и не нижний уровень дерева.
+fn parent_choices(all: Vec<PlaceDto>, code: &str) -> Vec<PlaceDto> {
+    let code = code.trim().to_uppercase();
+    let inside = |p: &PlaceDto| {
+        let mut cur = Some(p);
+        for _ in 0..=MAX_DEPTH {
+            match cur {
+                Some(x) if x.code == code => return true,
+                Some(x) => cur = x.parent_code.as_ref().and_then(|c| all.iter().find(|y| y.code == *c)),
+                None => return false,
+            }
+        }
+        false
+    };
+    all.iter().filter(|p| p.depth + 1 < MAX_DEPTH && (code.is_empty() || !inside(p))).cloned().collect()
 }
 
 async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
     let rows = svc.all(page.session.project_id, true).await?;
     let (categories, accounts) = svc.choices(page.session.project_id, page.lang).await?;
-    render(&ListPage { page: ctx(page), rows, categories, accounts })
+    render(&ListPage { page: ctx(page), rows, categories, accounts, max_depth: MAX_DEPTH })
 }
 
-async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
-    let f = PlaceForm { place_kind: PlaceKind::default().as_str().into(), ..Default::default() };
+#[derive(Debug, Default, Deserialize)]
+pub struct NewQuery {
+    /// «+ магазин» в списке: новое место внутри этого.
+    parent: Option<String>,
+}
+
+/// Новое место; внутри сети — с её названием и типом: остаётся указать адрес и код.
+async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Query<NewQuery>) -> PageResult {
+    let mut f = PlaceForm { place_kind: PlaceKind::default().as_str().into(), ..Default::default() };
+    if let Some(code) = q.parent.as_deref().filter(|c| !c.trim().is_empty())
+        && let Some(parent) = svc.active(page.session.project_id, code).await?
+    {
+        f = PlaceForm { name: parent.name, parent_code: parent.code, place_kind: parent.place_kind, ..f };
+    }
     form_page(&svc, page, true, f, None).await
 }
 
@@ -149,14 +200,26 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
     }
 }
 
-/// Архив без «Вы уверены?»: тост с «Отменить».
+/// Архив без «Вы уверены?»: тост с «Отменить». Сеть с активными магазинами — на страницу правки с причиной
+/// (не форма в ответ: она открылась бы на адресе /archive, и «Сохранить» снова архивировал бы).
 async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
-    svc.archive(page.session.project_id, &code).await?;
-    let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("{}/{}/restore", crate::MOUNT, url_segment(&code)));
-    Ok(see_other_flash(&page.config, crate::MOUNT, flash))
+    match svc.archive(page.session.project_id, &code).await {
+        Ok(()) => {
+            let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("{}/{}/restore", crate::MOUNT, url_segment(&code)));
+            Ok(see_other_flash(&page.config, crate::MOUNT, flash))
+        }
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => {
+            let edit = format!("{}/{}/edit", crate::MOUNT, url_segment(&code));
+            Ok(see_other_flash(&page.config, &edit, Flash::error(e.to_string())))
+        }
+        Err(e) => Err(PageError(e)),
+    }
 }
 
 async fn restore(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
-    svc.restore(page.session.project_id, &code).await?;
-    Ok(see_other_flash(&page.config, crate::MOUNT, Flash::ok(format!("{} · {code}", page.t("toast.restored")))))
+    match svc.restore(page.session.project_id, &code).await {
+        Ok(()) => Ok(see_other_flash(&page.config, crate::MOUNT, Flash::ok(format!("{} · {code}", page.t("toast.restored"))))),
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => Ok(see_other_flash(&page.config, crate::MOUNT, Flash::error(e.to_string()))),
+        Err(e) => Err(PageError(e)),
+    }
 }

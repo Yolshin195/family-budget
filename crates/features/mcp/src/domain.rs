@@ -571,11 +571,13 @@ pub struct Plan {
     pub draft: PlanDraft,
 }
 
-/// Место (справочник `places`): название не переводится — имя собственное.
-#[derive(Debug, Clone, PartialEq)]
+/// Место (справочник `places`): название не переводится — имя собственное. Места — дерево: сеть → магазин.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Place {
     pub code: String,
     pub name: String,
+    /// Сеть или торговый центр, в который входит место.
+    pub parent_code: Option<String>,
     pub aliases: Vec<String>,
     pub category_code: Option<String>,
     pub account_code: Option<String>,
@@ -583,11 +585,18 @@ pub struct Place {
     pub kind: String,
     pub location: Option<String>,
     pub archived: bool,
+    /// Полное название из справочника, с сетью: «7-Eleven › Asok · Сукхумвит 24». Пусто — запись ещё не сохранена.
+    pub full_title: String,
+    /// Названия и варианты написания места и его родителей — для поиска в `list_places`.
+    pub search: String,
 }
 
 impl Place {
-    /// «7-Eleven · Сукхумвит 24»
+    /// Полное название; у несохранённой записи — «7-Eleven · Сукхумвит 24».
     pub fn title(&self) -> String {
+        if !self.full_title.is_empty() {
+            return self.full_title.clone();
+        }
         match &self.location {
             Some(l) => format!("{} · {l}", self.name),
             None => self.name.clone(),

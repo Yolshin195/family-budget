@@ -30,7 +30,13 @@ Click "Add". In the form:
 
 ![7-Eleven: other spellings, the Groceries category and the KBank card](place-form.en.webp)
 
-## 3. Spending at a place in two taps
+## 3. A chain and its shops
+
+If you go to different shops of one chain, add the chain once and the shops inside it. Click "+ branch" on the chain's row: the form opens with the name, type and "Part of" already filled in — just enter the "Branch or address" and a code such as SEVEN_ELEVEN_ASOK. You can leave the shop's category and account empty: they show "— same as “7-Eleven” —", and the shop takes them from the chain. Pick its own and they win.
+
+In the list, shops sit right under their chain, indented, and "Fills in" says "· from the chain" when a value is inherited. Quick entry search finds a chain's shops by the chain's spellings too: "7-11" shows both the chain and "7-Eleven · Asok". You can nest up to three levels — say, chain → mall → shop. A chain with active shops can't go to the archive: archive the shops first, or move them with "Part of".
+
+## 4. Spending at a place in two taps
 
 In quick entry, start typing in the search box — it finds both categories and places: first the "Categories" group, then "Places". Under each place it says what it fills in. Search ignores case and accents: "cafe" also finds Café Amazon.
 
@@ -40,11 +46,11 @@ Pick a place and a tag with a cross appears above the frequent categories, while
 
 ![Café Amazon picked: the category and account are filled in](quick-place.en.webp)
 
-## 4. The place in full details and in the list
+## 5. The place in full details and in the list
 
 The full transaction form has a "Place" field. Pick one and empty item categories are filled in from it (without JavaScript — when you save), and for a new transaction the account too. A place never changes the account of a transaction that's already saved. "Transactions" shows the place on every expense, and when there's no description it takes the title's spot.
 
-## 5. Edit, archive, record through Claude
+## 6. Edit, archive, record through Claude
 
 "Edit" opens the same form. Send a place you no longer need to the "Archive": it disappears from search, and past transactions keep it. Changed your mind — click "Undo" in the pop-up message.
 

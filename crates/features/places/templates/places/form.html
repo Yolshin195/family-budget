@@ -3,7 +3,7 @@
 {% block title %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit_title") }} {{ f.name }}{% endif %}{% endblock %}
 {% block heading %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("edit_title") }} <span class="font-mono">{{ f.code }}</span>{% endif %}{% endblock %}
 {% block content %}
-{% call m::form_alert(error, "code,name,aliases,location,place_kind,default_category_code,default_account_code") %}{% endcall %}
+{% call m::form_alert(error, "code,name,parent_code,aliases,location,place_kind,default_category_code,default_account_code") %}{% endcall %}
 <form method="post" class="card card-pad form max-w-2xl" data-form>
   <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
   <div class="grid gap-4 sm:grid-cols-2">
@@ -17,6 +17,14 @@
       <input class="input font-mono uppercase" id="code" name="code" value="{{ f.code }}"{% if !is_new %} readonly{% endif %} required maxlength="40" pattern="[A-Za-z0-9_]+" title="{{ page.t("code_hint") }}" placeholder="SEVEN_ELEVEN" aria-describedby="code-hint code-err"{% if kernel::web::field_error(error, "code").is_some() %} aria-invalid="true"{% endif %}>
       <p class="hint" id="code-hint">{{ page.t("code_hint") }}</p>{% call m::err(error, "code") %}{% endcall %}
     </div>
+  </div>
+  <div class="field">
+    <label class="label" for="parent_code">{{ page.t("parent") }}</label>
+    <select class="input" name="parent_code" id="parent_code" aria-describedby="parent-hint parent_code-err"{% if kernel::web::field_error(error, "parent_code").is_some() %} aria-invalid="true"{% endif %}>
+      <option value="">{{ page.t("root") }}</option>
+      {% for p in parents %}<option value="{{ p.code }}" {% if f.parent_code == p.code %}selected{% endif %}>{{ p.indent() }}{{ p.title }}</option>{% endfor %}
+    </select>
+    <p class="hint" id="parent-hint">{{ page.t("parent_hint") }}</p>{% call m::err(error, "parent_code") %}{% endcall %}
   </div>
   <div class="grid gap-4 sm:grid-cols-[1fr_12rem]">
     <div class="field">
@@ -37,12 +45,12 @@
   <div class="grid gap-4 sm:grid-cols-2">
     <div class="field"><label class="label" for="default_category_code">{{ page.t("default_category") }}</label>
       <select class="input" name="default_category_code" id="default_category_code" aria-describedby="defaults-hint default_category_code-err"{% if kernel::web::field_error(error, "default_category_code").is_some() %} aria-invalid="true"{% endif %}>
-        <option value="">{{ page.t("none") }}</option>
+        <option value="">{{ self.none_label() }}</option>
         {% for c in categories %}<option value="{{ c.code }}" {% if f.default_category_code == c.code %}selected{% endif %}>{{ c.indent() }}{{ c.label }}</option>{% endfor %}
       </select>{% call m::err(error, "default_category_code") %}{% endcall %}</div>
     <div class="field"><label class="label" for="default_account_code">{{ page.t("default_account") }}</label>
       <select class="input" name="default_account_code" id="default_account_code" aria-describedby="defaults-hint default_account_code-err"{% if kernel::web::field_error(error, "default_account_code").is_some() %} aria-invalid="true"{% endif %}>
-        <option value="">{{ page.t("none") }}</option>
+        <option value="">{{ self.none_label() }}</option>
         {% for a in accounts %}<option value="{{ a.code }}" {% if f.default_account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}
       </select>{% call m::err(error, "default_account_code") %}{% endcall %}</div>
   </div>
