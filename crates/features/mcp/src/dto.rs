@@ -386,6 +386,9 @@ pub struct AddPlaceArgs {
     pub code: String,
     /// Name as on the sign, not translated, e.g. "7-Eleven"
     pub name: String,
+    /// Chain or mall this place belongs to (place code or name), e.g. "SEVEN_ELEVEN" for one specific 7-Eleven shop;
+    /// a shop without its own category or account takes the chain's
+    pub parent: Option<String>,
     /// Other spellings to find it by, any language, e.g. ["7-11", "เซเว่น"]
     pub aliases: Option<Vec<String>>,
     /// Default category code or name for its items (usually an expense category)
@@ -404,6 +407,8 @@ pub struct UpdatePlaceArgs {
     pub code: String,
     /// New name
     pub name: Option<String>,
+    /// Move into this chain or mall (place code or name); "" makes it a top-level place
+    pub parent: Option<String>,
     /// Replace the other spellings with this list ([] removes them all)
     pub aliases: Option<Vec<String>>,
     /// New default category code or name; "" removes it

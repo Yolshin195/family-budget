@@ -308,18 +308,22 @@ fn place_from(d: ::places::dto::PlaceDto) -> Place {
     Place {
         code: d.code,
         name: d.name,
+        parent_code: d.parent_code,
         aliases: d.aliases,
         category_code: d.default_category_code,
         account_code: d.default_account_code,
         kind: d.place_kind,
         location: d.location,
         archived: d.archived,
+        full_title: d.title,
+        search: d.search,
     }
 }
 
 fn place_fields(p: &Place) -> ::places::dto::PlaceFields {
     ::places::dto::PlaceFields {
         name: p.name.clone(),
+        parent_code: p.parent_code.clone(),
         aliases: p.aliases.clone(),
         default_category_code: p.category_code.clone(),
         default_account_code: p.account_code.clone(),

@@ -22,6 +22,7 @@ Call get_context first: it returns the project, base currency, accounts with bal
 frequent categories and places, and your permissions. Use exact codes from it (or names — they are matched in any language). \
 A place (shop, café, market) fills in its category and account: pass `place` when the receipt or the user names one; \
 a place is never created from a receipt alone — only with add_place when the user agrees. Place names are not translated. \
+Places form a tree: a chain (7-Eleven) holds its specific shops; a shop without its own category or account takes the chain's. \
 By default a purchase is for everyone; pass `for` (a person from get_context → people, my_person_code is the user) only when \
 the user says who it is for — for the whole transaction or per item. A person is added only with add_person when the user agrees. \
 Transaction amounts are in the account currency; budget figures are in the base currency. \
@@ -244,7 +245,7 @@ impl BudgetServer {
     }
 
     #[tool(
-        description = "Places (shops, cafés, markets) by name: code, name, branch or address, other spellings, kind, and the category and account each fills in. Pass text to search names and spellings in any language.",
+        description = "Places (shops, cafés, markets) as a tree — a chain, then its shops: code, full title, parent chain, name, branch or address, other spellings, kind, and the category and account each fills in. Pass text to search names and spellings in any language (a chain's spellings find its shops too).",
         annotations(title = "Places", read_only_hint = true, open_world_hint = false)
     )]
     async fn list_places(&self, Parameters(a): Parameters<ListPlacesArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
@@ -253,7 +254,7 @@ impl BudgetServer {
     }
 
     #[tool(
-        description = "Add a place (shop, café, market) only when the user asks or confirms — never from a receipt alone: code, name as on the sign (not translated), other spellings incl. Thai, default category and account it fills in, kind, branch or address.",
+        description = "Add a place (shop, café, market) only when the user asks or confirms — never from a receipt alone: code, name as on the sign (not translated), parent chain or mall (for one specific shop of a chain), other spellings incl. Thai, default category and account it fills in (a shop inherits the chain's when omitted), kind, branch or address.",
         annotations(title = "Add place", read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
     )]
     async fn add_place(&self, Parameters(a): Parameters<AddPlaceArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
@@ -262,7 +263,7 @@ impl BudgetServer {
     }
 
     #[tool(
-        description = "Change a place by code: name, other spellings (the list is replaced), default category and account (\"\" removes), kind, branch or address. Only the passed fields change. Confirm with the user first.",
+        description = "Change a place by code: name, parent chain (\"\" makes it top-level), other spellings (the list is replaced), default category and account (\"\" removes), kind, branch or address. Only the passed fields change. Confirm with the user first.",
         annotations(title = "Edit place", read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
     )]
     async fn update_place(&self, Parameters(a): Parameters<UpdatePlaceArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {

@@ -9,7 +9,7 @@ use uuid::Uuid;
 use crate::domain::{Place, PlaceKind};
 use crate::ports::PlaceRepository;
 
-const COLUMNS: &str = "id, project_id, code, name, aliases, default_category_code, default_account_code, place_kind, location, archived";
+const COLUMNS: &str = "id, project_id, code, name, parent_code, aliases, default_category_code, default_account_code, place_kind, location, archived";
 
 pub struct PostgresPlaceRepository {
     pool: PgPool,
@@ -27,6 +27,7 @@ struct Row {
     project_id: Uuid,
     code: String,
     name: String,
+    parent_code: Option<String>,
     aliases: Vec<String>,
     default_category_code: Option<String>,
     default_account_code: Option<String>,
@@ -46,6 +47,7 @@ impl TryFrom<Row> for Place {
             project_id: r.project_id,
             code: r.code,
             name: r.name,
+            parent_code: r.parent_code,
             aliases: r.aliases,
             default_category_code: r.default_category_code,
             default_account_code: r.default_account_code,
@@ -58,11 +60,12 @@ impl TryFrom<Row> for Place {
 #[async_trait]
 impl PlaceRepository for PostgresPlaceRepository {
     async fn insert(&self, item: &Place) -> AppResult<()> {
-        sqlx::query(&format!("INSERT INTO fb_places ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"))
+        sqlx::query(&format!("INSERT INTO fb_places ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"))
             .bind(item.id)
             .bind(item.project_id)
             .bind(&item.code)
             .bind(&item.name)
+            .bind(&item.parent_code)
             .bind(&item.aliases)
             .bind(&item.default_category_code)
             .bind(&item.default_account_code)
@@ -77,7 +80,7 @@ impl PlaceRepository for PostgresPlaceRepository {
     async fn update(&self, item: &Place) -> AppResult<()> {
         let result = sqlx::query(
             "UPDATE fb_places SET name = $3, aliases = $4, default_category_code = $5, default_account_code = $6, place_kind = $7, \
-             location = $8, archived = $9 WHERE project_id = $1 AND code = $2",
+             location = $8, archived = $9, parent_code = $10 WHERE project_id = $1 AND code = $2",
         )
         .bind(item.project_id)
         .bind(&item.code)
@@ -88,6 +91,7 @@ impl PlaceRepository for PostgresPlaceRepository {
         .bind(item.kind.as_str())
         .bind(&item.location)
         .bind(item.archived)
+        .bind(&item.parent_code)
         .execute(&self.pool)
         .await?;
         if result.rows_affected() == 0 {
@@ -102,22 +106,10 @@ impl PlaceRepository for PostgresPlaceRepository {
         row.map(Place::try_from).transpose()
     }
 
-    async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Place>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_places WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY lower(name), code LIMIT $3 OFFSET $4"
-        );
-        let rows: Vec<Row> =
-            sqlx::query_as(&sql).bind(project_id).bind(include_archived).bind(limit).bind(offset).fetch_all(&self.pool).await?;
+    async fn all(&self, project_id: Uuid) -> AppResult<Vec<Place>> {
+        let sql = format!("SELECT {COLUMNS} FROM fb_places WHERE project_id = $1");
+        let rows: Vec<Row> = sqlx::query_as(&sql).bind(project_id).fetch_all(&self.pool).await?;
         rows.into_iter().map(Place::try_from).collect()
-    }
-
-    async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64> {
-        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fb_places WHERE project_id = $1 AND ($2 OR NOT archived)")
-            .bind(project_id)
-            .bind(include_archived)
-            .fetch_one(&self.pool)
-            .await?;
-        Ok(n)
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {

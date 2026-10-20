@@ -15,9 +15,8 @@ pub trait PlaceRepository: Send + Sync {
     async fn insert(&self, item: &Place) -> AppResult<()>;
     async fn update(&self, item: &Place) -> AppResult<()>;
     async fn find_by_code(&self, project_id: Uuid, code: &str) -> AppResult<Option<Place>>;
-    /// Места проекта по названию (без учёта регистра), затем по коду.
-    async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Place>>;
-    async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64>;
+    /// Все места проекта, и архивные: дерево, названия и наследование считаются по всем (их немного).
+    async fn all(&self, project_id: Uuid) -> AppResult<Vec<Place>>;
     /// Удалить все записи проекта (удаление проекта или аккаунта).
     async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
 }

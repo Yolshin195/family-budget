@@ -175,12 +175,13 @@ impl ::transactions::PlacesLookup for PlacesLookupAdapter {
                 .all(project_id, true)
                 .await?
                 .into_iter()
+                // Магазин без своих категории и счёта подставляет значения сети.
                 .map(|p| ::transactions::PlaceInfo {
-                    title: p.title(),
-                    search: p.search(),
+                    title: p.title,
+                    search: p.search,
                     code: p.code,
-                    default_category_code: p.default_category_code,
-                    default_account_code: p.default_account_code,
+                    default_category_code: p.effective_category_code,
+                    default_account_code: p.effective_account_code,
                     archived: p.archived,
                 })
                 .collect());
