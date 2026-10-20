@@ -79,7 +79,8 @@ impl TransactionService {
         let truncated = items.len() > MAX_FEED;
         items.truncate(MAX_FEED);
         let totals = self.repo.category_totals(project_id, &filter).await?;
-        let statement = match &filter.account_code {
+        // С фильтром «Для кого» выписки нет: проводки на счёт не делятся по позициям, итоги — доля человека.
+        let statement = match filter.account_code.as_ref().filter(|_| filter.for_person.is_none()) {
             None => None,
             Some(acc) => {
                 let start = match filter.from.and_then(|d| d.pred_opt()) {
@@ -154,6 +155,10 @@ impl TransactionService {
     /// «Для кого по умолчанию» из запроса — человек из справочника (раздел 5.9). Возвращает людей проекта для
     /// проверки позиций; если получателей нет нигде, справочник не читается.
     async fn check_header_person(&self, project_id: Uuid, input: &TransactionInput, before: Option<&Transaction>) -> AppResult<Vec<PersonInfo>> {
+        // У перевода и начального остатка получателя нет: поле не проверяется, а отбрасывается (как место).
+        if !matches!(TxKind::parse(&input.tx_kind), Some(TxKind::Expense | TxKind::Income)) {
+            return Ok(Vec::new());
+        }
         let named = input.items.iter().any(|x| recipient_of(x.for_person_code.clone()).flatten().is_some());
         let header = recipient_of(input.for_person_code.clone()).flatten();
         let had = before.is_some_and(|b| b.items.iter().any(|x| x.for_person.is_some()));
@@ -163,7 +168,7 @@ impl TransactionService {
         let people = self.deps.people.all(project_id, Lang::default()).await?;
         if let Some(code) = header.map(|c| c.trim().to_uppercase()) {
             let kept = before.is_some_and(|b| b.items.iter().any(|x| x.for_person.as_deref() == Some(code.as_str())));
-            if !people.iter().any(|p| p.code == code && (!p.archived || kept)) {
+            if !kept && !people.iter().any(|p| p.code == code && !p.archived) {
                 return Err(Problem::new(codes::NOT_FOUND, "for_person_code", tr("err.person_not_found", &[("code", &code)])).into());
             }
         }
@@ -550,7 +555,7 @@ fn filter_of(query: ListQuery) -> AppResult<Filter> {
         created_by: query.created_by,
         untranslated: query.untranslated.as_deref().and_then(Lang::parse),
         place_code: query.place_code.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_uppercase),
-        for_person: recipient_of(query.for_person_code).map(|who| who.map(|c| c.to_uppercase())),
+        for_person: recipient_of(query.for_person_code.filter(|v| !v.trim().is_empty())).map(|who| who.map(|c| c.to_uppercase())),
     })
 }
 
@@ -560,7 +565,7 @@ pub(crate) fn check_people(people: &[PersonInfo], item: &Transaction, before: Op
     for (i, x) in item.items.iter().enumerate() {
         let Some(code) = x.for_person.as_deref() else { continue };
         let kept = before.is_some_and(|b| b.items.iter().any(|y| y.for_person.as_deref() == Some(code)));
-        if !people.iter().any(|p| p.code == code && (!p.archived || kept)) {
+        if !kept && !people.iter().any(|p| p.code == code && !p.archived) {
             return Err(Problem::new(codes::NOT_FOUND, &format!("items[{}].for_person_code", i + 1), tr("err.person_not_found", &[("code", &code)])).into());
         }
     }

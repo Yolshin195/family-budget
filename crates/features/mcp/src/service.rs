@@ -454,7 +454,12 @@ impl McpService {
             None => None,
         };
         let for_person = match a.for_whom.as_deref() {
-            Some(w) => Some(person_of(&self.deps.directories.people(caller.project_id).await?, "for", w, None)?),
+            // Фильтр находит и архивных: операции ушедшего участника остаются.
+            Some(w) => {
+                let people = self.deps.directories.people(caller.project_id).await?;
+                let all: Vec<String> = people.iter().map(|p| p.code.clone()).collect();
+                Some(person_of(&people, "for", w, Some(&all))?)
+            }
             None => None,
         };
         let filter = TxFilter { from: Some(from), to: Some(to), account_code, kind, place_code, for_person };
@@ -683,6 +688,9 @@ impl McpService {
 
     pub async fn add_transfer(&self, caller: &Caller, a: AddTransferArgs) -> ToolResult {
         self.check(caller, Right::write("transactions"))?;
+        if a.for_whom.is_some() {
+            return Err(ToolError("transfers have no recipient (for)".into()));
+        }
         let today = today();
         let date = parse_date("date", a.date.as_deref(), today)?;
         let q = self.quick(caller, date).await?;

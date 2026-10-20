@@ -181,6 +181,9 @@ pub struct AddTransferArgs {
     /// Language of `description`: ru | en | th (default: the user's language)
     pub description_lang: Option<String>,
     pub translations: Option<Translations>,
+    /// Not for transfers: a transfer has no recipient (an error if passed)
+    #[serde(rename = "for")]
+    pub for_whom: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]

@@ -371,7 +371,8 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
     let filtered = account.is_some() || !params.kind.is_empty() || !params.member.is_empty() || params.untranslated == "1" || !params.for_person.is_empty();
     // Фильтр «Для кого» — когда выбирать есть из кого: кроме того, кто смотрит, есть ещё кто-то.
     let people = match people.iter().any(|x| !x.archived && x.user_id != Some(me)) {
-        true => person_choices(&people, me, &for_me, &[params.for_person.to_uppercase().as_str()]),
+        // В фильтре — и архивные: прошлые покупки ушедшего участника тоже можно найти.
+        true => person_choices(&people, me, &for_me, &people.iter().map(|x| x.code.as_str()).collect::<Vec<_>>()),
         false => Vec::new(),
     };
     let kinds = ["EXPENSE", "INCOME", "TRANSFER", "OPENING"].into_iter().map(|k| (k, page_t(&page, &format!("kinds.{k}")))).collect();
@@ -636,7 +637,10 @@ impl FormPage {
     fn more_summary(&self) -> String {
         let mut parts = Vec::new();
         if !self.people.is_empty() {
-            parts.push(if self.split() { self.page.t("for_differ") } else { self.person_label(self.for_default()).to_lowercase() });
+            // «для всех», «для себя» — со строчной, имена — как есть.
+            let label = self.person_label(self.for_default());
+            let generic = self.for_default().is_empty() || label == self.page.t("for_me");
+            parts.push(if self.split() { self.page.t("for_differ") } else if generic { label.to_lowercase() } else { label });
         }
         parts.push(self.page.t("discount_total").to_lowercase());
         parts.join(" · ")
@@ -854,7 +858,9 @@ async fn form_page(svc: &TransactionService, page: PageCtx, existing: Option<&Tr
         }
     };
     let mut items = f.items();
-    items.extend(std::iter::repeat_n(ItemForm { spare: true, ..Default::default() }, SPARE_ITEMS));
+    // Пустые строки в запасе — с получателем шапки: без JS новая позиция берёт его, как и с JS.
+    let spare = ItemForm { spare: true, for_person: f.for_default.clone().unwrap_or_default(), ..Default::default() };
+    items.extend(std::iter::repeat_n(spare, SPARE_ITEMS));
     for (i, x) in items.iter_mut().enumerate() {
         x.n = i + 1;
         for name in ITEM_FIELDS {

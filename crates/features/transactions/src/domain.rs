@@ -541,7 +541,8 @@ fn resolve_items(d: ItemsDraft, existing: &[Item], cur: &AccountCurrency) -> Res
     let patch = !d.replace;
     // Для кого (раздел 5.6): шапка не хранится. Её смена меняет позиции со старым — выведенным — значением;
     // новые позиции без получателя берут шапку.
-    let old_default = common_recipient(existing);
+    let staying: Vec<Item> = existing.iter().filter(|x| !d.remove.contains(&x.id)).cloned().collect();
+    let old_default = common_recipient(&staying);
     let header = d.for_default.map(|v| recipient("for_person_code", v)).transpose()?;
     let new_default = header.clone().unwrap_or_else(|| old_default.clone());
     let follow = |cur: &Option<String>| if header.is_some() && *cur == old_default { new_default.clone() } else { cur.clone() };

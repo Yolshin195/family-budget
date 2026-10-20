@@ -857,8 +857,10 @@ on_each_repo! {
         for (bad, field) in [(TransactionInput { for_person_code: Some("OLD".into()), ..receipt(&[("food", "1")]) }, "for_person_code"), (TransactionInput { items: vec![item("food", "1", Some("NOBODY"))], ..input("EXPENSE", "card") }, "items[1].for_person_code")] {
             assert_eq!(problem(svc.create(p, u, bad).await.unwrap_err()), (kernel::error::codes::NOT_FOUND, field.to_string()));
         }
-        let tr = svc.create(p, u, TransactionInput { for_person_code: Some("PINPAN".into()), ..transfer("card", "cash", "100", None, None) }).await.unwrap();
-        assert_eq!((tr.items.len(), tr.for_person_code), (0, None), "у перевода получателя нет");
+        for who in ["PINPAN", "GHOST"] {
+            let tr = svc.create(p, u, TransactionInput { for_person_code: Some(who.into()), ..transfer("card", "cash", "100", None, None) }).await.unwrap();
+            assert_eq!((tr.items.len(), tr.for_person_code), (0, None), "у перевода получателя нет — поле отбрасывается: {who}");
+        }
     }
 }
 
@@ -874,6 +876,10 @@ on_each_repo! {
         let t2 = svc.update(p, t.id, patch).await.unwrap();
         let who: Vec<Option<&str>> = t2.items.iter().map(|x| x.for_person_code.as_deref()).collect();
         assert_eq!(who, vec![Some("PINPAN"), Some("ANNA"), Some("PINPAN"), Some("PINPAN")]);
+        // Удаление позиции и смена шапки разом: прежний получатель — по остающимся позициям.
+        let two = svc.create(p, u, TransactionInput { items: vec![item("food", "1", Some("PINPAN")), item("cafe", "2", None)], ..input("EXPENSE", "card") }).await.unwrap();
+        let drop_b = TransactionInput { remove_item_ids: vec![two.items[1].id], for_person_code: Some("ANNA".into()), ..input("EXPENSE", "card") };
+        assert_eq!(svc.update(p, two.id, drop_b).await.unwrap().for_person_code.as_deref(), Some("ANNA"));
         // Без шапки — получатели как были; позиция по `id` с `all` — «Для всех».
         let t3 = svc.update(p, t.id, TransactionInput { items: vec![ItemInput { id: Some(ids[1]), for_person_code: Some("all".into()), ..Default::default() }], ..input("EXPENSE", "card") }).await.unwrap();
         assert_eq!(t3.items.iter().filter(|x| x.for_person_code.is_none()).count(), 1);
@@ -890,6 +896,7 @@ fn archived_recipient_is_kept() {
     let t = Transaction::create(Uuid::new_v4(), Uuid::new_v4(), data, &accounts).unwrap();
     assert!(crate::service::check_people(&people, &t, None).is_err(), "новый получатель — только активный");
     assert!(crate::service::check_people(&people, &t, Some(&t)).is_ok(), "прежний остаётся");
+    assert!(crate::service::check_people(&[], &t, Some(&t)).is_ok(), "и без справочника людей (фича выключена)");
 }
 
 on_each_repo! {
@@ -906,6 +913,11 @@ on_each_repo! {
         let all = svc.feed(p, by("all")).await.unwrap();
         assert_eq!((all.items.len(), all.totals[0].2), (2, d("95")));
         assert_eq!(svc.list(p, by("ANNA"), Pagination { page: 0, size: 10 }).await.unwrap().page.total_elements, 1);
+        assert_eq!(svc.feed(p, by(" ")).await.unwrap().items.len(), 3, "пустой параметр — без фильтра");
+        // Со счётом: выписки нет (проводки на счёт не делятся по людям), итоги — доля человека.
+        let with_acc = svc.feed(p, ListQuery { account_code: Some("CARD".into()), ..by("PINPAN") }).await.unwrap();
+        assert!(with_acc.statement.is_none());
+        assert_eq!(with_acc.totals[0].2, d("32"));
     }
 }
 

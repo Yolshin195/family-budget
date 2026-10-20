@@ -1416,6 +1416,10 @@ async fn recipients_in_transactions() {
     assert_eq!(e.ledger.txs.lock().unwrap()[1].for_person_code, None);
     let list = e.svc.list_transactions(&c, ListTransactionsArgs { for_whom: Some("pinpan".into()), from: Some("2000-01-01".into()), ..Default::default() }).await.unwrap();
     assert_eq!(list.data["total"], 1);
+    let archived = e.svc.list_transactions(&c, ListTransactionsArgs { for_whom: Some("NANNY".into()), from: Some("2000-01-01".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(archived.data["total"], 0, "архивный человек в фильтре находится");
+    let err = e.svc.add_transfer(&c, AddTransferArgs { from_account: "CASH".into(), to_account: "CARD".into(), amount: "1".into(), for_whom: Some("PINPAN".into()), ..Default::default() }).await.unwrap_err();
+    assert!(err.0.contains("no recipient"), "{}", err.0);
     e.svc.add_transfer(&c, AddTransferArgs { from_account: "CASH".into(), to_account: "CARD".into(), amount: "100".into(), ..Default::default() }).await.unwrap();
     let transfer = e.ledger.txs.lock().unwrap().last().unwrap().id.to_string();
     let err = e.svc.update_transaction(&c, UpdateTransactionArgs { id: transfer, for_whom: Some("PINPAN".into()), ..Default::default() }).await.unwrap_err();
