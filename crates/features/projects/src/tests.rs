@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::adapters::memory::InMemoryProjectRepository;
 use crate::domain::{AccessToken, InviteState, PendingLogin, ProjectKind, VerifiedLogin};
-use crate::ports::{AuthRequest, Deps, IdentityProvider, ProjectBootstrap, ProjectPurge};
+use crate::ports::{AuthRequest, Deps, IdentityProvider, MemberDirectory, ProjectBootstrap, ProjectPurge};
 use crate::service::ProjectService;
 
 #[derive(Default)]
@@ -34,6 +34,26 @@ struct FakePurge(Mutex<Vec<Uuid>>);
 impl ProjectPurge for Arc<FakePurge> {
     async fn purge(&self, project_id: Uuid) -> AppResult<()> {
         self.0.lock().unwrap().push(project_id);
+        Ok(())
+    }
+}
+
+/// Справочник людей понарошку: что ему сообщили (событие, проект, пользователь, имя).
+#[derive(Default)]
+struct FakePeople(Mutex<Vec<(&'static str, Option<Uuid>, Uuid, String)>>);
+
+#[async_trait]
+impl MemberDirectory for Arc<FakePeople> {
+    async fn joined(&self, project_id: Uuid, user_id: Uuid, name: &str) -> AppResult<()> {
+        self.0.lock().unwrap().push(("joined", Some(project_id), user_id, name.into()));
+        Ok(())
+    }
+    async fn left(&self, project_id: Uuid, user_id: Uuid) -> AppResult<()> {
+        self.0.lock().unwrap().push(("left", Some(project_id), user_id, String::new()));
+        Ok(())
+    }
+    async fn account_deleted(&self, user_id: Uuid) -> AppResult<()> {
+        self.0.lock().unwrap().push(("deleted", None, user_id, String::new()));
         Ok(())
     }
 }
@@ -80,6 +100,7 @@ struct Env {
     repo: Arc<InMemoryProjectRepository>,
     boot: Arc<FakeBootstrap>,
     purge: Arc<FakePurge>,
+    people: Arc<FakePeople>,
 }
 
 fn login(sub: &str, email: &str, name: &str, amr: &[&str]) -> VerifiedLogin {
@@ -98,9 +119,10 @@ fn env() -> Env {
             login("sub-fb", "me@demo.local", "Me via Facebook", &["pwd"]),
         ]),
     });
-    let deps = Deps { bootstrap: Arc::new(boot.clone()), purge: Arc::new(purge.clone()), identity: Arc::new(rauthy) };
+    let people = Arc::new(FakePeople::default());
+    let deps = Deps { bootstrap: Arc::new(boot.clone()), purge: Arc::new(purge.clone()), identity: Arc::new(rauthy), people: Arc::new(people.clone()) };
     let svc = ProjectService::new(repo.clone(), repo.clone(), deps, Arc::new(Config::test()));
-    Env { svc, repo, boot, purge }
+    Env { svc, repo, boot, purge, people }
 }
 
 fn pending() -> PendingLogin {
@@ -333,7 +355,12 @@ async fn dev_login_only_in_development() {
     let mut prod = Config::test();
     prod.env = kernel::config::Env::Prod;
     let repo = Arc::new(InMemoryProjectRepository::default());
-    let deps = Deps { bootstrap: Arc::new(Arc::new(FakeBootstrap::default())), purge: Arc::new(Arc::new(FakePurge::default())), identity: Arc::new(crate::adapters::oidc::DisabledProvider) };
+    let deps = Deps {
+        bootstrap: Arc::new(Arc::new(FakeBootstrap::default())),
+        purge: Arc::new(Arc::new(FakePurge::default())),
+        identity: Arc::new(crate::adapters::oidc::DisabledProvider),
+        people: Arc::new(Arc::new(FakePeople::default())),
+    };
     let svc = ProjectService::new(repo.clone(), repo, deps, Arc::new(prod));
     assert!(matches!(svc.dev_login("me@demo.local", &meta()).await.unwrap_err(), AppError::NotFound(_)));
 }
@@ -588,3 +615,28 @@ async fn members_cannot_be_added_by_email() {
     assert_ne!(svc.session(anna, Some(family)).await.unwrap().unwrap().project_id, family, "Анну не добавили");
 }
 
+
+/// Справочник людей (docs/group-1.md, 5.9): запись участника — при создании проекта и вступлении по
+/// приглашению, в архив — при выходе, без имени — при удалении аккаунта; гостю демо записи нет.
+#[tokio::test]
+async fn member_records_follow_membership() {
+    let e = env();
+    let (me, _, personal) = signed_up(&e, "sub-me").await;
+    let (anna, _, _) = signed_up(&e, "sub-anna").await;
+    let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
+    join(&e, me, family, anna, Role::Editor).await;
+    e.svc.remove_member(anna, family, anna, &meta()).await.unwrap();
+    let log = e.people.0.lock().unwrap().clone();
+    let has = |ev: &str, p: Option<Uuid>, u: Uuid, name: &str| log.iter().any(|x| x.0 == ev && x.1 == p && x.2 == u && x.3 == name);
+    assert!(has("joined", Some(personal), me, "Имя"), "личный проект — с именем из онбординга: {log:?}");
+    assert!(has("joined", Some(family), me, "Имя") && has("joined", Some(family), anna, "Имя"), "{log:?}");
+    assert!(has("left", Some(family), anna, ""), "{log:?}");
+    // Гостю демо записи нет — ни при добавлении, ни при синхронизации на старте.
+    let guest = e.svc.ensure_user(crate::service::GUEST_SUB, "guest@demo.local", "Guest", Lang::En).await.unwrap();
+    e.svc.add_guest(me, family).await.unwrap();
+    e.people.0.lock().unwrap().clear();
+    assert_eq!(e.svc.sync_people().await.unwrap(), 3, "me — в двух проектах, Анна — в своём личном");
+    assert!(e.people.0.lock().unwrap().iter().all(|x| x.0 == "joined" && x.2 != guest));
+    e.svc.delete_account(anna, &meta()).await.unwrap();
+    assert!(e.people.0.lock().unwrap().iter().any(|x| x.0 == "deleted" && x.2 == anna));
+}

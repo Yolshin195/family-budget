@@ -919,6 +919,7 @@ dependencies = [
  "kernel",
  "limits",
  "mcp",
+ "people",
  "places",
  "planning",
  "projects",
@@ -1965,6 +1966,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
 dependencies = [
  "base64ct",
+]
+
+[[package]]
+name = "people"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "askama",
+ "async-trait",
+ "axum",
+ "kernel",
+ "serde",
+ "sqlx",
+ "tokio",
+ "utoipa",
+ "uuid",
 ]
 
 [[package]]

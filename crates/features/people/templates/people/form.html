@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("person") }} {{ f.name }}{% endif %}{% endblock %}
+{% block heading %}{% if is_new %}{{ page.t("new") }}{% else %}{{ page.t("person") }} <span class="font-mono">{{ f.code }}</span>{% endif %}{% endblock %}
+{% block content %}
+{% call m::form_alert(error, "code,name,aliases") %}{% endcall %}
+<form method="post" class="card card-pad form max-w-2xl" data-form>
+  <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+  {% if member %}<p class="flex items-start gap-2 text-sm text-muted"><svg class="icon shrink-0" aria-hidden="true"><use href="{{ page.icon("users") }}"></use></svg><span>{{ page.t("member_hint") }}</span></p>{% endif %}
+  <div class="grid gap-4 sm:grid-cols-2">
+    <div class="field">
+      <label class="label" for="name">{{ page.t("person_name") }}</label>
+      <input class="input" id="name" name="name" value="{{ f.name }}"{% if !former %} required{% endif %} maxlength="200"{% if is_new %} autofocus{% endif %} placeholder="{% if former %}{{ page.t("former_member") }}{% else %}Pinpan{% endif %}" aria-describedby="name-hint name-err"{% if kernel::web::field_error(error, "name").is_some() %} aria-invalid="true"{% endif %}>
+      <p class="hint" id="name-hint">{% if former %}{{ page.t("former_hint") }}{% else %}{{ page.t("name_hint") }}{% endif %}</p>{% call m::err(error, "name") %}{% endcall %}
+    </div>
+    <div class="field">
+      <label class="label" for="code">{{ page.t("code") }}</label>
+      <input class="input font-mono uppercase" id="code" name="code" value="{{ f.code }}"{% if !is_new %} readonly{% endif %} required maxlength="40" pattern="[A-Za-z0-9_]+" title="{{ page.t("code_hint") }}" placeholder="PINPAN" aria-describedby="code-hint code-err"{% if kernel::web::field_error(error, "code").is_some() %} aria-invalid="true"{% endif %}>
+      <p class="hint" id="code-hint">{{ page.t("code_hint") }}</p>{% call m::err(error, "code") %}{% endcall %}
+    </div>
+  </div>
+  <div class="field">
+    <label class="label" for="aliases">{{ page.t("aliases") }} <span class="label-note">· {{ page.t("optional") }}</span></label>
+    <input class="input" id="aliases" name="aliases" value="{{ f.aliases }}" aria-describedby="aliases-hint aliases-err"{% if kernel::web::field_error(error, "aliases").is_some() %} aria-invalid="true"{% endif %}>
+    <p class="hint" id="aliases-hint">{{ page.t("aliases_hint") }}</p>{% call m::err(error, "aliases") %}{% endcall %}
+  </div>
+  <div class="form-actions">
+    <button class="btn-primary">{{ page.t("save") }}</button>
+    <a href="/people" class="btn-ghost">{{ page.t("cancel") }}</a>
+    {% if !is_new && !member %}<button formaction="/people/{{ kernel::web::url_segment(f.code) }}/archive" formnovalidate class="btn-ghost text-danger ml-auto">
+      <svg class="icon" aria-hidden="true"><use href="{{ page.icon("archive") }}"></use></svg>{{ page.t("archive") }}</button>{% endif %}
+  </div>
+</form>
+{% endblock %}

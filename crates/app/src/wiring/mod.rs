@@ -2,7 +2,7 @@
 //! Блоки между маркерами @arch:* ведёт `arch.py`: каждая строка помечена `// @f:<фича>`.
 //! Связки (адаптеры портов «потребитель → поставщик») лежат в wire_<потребитель>.rs.
 //!
-//! В этом проекте строки фич projects, currencies, accounts, categories, places, transactions, planning, budget, mcp
+//! В этом проекте строки фич projects, currencies, accounts, categories, places, people, transactions, planning, budget, mcp
 //! написаны вручную (у этих фич нет feature.json — `upgrade` их не трогает): их порты шире, чем `exists`.
 
 #[allow(unused_imports)]
@@ -48,9 +48,10 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "currencies")] let currencies_api = currencies::api(ctx, currencies::Deps { usage: Arc::new(currency_usage.clone()) }); // @f:currencies
     #[cfg(feature = "categories")] let category_usage = wire_categories::UsageAdapter::default(); // @f:categories
     #[cfg(feature = "categories")] let categories_api = categories::api(ctx, categories::Deps { usage: Arc::new(category_usage.clone()) }); // @f:categories
+    #[cfg(feature = "people")] let people_api = people::api(ctx); // @f:people
     #[cfg(feature = "projects")] let purge = wire_projects::PurgeAdapter::default(); // @f:projects
     #[cfg(feature = "projects")] let bootstrap = wire_projects::BootstrapAdapter::new(currencies_api.clone(), categories_api.clone()); // @f:projects
-    #[cfg(feature = "projects")] let projects_api = projects::api(ctx, projects::Deps { bootstrap: Arc::new(bootstrap.clone()), purge: Arc::new(purge.clone()), identity: projects::identity_provider(ctx) }); // @f:projects
+    #[cfg(feature = "projects")] let projects_api = projects::api(ctx, projects::Deps { bootstrap: Arc::new(bootstrap.clone()), purge: Arc::new(purge.clone()), identity: projects::identity_provider(ctx), people: Arc::new(wire_projects::MemberDirectoryAdapter { #[cfg(feature = "people")] people: Some(people_api.clone()) }) }); // @f:projects
     #[cfg(feature = "projects")] list.push(projects::feature(projects_api.clone())); // @f:projects
     #[cfg(feature = "currencies")] list.push(currencies::feature(currencies_api.clone())); // @f:currencies
     #[cfg(feature = "rates")] let rates_api = rates::api(ctx, rates::Deps { currencies: Arc::new(wire_rates::CurrenciesLookupAdapter(currencies_api.clone())) }); // @f:rates
@@ -61,6 +62,7 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "categories")] list.push(categories::feature(categories_api.clone())); // @f:categories
     #[cfg(feature = "places")] let places_api = places::api(ctx, places::Deps { directories: Arc::new(wire_places::DirectoriesAdapter { categories: categories_api.clone(), accounts: accounts_api.clone() }) }); // @f:places
     #[cfg(feature = "places")] list.push(places::feature(places_api.clone())); // @f:places
+    #[cfg(feature = "people")] list.push(people::feature(people_api.clone())); // @f:people
     #[cfg(feature = "transactions")] let budget_view = wire_transactions::BudgetViewAdapter::default(); // @f:transactions
     #[cfg(feature = "transactions")] let plans_lookup = wire_transactions::PlansLookupAdapter::default(); // @f:transactions
     #[cfg(feature = "transactions")] let transactions_api = transactions::api(ctx, transactions::Deps { accounts: Arc::new(wire_transactions::AccountsLookupAdapter(accounts_api.clone(), currencies_api.clone())), categories: Arc::new(wire_transactions::CategoriesLookupAdapter(categories_api.clone())), budget: Arc::new(budget_view.clone()), plans: Arc::new(plans_lookup.clone()), places: Arc::new(wire_transactions::PlacesLookupAdapter { #[cfg(feature = "places")] places: Some(places_api.clone()) }) }); // @f:transactions
@@ -104,6 +106,7 @@ pub fn features(ctx: &AppContext) -> Wired {
         #[cfg(feature = "limits")] targets.list.push(limits_api.clone());
         #[cfg(feature = "rates")] targets.list.push(rates_api.clone());
         #[cfg(feature = "places")] targets.list.push(places_api.clone());
+        #[cfg(feature = "people")] targets.list.push(people_api.clone());
         #[cfg(feature = "accounts")] targets.list.push(accounts_api.clone());
         #[cfg(feature = "categories")] targets.list.push(categories_api.clone());
         #[cfg(feature = "currencies")] targets.list.push(currencies_api.clone());

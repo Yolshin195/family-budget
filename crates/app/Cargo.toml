@@ -26,6 +26,7 @@ rates = { path = "../features/rates", optional = true }
 accounts = { path = "../features/accounts", optional = true }
 categories = { path = "../features/categories", optional = true }
 places = { path = "../features/places", optional = true }
+people = { path = "../features/people", optional = true }
 transactions = { path = "../features/transactions", optional = true }
 limits = { path = "../features/limits", optional = true }
 planning = { path = "../features/planning", optional = true }
@@ -37,19 +38,20 @@ mcp = { path = "../features/mcp", optional = true }
 [features]
 # Включённые фичи = default. Блок ведёт arch.py.
 # @arch:features:begin
-default = ["projects", "currencies", "rates", "accounts", "categories", "places", "transactions", "limits", "planning", "budget", "seed", "site", "mcp"]
+default = ["projects", "currencies", "rates", "accounts", "categories", "places", "people", "transactions", "limits", "planning", "budget", "seed", "site", "mcp"]
 projects = ["dep:projects", "currencies", "categories"]
 currencies = ["dep:currencies"]
 rates = ["dep:rates", "currencies"]
 accounts = ["dep:accounts", "currencies"]
 categories = ["dep:categories"]
 places = ["dep:places", "accounts", "categories"]
+people = ["dep:people"]
 transactions = ["dep:transactions", "accounts", "categories"]
 limits = ["dep:limits", "categories"]
 planning = ["dep:planning", "transactions", "rates"]
 budget = ["dep:budget", "transactions", "planning", "limits", "rates"]
 site = ["dep:site"]
-mcp = ["dep:mcp", "projects", "currencies", "accounts", "categories", "places", "rates", "limits", "transactions", "budget", "planning"]
+mcp = ["dep:mcp", "projects", "currencies", "accounts", "categories", "places", "people", "rates", "limits", "transactions", "budget", "planning"]
 # @arch:features:end
 # Демо-данные при пустой БД (не фича предметной области — флаг приложения).
-seed = ["budget", "places"]
+seed = ["budget", "places", "people"]

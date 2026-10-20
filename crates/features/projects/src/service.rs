@@ -403,6 +403,8 @@ impl ProjectService {
                 self.repo.remove_member(p.id, user_id).await?;
             }
         }
+        // Записи в справочниках людей семейных проектов остаются (на них ссылаются операции), но без имени.
+        self.deps.people.account_deleted(user_id).await?;
         self.audit(audit_event(None, None, action::ACCOUNT_DELETED, meta, &[])).await;
         self.access.anonymize_audit(user_id).await?;
         self.repo.delete_user(user_id).await?;
@@ -420,6 +422,7 @@ impl ProjectService {
         let owner = Member { project_id: project.id, user_id, role: Role::Owner };
         self.repo.insert_project(&project, &owner).await?;
         self.deps.bootstrap.init(project.id, &project.base_currency, user.lang).await?;
+        self.deps.people.joined(project.id, user_id, &user.display_name).await?;
         self.audit(audit_event(Some(user_id), Some(project.id), action::PROJECT_CREATED, meta, &[("kind", kind.as_str().into())])).await;
         Ok(project.id)
     }
@@ -519,6 +522,7 @@ impl ProjectService {
         }
         self.change_members(&project, |ms| ms.retain(|m| m.user_id != user_id)).await?;
         self.repo.remove_member(project_id, user_id).await?;
+        self.deps.people.left(project_id, user_id).await?;
         self.access.revoke_project_tokens(user_id, project_id, Utc::now()).await?;
         self.audit(audit_event(Some(by), Some(project_id), action::MEMBER_REMOVED, meta, &[("member", user_id.to_string())])).await;
         Ok(())
@@ -636,6 +640,8 @@ impl ProjectService {
         if !self.repo.accept_invite(invite.id, &member, now).await? {
             return Err(used());
         }
+        let name = self.user(user_id).await?.display_name;
+        self.deps.people.joined(project.id, user_id, &name).await?;
         let details = [("invite", invite.id.to_string()), ("role", invite.role.as_str().into()), ("invited_by", invite.created_by.to_string())];
         self.audit(audit_event(Some(user_id), Some(project.id), action::MEMBER_JOINED, meta, &details)).await;
         Ok(project.id)
@@ -746,6 +752,19 @@ impl ProjectService {
         })
         .await?;
         self.repo.upsert_member(&member).await
+    }
+
+    /// Записи участников в справочнике людей: у каждого участника каждого проекта, кроме гостя демо (при
+    /// запуске — для проектов, созданных до справочника людей; у кого запись уже есть, ничего не меняется).
+    pub async fn sync_people(&self) -> AppResult<usize> {
+        let mut n = 0;
+        for (m, u) in self.repo.all_members().await? {
+            if u.rauthy_sub != GUEST_SUB {
+                self.deps.people.joined(m.project_id, u.id, &u.display_name).await?;
+                n += 1;
+            }
+        }
+        Ok(n)
     }
 
     /// Удалить проект с данными без проверки прав (сброс демо раз в сутки).

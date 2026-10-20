@@ -227,6 +227,17 @@ impl ProjectRepository for PostgresProjectRepository {
             .collect()
     }
 
+    async fn all_members(&self) -> AppResult<Vec<(Member, User)>> {
+        let rows: Vec<(Uuid, String, Uuid, String, String, String, Option<String>, String, String)> = sqlx::query_as(&format!(
+            "SELECT m.project_id, m.role, {USER_COLS} FROM fb_project_members m JOIN fb_users u ON u.id = m.user_id ORDER BY m.project_id, m.joined_at"
+        ))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|r| Ok((Member { project_id: r.0, user_id: r.2, role: role(&r.1)? }, user((r.2, r.3, r.4, r.5, r.6, r.7, r.8))?)))
+            .collect()
+    }
+
     async fn upsert_member(&self, m: &Member) -> AppResult<()> {
         sqlx::query("INSERT INTO fb_project_members (project_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (project_id, user_id) DO UPDATE SET role = EXCLUDED.role")
             .bind(m.project_id)

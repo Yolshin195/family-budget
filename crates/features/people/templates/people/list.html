@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block title %}{{ page.t("title") }}{% endblock %}
+{% block heading %}{{ page.t("title") }}{% endblock %}
+{% block actions %}{% if page.can_write() %}<a href="/people/new" class="btn-primary"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("add") }}</a>{% endif %}{% endblock %}
+{% block content %}
+<p class="text-muted mb-4 max-w-3xl">{{ page.t("intro") }}</p>
+<section class="card">
+  <div class="table-wrap">
+  <table class="table">
+    <thead><tr>
+      <th scope="col">{{ page.t("person") }}</th><th scope="col">{{ page.t("account_col") }}</th>
+      <th scope="col" class="hidden sm:table-cell">{{ page.t("code") }}</th><th scope="col"><span class="sr-only">{{ page.t("edit") }}</span></th>
+    </tr></thead>
+    <tbody>
+    {% for p in rows %}
+      <tr{% if p.archived %} class="row-muted"{% endif %}>
+        <td><span class="font-medium">{{ self.title(p) }}</span>{% if self.is_me(p) %} <span class="badge badge-info">{{ page.t("you") }}</span>{% endif %}{% if p.archived %} <span class="badge">{{ page.t("archived") }}</span>{% endif %}
+          {% if !p.aliases.is_empty() %}<span class="block text-xs text-subtle">{{ p.aliases.join(", ") }}</span>{% endif %}</td>
+        <td>{% if p.is_member() %}{{ page.t("member") }}{% else if p.former_member %}{{ page.t("account_deleted") }}{% else %}<span class="text-muted">{{ page.t("no_account") }}</span>{% endif %}</td>
+        <td class="hidden sm:table-cell font-mono text-xs text-subtle">{{ p.code }}</td>
+        <td class="text-right">{% if page.can_write() %}<a class="btn-ghost btn-sm" href="/people/{{ kernel::web::url_segment(p.code) }}/edit" aria-label="{{ page.t("edit") }} {{ self.title(p) }}">{{ page.t("edit") }}</a>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if rows.len() <= 1 %}<p class="card-pad text-sm text-muted border-t border-line">{{ page.t("empty_text") }}</p>{% endif %}
+</section>
+{% endblock %}

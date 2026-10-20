@@ -92,6 +92,8 @@ async fn main() -> anyhow::Result<()> {
     let wired = wiring::features(&ctx);
     let feats = kernel::feature::assemble(&ctx, wired.features).await?;
     println!("Включённые фичи: {:?}", feats.names);
+    // Справочник людей (группа 1, шаг 6): записи участникам проектов, созданных до него.
+    wired.projects.sync_people().await.map_err(|e| anyhow::anyhow!("записи участников в справочнике людей: {e}"))?;
 
     #[cfg(feature = "seed")]
     {
