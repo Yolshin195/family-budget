@@ -1,8 +1,9 @@
-# MCP: бюджет через Claude
+# MCP: бюджет через Claude и ChatGPT
 
 Сервер MCP (Model Context Protocol) — `https://<домен>/mcp`. Через него Claude (claude.ai, приложение на
-телефоне, Claude Desktop, Claude Code) работает с бюджетом **под вашим аккаунтом**: в одном проекте и с теми
-правами, которые вы выбрали. Удалять через ассистента ничего нельзя; права меняются только в браузере.
+телефоне, Claude Desktop, Claude Code) и ChatGPT (плагин из своего MCP-сервера) работают с бюджетом **под вашим
+аккаунтом**: в одном проекте и с теми правами, которые вы выбрали — у каждого ассистента свои. Удалять через
+ассистента ничего нельзя; права меняются только в браузере.
 
 Фича — `crates/features/mcp`, план и решения — [mcp-plan.md](mcp-plan.md).
 
@@ -52,7 +53,8 @@
 
 ## Права
 
-Права выбираются на странице «Ассистенты» (`/assistants`) для Claude через claude.ai или в личном API-токене.
+Права выбираются на странице «Ассистенты» (`/assistants`) — на вкладке ассистента (Claude, ChatGPT: у каждого
+свой OAuth-клиент и своя запись в `fb_mcp_grants`) — или в личном API-токене.
 
 | Право | На странице | Инструменты |
 | --- | --- | --- |
@@ -82,10 +84,12 @@
 | Клиент | Как входит | Проект и права |
 | --- | --- | --- |
 | Claude Code, MCP Inspector | Личный API-токен `fbt_…` в заголовке `Authorization` | у токена |
-| claude.ai, приложение Claude на телефоне и компьютере | OAuth через провайдера входа (сейчас Rauthy): access-токен, выпущенный для ресурса `https://<домен>/mcp` | страница «Ассистенты» (`/assistants`) |
+| claude.ai, приложение Claude на телефоне и компьютере | OAuth через провайдера входа (сейчас Rauthy), клиент `claude`: access-токен, выпущенный для ресурса `https://<домен>/mcp` | страница «Ассистенты», вкладка Claude |
+| ChatGPT (сайт, приложения) | OAuth через провайдера входа, клиент `chatgpt` | страница «Ассистенты», вкладка ChatGPT (`/assistants?assistant=chatgpt`) |
 
-Токен провайдера сам по себе прав не даёт: пока на странице «Ассистенты» не открыт доступ, Claude видит
-только подсказку открыть её. Отключение там действует сразу.
+Токен провайдера сам по себе прав не даёт: доступ ищется по паре «пользователь + OAuth-клиент» (`azp`). Пока
+на вкладке ассистента не открыт доступ, он видит только подсказку — со ссылкой сразу на свою вкладку.
+Отключение там действует сразу и только для этого ассистента.
 
 ### Claude Code
 
@@ -119,6 +123,38 @@
 
 Требования к серверу: HTTPS, доступ из интернета по IPv4 (Claude ходит из облака Anthropic).
 
+### ChatGPT
+
+**Один раз — клиент в Rauthy** (Clients → Add New; на стенде `make` клиент `chatgpt` создаётся из
+`deploy/rauthy/bootstrap/clients.json`, Allowed resources и Default audience — вручную):
+
+| Поле | Значение |
+| --- | --- |
+| Client ID | `chatgpt` (как `MCP_OAUTH_CHATGPT_CLIENT_ID`) |
+| Confidential | по желанию: публичный (PKCE S256, в ChatGPT Token endpoint auth method `none`) или конфиденциальный (`client_secret_post`, секрет — в `MCP_OAUTH_CHATGPT_CLIENT_SECRET`) |
+| Redirect URIs | `https://chatgpt.com/connector_platform_oauth_redirect` и `https://chatgpt.com/connector/oauth/*` |
+| SCIM | выключен |
+| Остальное | как у `claude`: flows, PKCE, scopes, **Allowed resources** и **Default audience** = `https://<домен>/mcp`, lifetime 3600 |
+
+Адрес возврата ChatGPT выбирает сам: постоянный `connector_platform_oauth_redirect`, если провайдер объявляет
+RFC 9207 (`authorization_response_iss_parameter_supported`) и издатель совпадает с `authorization_servers`, иначе —
+свой для каждого подключения (`/connector/oauth/<id>`), поэтому в Rauthy — оба (второй со звёздочкой).
+
+Секрет конфиденциального клиента **не тайна от пользователей**: каждый вводит его в ChatGPT сам, поэтому страница
+«Ассистенты» показывает его всем вошедшим (с кнопкой «Копировать»). Защищают адрес возврата (код получает только
+chatgpt.com), PKCE и доступ на странице «Ассистенты», а не секрет. Без `MCP_OAUTH_CHATGPT_CLIENT_SECRET` страница
+предлагает оставить секрет пустым и выбрать `none` — тогда клиент в Rauthy должен быть публичным.
+
+**В ChatGPT** (только в браузере; дальше плагин работает и в приложениях): Plugins → Add → Add custom MCP server →
+Server URL `https://<домен>/mcp`, Authentication — OAuth → Advanced OAuth settings: Registration method —
+User-Defined OAuth Client, OAuth client ID `chatgpt`, секрет и Token endpoint auth method — как на странице
+«Ассистенты», Base scopes пусто → I understand and want to continue → Create as a plugin → Continue → вход.
+Пошагово для пользователей, со скриншотами — гайд на сайте `site/content/guides/connect-chatgpt/`.
+
+CIMD и DCR с Rauthy 0.37 не подходят и здесь: `client_id` был бы адресом документа ChatGPT или случайным, а доступ на
+странице «Ассистенты» выдаётся известным клиентам. Опубликованный в каталоге ChatGPT плагин (проверка OpenAI) дал бы
+подключение без ручных настроек — это следующий шаг, если ChatGPT приживётся.
+
 ## Проверка
 
 ```bash
@@ -139,7 +175,7 @@ curl -s -X POST https://<домен>/mcp -H "Authorization: Bearer fbt_…" -H '
 
 MCP-часть от провайдера не зависит: она получает «пользователь + OAuth-клиент» через порт `Accounts`.
 Если новый провайдер выдаёт JWT access-токены с `aud` = `https://<домен>/mcp` (RFC 8707 / 9068), достаточно
-сменить `OIDC_ISSUER` и завести у него клиент `claude` — проверка (`verify_access_jwt` в
+сменить `OIDC_ISSUER` и завести у него клиенты `claude` и `chatgpt` — проверка (`verify_access_jwt` в
 `crates/features/projects/src/adapters/oidc.rs`) та же. Иначе (непрозрачные токены) — заменить только этот
 метод адаптера на интроспекцию (RFC 7662). Когда провайдер сам покажет экран согласия с выбором проекта,
 страница «Ассистенты» станет делегированным согласием, а таблица `fb_mcp_grants` останется источником прав.

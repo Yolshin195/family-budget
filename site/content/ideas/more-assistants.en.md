@@ -7,9 +7,9 @@ date = 2026-10-17
 topics = ["claude"]
 
 [extra]
-status = "discussing"
+status = "in_progress"
 +++
 
-Today the budget works with Claude: on claude.ai, in the phone app, in Claude Desktop and Claude Code. The server for assistants is built so that others — ChatGPT, Gemini — can be connected without a rewrite: permissions, the change log and the ban on deletion apply to any assistant.
+The budget works with Claude — on claude.ai, in the phone app, in Claude Desktop and Claude Code — and now with ChatGPT: the guide ["How to connect ChatGPT to your budget"](@/guides/connect-chatgpt/index.en.md) shows how to connect it. Each assistant has its own permissions, and the change log and the ban on deletion apply to any of them.
 
-Before we start, we want to know whether you need it. If you use another assistant and would like to keep your budget with it, tell us on the [Reviews](@/feedback.en.md) page.
+Gemini is next in line. If you use it or another assistant and would like to keep your budget with it, tell us on the [Reviews](@/feedback.en.md) page.

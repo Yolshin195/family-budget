@@ -9,9 +9,18 @@
   {% if guest %}
   <div class="alert alert-error" role="status"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("circle-alert") }}"></use></svg><span>{{ page.t("guest") }}</span></div>
   {% else %}
+  {# Вкладки ассистентов: у каждого свой OAuth-клиент, свой проект и свои права #}
+  <nav class="seg" aria-label="{{ page.t("assistants") }}">
+    {% for tab in tabs %}
+    <a href="?assistant={{ tab.key }}" class="seg-link gap-1.5"{% if tab.key == assistant.key %} aria-current="page"{% endif %}>
+      {% if tab.granted %}<svg class="icon icon-sm text-income" aria-hidden="true"><use href="{{ page.icon("shield-check") }}"></use></svg>{% endif %}{{ tab.name }}{% if tab.granted %}<span class="sr-only"> — {{ page.t("status_on") }}</span>{% endif %}
+    </a>
+    {% endfor %}
+  </nav>
+
   <section class="card" aria-labelledby="access">
     <div class="card-head">
-      <h2 class="section-title" id="access">{{ page.t("access") }}</h2>
+      <h2 class="section-title" id="access">{{ self.access_title() }}</h2>
       {% if grant.is_some() %}<span class="badge badge-income"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("shield-check") }}"></use></svg>{{ page.t("status_on") }}</span>
       {% else %}<span class="badge">{{ page.t("status_off") }}</span>{% endif %}
     </div>
@@ -25,11 +34,12 @@
         <div class="sm:col-span-3"><dt class="label">{{ page.t("permissions") }}</dt><dd class="flex flex-wrap gap-1 mt-1">{% for s in g.scopes %}<span class="badge badge-accent whitespace-normal">{{ s }}</span>{% endfor %}</dd></div>
       </dl>
       {% else %}
-      <p class="hint mb-4">{{ page.t("status_off_hint") }}</p>
+      <p class="hint mb-4">{{ self.status_off_hint() }}</p>
       {% endif %}
       {% call m::form_alert(error, "project,scopes") %}{% endcall %}
       <form method="post" action="/assistants/grant" class="grid gap-4 sm:grid-cols-2 items-start">
         <input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+        <input type="hidden" name="assistant" value="{{ assistant.key }}">
         <div class="field !mb-0"><label class="label" for="as-project">{{ page.t("project") }}</label>
           <select class="input" id="as-project" name="project">{% for p in projects %}<option value="{{ p.id }}"{% if p.id == selected_project %} selected{% endif %}>{{ p.name }} · {{ p.role }}</option>{% endfor %}</select>
           {% if has_viewer %}<p class="hint mt-1">{{ page.t("viewer_hint") }}</p>{% endif %}</div>
@@ -59,7 +69,7 @@
         <div class="sm:col-span-2 flex flex-wrap gap-3"><button class="btn-primary">{{ page.t("save") }}</button></div>
       </form>
       {% if grant.is_some() %}
-      <form method="post" action="/assistants/revoke" class="mt-3"><input type="hidden" name="_csrf" value="{{ page.csrf() }}">
+      <form method="post" action="/assistants/revoke" class="mt-3"><input type="hidden" name="_csrf" value="{{ page.csrf() }}"><input type="hidden" name="assistant" value="{{ assistant.key }}">
         <button class="btn-ghost btn-sm text-danger">{{ page.t("revoke") }}</button></form>
       {% endif %}
     </div>
@@ -67,7 +77,34 @@
 
   <section class="card" aria-labelledby="connect">
     <div class="card-head"><h2 class="section-title" id="connect">{{ page.t("connect") }}</h2></div>
-    <div class="px-5 pb-5 space-y-5">
+    <div class="px-5 pt-4 pb-5 space-y-5">
+      {% if assistant.key == "chatgpt" %}
+      <div>
+        <h3 class="font-medium mb-2">{{ page.t("connect_chatgpt") }}</h3>
+        {% if oauth_ready %}
+        <ol class="list-decimal pl-5 space-y-2">
+          <li>{{ page.t("gpt_step1") }}</li>
+          <li>{{ page.t("gpt_step2") }}
+            <div class="flex gap-2 mt-1 items-center"><code class="code grow break-all" id="mcp-url">{{ mcp_url }}</code>
+              <button type="button" class="btn-secondary btn-sm" data-copy="#mcp-url" data-copied="{{ page.t("copied") }}">{{ page.t("copy") }}</button></div></li>
+          <li>{{ page.t("gpt_step3") }}
+            <div class="flex gap-2 mt-1 items-center"><code class="code grow break-all" id="mcp-client">{{ assistant.client_id }}</code>
+              <button type="button" class="btn-secondary btn-sm" data-copy="#mcp-client" data-copied="{{ page.t("copied") }}">{{ page.t("copy") }}</button></div></li>
+          {% if let Some(secret) = assistant.client_secret %}
+          <li>{{ page.t("gpt_step4_secret") }}
+            <div class="flex gap-2 mt-1 items-center"><code class="code grow break-all" id="mcp-secret">{{ secret }}</code>
+              <button type="button" class="btn-secondary btn-sm" data-copy="#mcp-secret" data-copied="{{ page.t("copied") }}">{{ page.t("copy") }}</button></div></li>
+          {% else %}
+          <li>{{ page.t("gpt_step4_public") }}</li>
+          {% endif %}
+          <li>{{ page.t("gpt_step5") }}</li>
+          <li>{{ page.t("gpt_step6") }}</li>
+        </ol>
+        {% else %}
+        <p class="hint">{{ page.t("oauth_off_chatgpt") }}</p>
+        {% endif %}
+      </div>
+      {% else %}
       <div>
         <h3 class="font-medium mb-2">{{ page.t("connect_claude") }}</h3>
         {% if oauth_ready %}
@@ -77,7 +114,7 @@
             <div class="flex gap-2 mt-1 items-center"><code class="code grow break-all" id="mcp-url">{{ mcp_url }}</code>
               <button type="button" class="btn-secondary btn-sm" data-copy="#mcp-url" data-copied="{{ page.t("copied") }}">{{ page.t("copy") }}</button></div></li>
           <li>{{ page.t("step3") }}
-            <div class="flex gap-2 mt-1 items-center"><code class="code grow break-all" id="mcp-client">{{ client_id }}</code>
+            <div class="flex gap-2 mt-1 items-center"><code class="code grow break-all" id="mcp-client">{{ assistant.client_id }}</code>
               <button type="button" class="btn-secondary btn-sm" data-copy="#mcp-client" data-copied="{{ page.t("copied") }}">{{ page.t("copy") }}</button></div></li>
           <li>{{ page.t("step4") }}</li>
         </ol>
@@ -91,6 +128,7 @@
         <code class="code block break-all">claude mcp add --transport http family-budget {{ mcp_url }} --header "Authorization: Bearer fbt_…"</code>
         <a class="btn-secondary btn-sm mt-3" href="/profile/security">{{ page.t("to_tokens") }}</a>
       </div>
+      {% endif %}
     </div>
   </section>
   {% endif %}
