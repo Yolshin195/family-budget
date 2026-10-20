@@ -27,7 +27,8 @@ macro_rules! touches {
         )
     };
 }
-/// $1 проект, $2..$3 период, $4 счёт, $5 тип, $6 автор, $7 язык «без перевода», $8 место (NULL — условие выключено).
+/// $1 проект, $2..$3 период, $4 счёт, $5 тип, $6 автор, $7 язык «без перевода», $8 место, $9 для кого — есть позиция
+/// этого человека, '' — «Для всех» (NULL — условие выключено).
 const FILTER: &str = concat!(
     "project_id = $1 \
     AND ($2::date IS NULL OR occurred_on >= $2) AND ($3::date IS NULL OR occurred_on <= $3) \
@@ -36,7 +37,9 @@ const FILTER: &str = concat!(
     ") AND ($5::text IS NULL OR tx_kind = $5) AND ($6::uuid IS NULL OR created_by = $6) \
     AND ($7::text IS NULL OR (description IS NOT NULL AND description_lang <> $7 AND \
          (CASE $7 WHEN 'RU' THEN description_ru WHEN 'EN' THEN description_en ELSE description_th END) IS NULL)) \
-    AND ($8::text IS NULL OR place_code = $8)"
+    AND ($8::text IS NULL OR place_code = $8) \
+    AND ($9::text IS NULL OR EXISTS (SELECT 1 FROM fb_transaction_items i \
+         WHERE i.transaction_id = fb_transactions.id AND i.for_person_code IS NOT DISTINCT FROM NULLIF($9, '')))"
 );
 
 pub struct PostgresTransactionRepository {
@@ -58,7 +61,7 @@ impl PostgresTransactionRepository {
         .fetch_all(&self.pool)
         .await?;
         let items: Vec<ItemRow> = sqlx::query_as(
-            "SELECT transaction_id, id, category_code, item_name, quantity, unit, price_per_unit, discount, amount, note \
+            "SELECT transaction_id, id, category_code, item_name, quantity, unit, price_per_unit, discount, amount, note, for_person_code \
              FROM fb_transaction_items WHERE transaction_id = ANY($1) ORDER BY transaction_id, position",
         )
         .bind(&ids)
@@ -134,6 +137,7 @@ struct ItemRow {
     discount: Decimal,
     amount: Decimal,
     note: Option<String>,
+    for_person_code: Option<String>,
 }
 
 impl ItemRow {
@@ -148,6 +152,7 @@ impl ItemRow {
             discount: self.discount,
             amount: self.amount,
             note: self.note.clone(),
+            for_person: self.for_person_code.clone(),
         })
     }
 }
@@ -199,7 +204,7 @@ async fn write_postings(tx: &mut SqlTx<'_, Postgres>, item: &Transaction) -> App
     for (i, x) in item.items.iter().enumerate() {
         sqlx::query(
             "INSERT INTO fb_transaction_items (id, transaction_id, position, item_name, quantity, unit, price_per_unit, discount, amount, \
-             category_code, note) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+             category_code, note, for_person_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(x.id)
         .bind(item.id)
@@ -212,6 +217,7 @@ async fn write_postings(tx: &mut SqlTx<'_, Postgres>, item: &Transaction) -> App
         .bind(x.amount)
         .bind(&x.category_code)
         .bind(&x.note)
+        .bind(&x.for_person)
         .execute(&mut **tx)
         .await?;
     }
@@ -247,6 +253,7 @@ fn bind_filter<'q, O>(
         .bind(f.created_by)
         .bind(f.untranslated.map(|l| l.upper()))
         .bind(f.place_code.as_deref())
+        .bind(f.for_person.as_ref().map(|r| r.as_deref().unwrap_or_default()))
 }
 
 #[async_trait]
@@ -328,7 +335,7 @@ impl TransactionRepository for PostgresTransactionRepository {
 
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>> {
         let sql = format!(
-            "SELECT {COLUMNS} FROM fb_transactions WHERE {FILTER} ORDER BY occurred_on DESC, created_at DESC, id LIMIT $9 OFFSET $10"
+            "SELECT {COLUMNS} FROM fb_transactions WHERE {FILTER} ORDER BY occurred_on DESC, created_at DESC, id LIMIT $10 OFFSET $11"
         );
         let rows: Vec<Row> = bind_filter(sqlx::query_as(&sql), project_id, filter).bind(limit).bind(offset).fetch_all(&self.pool).await?;
         self.with_postings(rows).await
@@ -342,12 +349,15 @@ impl TransactionRepository for PostgresTransactionRepository {
 
     async fn category_totals(&self, project_id: Uuid, filter: &Filter) -> AppResult<Vec<(String, Decimal, Decimal)>> {
         // Доход — проводка на категорию со знаком «−», расход — «+»; возврат — обратный знак, он и уменьшает итог.
+        // С фильтром «Для кого» — только позиции этого получателя: доля человека в общих чеках.
         let sql = format!(
             "SELECT p.currency_code, \
                     COALESCE(SUM(CASE WHEN t.tx_kind = 'INCOME' THEN -p.amount END), 0), \
                     COALESCE(SUM(CASE WHEN t.tx_kind <> 'INCOME' THEN p.amount END), 0) \
              FROM fb_postings p JOIN fb_transactions t ON t.id = p.transaction_id \
              WHERE p.ref_kind = 'CATEGORY' AND p.transaction_id IN (SELECT id FROM fb_transactions WHERE {FILTER}) \
+             AND ($9::text IS NULL OR EXISTS (SELECT 1 FROM fb_transaction_items i \
+                  WHERE i.id = p.item_id AND i.for_person_code IS NOT DISTINCT FROM NULLIF($9, ''))) \
              GROUP BY p.currency_code ORDER BY p.currency_code"
         );
         Ok(bind_filter(sqlx::query_as(&sql), project_id, filter).fetch_all(&self.pool).await?)
@@ -356,7 +366,7 @@ impl TransactionRepository for PostgresTransactionRepository {
     async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)> {
         let sql = format!(
             "SELECT COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0), COALESCE(SUM(amount) FILTER (WHERE amount < 0), 0) \
-             FROM fb_postings WHERE ref_kind = 'ACCOUNT' AND ref_code = $9 \
+             FROM fb_postings WHERE ref_kind = 'ACCOUNT' AND ref_code = $10 \
              AND transaction_id IN (SELECT id FROM fb_transactions WHERE {FILTER})"
         );
         Ok(bind_filter(sqlx::query_as(&sql), project_id, filter).bind(account).fetch_one(&self.pool).await?)

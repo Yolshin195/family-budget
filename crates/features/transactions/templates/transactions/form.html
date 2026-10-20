@@ -40,6 +40,18 @@
       <div class="field"><label class="label" for="discount_total">{{ page.t("discount_total") }}</label>
         <input class="input num" id="discount_total" name="discount_total" value="{{ f.discount_total }}" inputmode="decimal" placeholder="0.00" aria-describedby="discount-hint" data-discount-total{% call m::aria(error, "discount_total") %}{% endcall %}>
         <p class="hint" id="discount-hint">{{ page.t("discount_total_hint") }}</p>{% call m::err(error, "discount_total") %}{% endcall %}</div>
+      {% if !people.is_empty() %}
+      <div class="field"><label class="label" for="for_default">{{ page.t("for_default") }}</label>
+        <select class="input" id="for_default" name="for_default" data-for-default{% call m::aria(error, "for_person_code") %}{% endcall %}>
+          <option value="">{{ page.t("for_all") }}</option>
+          {% for x in people %}<option value="{{ x.code }}" {% if self.for_default() == x.code %}selected{% endif %}>{{ x.label }}</option>{% endfor %}
+        </select>{% call m::err(error, "for_person_code") %}{% endcall %}
+        <label class="checkbox checkbox-sm mt-2"><input type="checkbox" id="for_split" name="for_split" value="1" data-for-split {% if self.split() %}checked{% endif %}><span>{{ page.t("for_split") }}</span></label>
+        <div class="for-reset" data-for-reset hidden role="alert" data-text="{{ page.t("for_reset") }}"><span></span>
+          <button type="button" class="btn-secondary btn-sm" data-for-reset-yes>{{ page.t("for_reset_yes") }}</button>
+          <button type="button" class="btn-ghost btn-sm" data-for-reset-no>{{ page.t("for_reset_no") }}</button></div>
+      </div>
+      {% endif %}
     </div>
   </details>
   </div>
@@ -82,10 +94,21 @@
           <span class="op" aria-hidden="true">=</span>
           <p class="item-sum" aria-live="polite"><b data-item-sum></b> <span data-cur></span></p>
         </div>
+        {% if !people.is_empty() %}
+        <div class="item-for">
+          <label for="if-{{ x.n }}" class="text-muted">{{ page.t("for_whom") }}</label>
+          <select class="input input-sm" id="if-{{ x.n }}" name="item_for" data-item-for{% if x.bad("for_person_code") %} aria-invalid="true"{% endif %}>
+            <option value="">{{ page.t("for_all") }}</option>
+            {% for p in people %}<option value="{{ p.code }}" {% if x.for_person == p.code %}selected{% endif %}>{{ p.label }}</option>{% endfor %}
+          </select>
+          <button type="button" class="link text-xs" data-for-category data-label="{{ page.t("for_category") }}" hidden></button>
+        </div>
+        {% endif %}
         {% for e in x.errors %}<p class="field-error">{{ e }}</p>{% endfor %}
       </div>
       {% endfor %}
     </div>
+    {% if !people.is_empty() %}<p class="for-summary" data-for-summary aria-live="polite" data-all="{{ page.t("for_all") }}">{{ self.for_summary() }}</p>{% endif %}
     {% call m::err(error, "items") %}{% endcall %}
     <p class="limit-note" data-limit-note aria-live="polite"></p>
     <button type="button" class="btn-ghost btn-sm mt-2" data-add-line hidden><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("plus") }}"></use></svg>{{ page.t("add_line") }}</button>

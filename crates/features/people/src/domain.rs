@@ -11,6 +11,8 @@ pub const MAX_TEXT: usize = 200;
 pub const MAX_ALIASES: usize = 20;
 /// Код записи участника, если в имени нет латиницы.
 pub const MEMBER_CODE: &str = "MEMBER";
+/// Коды, которых у человека не бывает: `all` в запросах и фильтрах — «Для всех».
+pub const RESERVED: &[&str] = &["ALL"];
 
 /// Человек, для которого покупка: участник проекта или человек без аккаунта (ребёнок, няня).
 /// Уникален в проекте по `code`, у участника — ещё и по `user_id`. Имя не переводится.
@@ -40,7 +42,11 @@ pub struct PersonData {
 impl Person {
     /// Человек без аккаунта — только явно (форма, REST, `add_person`).
     pub fn create(project_id: Uuid, code: &str, data: PersonData) -> Result<Self, Problem> {
-        let mut person = Self::blank(project_id, kernel::code::fresh_code("code", code)?);
+        let code = kernel::code::fresh_code("code", code)?;
+        if RESERVED.contains(&code.as_str()) {
+            return Err(Problem::validation("code", tr(Some(crate::i18n::dict), "err.code_reserved", &[("code", &code)])));
+        }
+        let mut person = Self::blank(project_id, code);
         person.change(data)?;
         Ok(person)
     }
@@ -98,10 +104,11 @@ pub fn member_code(name: &str, taken: &[String]) -> String {
     base.truncate(kernel::code::MAX_CODE - 3);
     let base = base.trim_end_matches('_');
     let base = if base.bytes().any(|b| b.is_ascii_uppercase()) { base.to_string() } else { MEMBER_CODE.to_string() };
-    if !taken.contains(&base) {
+    let free = |c: &String| !taken.contains(c) && !RESERVED.contains(&c.as_str());
+    if free(&base) {
         return base;
     }
-    (2..).map(|n| format!("{base}_{n}")).find(|c| !taken.contains(c)).unwrap_or(base)
+    (2..).map(|n| format!("{base}_{n}")).find(free).unwrap_or(base)
 }
 
 /// Необязательный текст: пусто → `None`, не длиннее [`MAX_TEXT`].
@@ -153,6 +160,8 @@ mod tests {
         let taken = vec!["ANNA".to_string(), "ANNA_2".to_string(), "MEMBER".to_string()];
         assert_eq!(member_code("Anna", &taken), "ANNA_3");
         assert_eq!(member_code("Мария", &taken), "MEMBER_2");
+        assert_eq!(member_code("All", &none), "ALL_2", "ALL — «Для всех» в запросах");
+        assert!(Person::create(Uuid::new_v4(), "all", PersonData { name: "All".into(), aliases: vec![] }).is_err());
         let long = member_code(&"Very long name ".repeat(10), &none);
         assert!(long.len() <= kernel::code::MAX_CODE - 3 && !long.ends_with('_'), "{long}");
         assert!(kernel::code::fresh_code("code", &member_code("Ёлка Ølsen", &none)).is_ok());

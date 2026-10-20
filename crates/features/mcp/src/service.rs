@@ -114,6 +114,8 @@ pub fn tool_right(name: &str) -> Option<Right> {
         "add_category" | "update_category" => Right::write("categories"),
         "list_places" => Right::read("places"),
         "add_place" | "update_place" => Right::write("places"),
+        "list_people" => Right::read("people"),
+        "add_person" | "update_person" => Right::write("people"),
         "list_rates" => Right::read("rates"),
         "set_rate" => Right::write("rates"),
         "list_limits" => Right::read("limits"),
@@ -366,6 +368,7 @@ impl McpService {
             "write_accounts": can(Right::write("accounts")),
             "write_categories": can(Right::write("categories")),
             "write_places": can(Right::write("places")),
+            "write_people": can(Right::write("people")),
             "write_rates": can(Right::write("rates")),
             "write_limits": can(Right::write("limits")),
             "delete": false,
@@ -411,6 +414,11 @@ impl McpService {
         // Места (шаг 5): частые — с тем, что они подставят; все — list_places.
         data["frequent_places"] = q.places.iter().filter(|p| q.frequent_places.contains(&p.code)).take(FREQUENT_PLACES).map(place_info_json).collect();
         data["places_total"] = json!(q.places.len());
+        // Люди (шаг 6): все активные — их немного; запись пользователя — «для себя».
+        let people = self.deps.directories.people(caller.project_id).await?;
+        let mine = people.iter().find(|p| p.user_id == Some(caller.user_id));
+        data["people"] = people.iter().filter(|p| !p.archived).map(|p| person_json(p, caller.user_id)).collect();
+        data["my_person_code"] = json!(mine.map(|p| &p.code));
         Ok(ToolOutput {
             summary: format!(
                 "Project '{}', base currency {}, {} accounts, {} categories. Amounts of transactions are in the account currency.",
@@ -445,7 +453,11 @@ impl McpService {
             Some(p) => Some(find_record("place", &p, &self.deps.directories.places(caller.project_id).await?)?.code.clone()),
             None => None,
         };
-        let filter = TxFilter { from: Some(from), to: Some(to), account_code, kind, place_code };
+        let for_person = match a.for_whom.as_deref() {
+            Some(w) => Some(person_of(&self.deps.directories.people(caller.project_id).await?, "for", w, None)?),
+            None => None,
+        };
+        let filter = TxFilter { from: Some(from), to: Some(to), account_code, kind, place_code, for_person };
         let category_set: Option<HashSet<String>> = match a.category.as_deref() {
             Some(c) => {
                 let root = resolve("category", c, &q.categories, |x| &x.code, |x| x.search.clone())?.code.clone();
@@ -561,9 +573,9 @@ impl McpService {
     }
 
     /// Позиции операции из параметров: позиции или сумма+категория. Категории — по коду или названию.
-    fn items(&self, q: &QuickInfo, kind: &str, amount: Option<&str>, category: Option<&str>, items: Option<Vec<ItemArgs>>) -> Result<Vec<TxItem>, ToolError> {
+    fn items(&self, q: &QuickInfo, people: &[Person], kind: &str, amount: Option<&str>, category: Option<&str>, items: Option<Vec<ItemArgs>>) -> Result<Vec<TxItem>, ToolError> {
         match (items.filter(|i| !i.is_empty()), amount, category) {
-            (Some(items), None, None) => items.into_iter().enumerate().map(|(i, it)| item_from(q, kind, i + 1, it)).collect(),
+            (Some(items), None, None) => items.into_iter().enumerate().map(|(i, it)| item_from(q, people, None, kind, i + 1, it)).collect(),
             (None, Some(amount), Some(category)) => Ok(vec![TxItem::simple(category_code(q, kind, "category", category)?, parse_amount("amount", amount)?)]),
             (None, _, _) => Err(ToolError("pass amount and category, or items".into())),
             (Some(_), _, _) => Err(ToolError("pass either items or amount+category, not both".into())),
@@ -596,12 +608,17 @@ impl McpService {
         let place = clean(a.place).map(|p| place_of(&q, &p)).transpose()?;
         let place_category = place.and_then(|p| p.category_code.as_deref()).filter(|c| q.categories.iter().any(|x| x.code == *c && x.kind == kind));
         let category = a.category.as_deref().or(if a.items.is_none() { place_category } else { None });
-        let items = self.items(&q, kind, a.amount.as_deref(), category, a.items)?;
+        // Для кого (шаг 6): шапка и позиции — по коду или имени; по умолчанию — для всех.
+        let named = a.for_whom.is_some() || a.items.as_ref().is_some_and(|items| items.iter().any(|x| x.for_whom.is_some()));
+        let people = if named { self.deps.directories.people(caller.project_id).await? } else { Vec::new() };
+        let for_person = a.for_whom.as_deref().map(|w| person_of(&people, "for", w, None)).transpose()?;
+        let items = self.items(&q, &people, kind, a.amount.as_deref(), category, a.items)?;
         let place_account = place.and_then(|p| p.account_code.as_deref());
         let by_default = a.account.is_none() && place_account.is_none();
         let account_code = self.account(&q, "account", a.account.as_deref().or(place_account))?;
         let mut draft = blank_draft(kind, date, account_code, caller.lang);
         draft.place_code = place.map(|p| p.code.clone());
+        draft.for_person = for_person;
         draft.refund = kind == "EXPENSE" && a.refund.unwrap_or(false);
         draft.items = items;
         draft.discount_total = a.discount_total.as_deref().map(|v| parse_money("discount_total", v)).transpose()?;
@@ -610,6 +627,11 @@ impl McpService {
         self.audit_write(caller, tool, &[("transaction", tx.id.to_string())]).await;
         let mut data = json!({"transaction": tx_json(&tx, caller.lang)});
         let mut summary = format!("Saved {} {} {} on {} from account {}.", kind.to_lowercase(), tx.total.normalize(), tx.currency, tx.occurred_on, tx.account_code);
+        if let Some(who) = &tx.for_person_code {
+            summary.push_str(&format!(" For {who}."));
+        } else if tx.recipients_differ {
+            summary.push_str(" Items are for different people.");
+        }
         if by_default && tx.currency != caller.base_currency {
             // Счёт по умолчанию — последний использованный; если он в другой валюте, легко ошибиться.
             summary.push_str(&format!(
@@ -724,8 +746,15 @@ impl McpService {
             if a.to_account.is_some() || a.to_amount.is_some() {
                 return Err(ToolError("to_account and to_amount apply to transfers only".into()));
             }
+            // Для кого: прежние получатели операции остаются доступны и из архива.
+            let named = a.for_whom.is_some() || a.items.as_ref().is_some_and(|items| items.iter().any(|x| x.for_whom.is_some()));
+            let people = if named { self.deps.directories.people(caller.project_id).await? } else { Vec::new() };
+            let keep: Vec<String> = old.items.iter().filter_map(|x| x.for_person.clone().flatten()).collect();
+            if let Some(w) = a.for_whom.as_deref() {
+                draft.for_person = Some(person_of(&people, "for", w, Some(&keep))?);
+            }
             match (a.items, a.amount.as_deref(), a.category.as_deref()) {
-                (Some(items), None, None) => draft.items = items.into_iter().enumerate().map(|(i, it)| item_from(&q, &old.kind, i + 1, it)).collect::<Result<_, _>>()?,
+                (Some(items), None, None) => draft.items = items.into_iter().enumerate().map(|(i, it)| item_from(&q, &people, Some(&keep), &old.kind, i + 1, it)).collect::<Result<_, _>>()?,
                 (Some(_), _, _) => return Err(ToolError("pass either items or amount/category, not both".into())),
                 (None, None, None) => {}
                 (None, amount, category) => {
@@ -756,6 +785,9 @@ impl McpService {
         }
         if old.kind == "TRANSFER" && a.place.is_some() {
             return Err(ToolError("transfers have no place".into()));
+        }
+        if old.kind == "TRANSFER" && a.for_whom.is_some() {
+            return Err(ToolError("transfers have no recipient (for)".into()));
         }
         if a.description.is_some() || a.translations.is_some() || a.description_lang.is_some() {
             let description = a.description.or(old.description.clone());
@@ -1177,6 +1209,55 @@ impl McpService {
         let p = self.deps.directories.update_place(caller.project_id, &p).await?;
         self.audit_write(caller, "update_place", &[("place", p.code.clone())]).await;
         Ok(ToolOutput { summary: format!("Updated place {} '{}'.", p.code, p.title()), data: json!({"place": place_json(&p)}) })
+    }
+
+    /// Люди по имени; `text` — поиск по имени и другим именам без регистра и диакритики.
+    pub async fn list_people(&self, caller: &Caller, a: ListPeopleArgs) -> ToolResult {
+        self.check(caller, Right::read("people"))?;
+        let all = self.deps.directories.people(caller.project_id).await?;
+        let with_archived = a.include_archived.unwrap_or(false);
+        let needle = clean(a.text).map(|t| kernel::search::fold(&t));
+        let list: Vec<&Person> = all
+            .iter()
+            .filter(|p| with_archived || !p.archived)
+            .filter(|p| needle.as_ref().is_none_or(|n| kernel::search::fold(&format!("{}{}{}", p.names(), kernel::search::SEP, p.code)).contains(n.as_str())))
+            .collect();
+        Ok(ToolOutput {
+            summary: format!("{} people. Project members get their record automatically; use the codes in \"for\".", list.len()),
+            data: json!({"people": list.iter().map(|p| person_json(p, caller.user_id)).collect::<Vec<_>>(), "my_person_code": all.iter().find(|p| p.user_id == Some(caller.user_id)).map(|p| &p.code)}),
+        })
+    }
+
+    /// Человек без аккаунта (ребёнок, няня): только явно — сервер не создаёт людей из свободного текста.
+    pub async fn add_person(&self, caller: &Caller, a: AddPersonArgs) -> ToolResult {
+        self.check(caller, Right::write("people"))?;
+        let code = parse_code("code", &a.code)?;
+        let all = self.deps.directories.people(caller.project_id).await?;
+        if let Some(x) = all.iter().find(|x| x.code == code) {
+            return Err(taken("person", &x.code, &x.name, x.archived, "update_person"));
+        }
+        let person = Person { code, name: a.name.trim().to_string(), aliases: a.aliases.unwrap_or_default(), user_id: None, former_member: false, archived: false };
+        let p = self.deps.directories.create_person(caller.project_id, &person).await?;
+        self.audit_write(caller, "add_person", &[("person", p.code.clone())]).await;
+        Ok(ToolOutput { summary: format!("Added person {} '{}'.", p.code, p.name), data: json!({"person": person_json(&p, caller.user_id)}) })
+    }
+
+    pub async fn update_person(&self, caller: &Caller, a: UpdatePersonArgs) -> ToolResult {
+        self.check(caller, Right::write("people"))?;
+        if a.name.is_none() && a.aliases.is_none() {
+            return Err(nothing_to_change());
+        }
+        let all = self.deps.directories.people(caller.project_id).await?;
+        let mut p = find_record("code", &a.code, &all)?.clone();
+        if let Some(n) = a.name {
+            p.name = n.trim().to_string();
+        }
+        if let Some(list) = a.aliases {
+            p.aliases = list;
+        }
+        let p = self.deps.directories.update_person(caller.project_id, &p).await?;
+        self.audit_write(caller, "update_person", &[("person", p.code.clone())]).await;
+        Ok(ToolOutput { summary: format!("Updated person {} '{}'.", p.code, p.name), data: json!({"person": person_json(&p, caller.user_id)}) })
     }
 
     /// Код активной категории любого вида по коду или названию на любом языке.
@@ -1639,6 +1720,7 @@ fn blank_draft(kind: &str, date: NaiveDate, account_code: String, lang: Lang) ->
         plan_id: None,
         plan_date: None,
         place_code: None,
+        for_person: None,
     }
 }
 
@@ -1683,11 +1765,15 @@ fn item_json(x: &TxItem) -> Value {
     if let Some(n) = &x.note {
         v["note"] = json!(n);
     }
+    if let Some(Some(who)) = &x.for_person {
+        v["for"] = json!(who);
+    }
     v
 }
 
 /// Позиция из параметров инструмента: категория — по коду или названию, числа — как в форме («120+45»).
-fn item_from(q: &QuickInfo, kind: &str, i: usize, it: ItemArgs) -> Result<TxItem, ToolError> {
+/// `keep` — получатели правимой операции: их можно указать и после архивации.
+fn item_from(q: &QuickInfo, people: &[Person], keep: Option<&[String]>, kind: &str, i: usize, it: ItemArgs) -> Result<TxItem, ToolError> {
     let f = |name: &str| format!("items[{i}].{name}");
     let num = |name: &str, v: Option<String>| v.map(|v| parse_money(&f(name), &v)).transpose();
     // Количество и цена — до 6 знаков, без округления до 4.
@@ -1703,6 +1789,7 @@ fn item_from(q: &QuickInfo, kind: &str, i: usize, it: ItemArgs) -> Result<TxItem
         discount: num("discount", it.discount)?,
         amount: it.amount.map(|v| parse_amount(&f("amount"), &v)).transpose()?,
         note: it.note.map(|n| n.trim().to_string()),
+        for_person: it.for_whom.as_deref().map(|w| person_of(people, &f("for"), w, keep)).transpose()?,
     })
 }
 
@@ -1735,7 +1822,39 @@ fn tx_json(t: &Tx, lang: Lang) -> Value {
     if let Some(p) = &t.place_code {
         v["place"] = json!(p);
     }
+    // Для кого: общий получатель — у операции, разные — у позиций (items[].for); «Для всех» не пишется.
+    if let Some(who) = &t.for_person_code {
+        v["for"] = json!(who);
+    }
+    if t.recipients_differ {
+        v["recipients_differ"] = json!(true);
+    }
     v
+}
+
+/// Человек для ассистента: код, имя, другие имена; `you` — запись того, кто спрашивает.
+fn person_json(p: &Person, me: Uuid) -> Value {
+    let mut v = json!({"code": p.code, "name": p.name, "aliases": p.aliases, "member": p.user_id.is_some(), "archived": p.archived});
+    if p.user_id == Some(me) {
+        v["you"] = json!(true);
+    }
+    if p.former_member {
+        v["former_member"] = json!(true);
+    }
+    v
+}
+
+/// Для кого: код, имя или другое имя человека; "all" или пусто — «Для всех» (`None`). Только активные, кроме `keep` —
+/// получателей правимой операции.
+fn person_of(people: &[Person], field: &str, value: &str, keep: Option<&[String]>) -> Result<Option<String>, ToolError> {
+    let v = value.trim();
+    if v.is_empty() || v.eq_ignore_ascii_case("all") {
+        return Ok(None);
+    }
+    let keep = keep.unwrap_or_default();
+    let usable: Vec<&Person> = people.iter().filter(|p| !p.archived || keep.contains(&p.code)).collect();
+    let found = resolve(field, v, &usable, |x| &x.code, |x| x.names()).map_err(|e| ToolError(format!("{e}; get_context lists people, add_person adds one")))?;
+    Ok(Some(found.code.clone()))
 }
 
 /// Место для ассистента: код, название и что оно подставит.

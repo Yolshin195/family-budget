@@ -77,14 +77,27 @@ fn items_of(old: Option<&Tx>, d: &TxDraft) -> Vec<TxItem> {
         Some(t) if !d.replace_items => t.items.iter().filter(|x| !d.remove_item_ids.contains(&x.id.unwrap_or_default())).cloned().collect(),
         _ => Vec::new(),
     };
+    // Для кого — как в transactions: шапка достаётся позициям с прежним общим получателем и новым без своего.
+    let old_common = old.and_then(|t| t.for_person_code.clone());
+    if let Some(h) = &d.for_person {
+        for i in items.iter_mut().filter(|i| i.for_person.clone().flatten() == old_common) {
+            i.for_person = Some(h.clone());
+        }
+    }
     for x in &d.items {
         match items.iter_mut().find(|i| x.id.is_some() && i.id == x.id) {
             Some(i) => {
                 i.amount = x.amount.or(i.amount);
                 i.category_code = x.category_code.clone().or(i.category_code.clone());
                 i.name = x.name.clone().or(i.name.clone());
+                i.for_person = x.for_person.clone().or(i.for_person.clone());
             }
-            None => items.push(TxItem { id: Some(Uuid::new_v4()), quantity: x.quantity.or(Some(Decimal::ONE)), ..x.clone() }),
+            None => items.push(TxItem {
+                id: Some(Uuid::new_v4()),
+                quantity: x.quantity.or(Some(Decimal::ONE)),
+                for_person: Some(x.for_person.clone().or(d.for_person.clone()).unwrap_or(old_common.clone())),
+                ..x.clone()
+            }),
         }
     }
     items
@@ -100,7 +113,6 @@ fn tx_of(id: Uuid, user: Uuid, d: &TxDraft, old: Option<&Tx>) -> Tx {
         account_code: d.account_code.clone(),
         to_account_code: d.to_account_code.clone(),
         refund: d.refund,
-        items,
         total,
         currency: if d.account_code == "WISE" { "USD" } else { "THB" }.into(),
         to_amount: d.to_amount,
@@ -116,6 +128,9 @@ fn tx_of(id: Uuid, user: Uuid, d: &TxDraft, old: Option<&Tx>) -> Tx {
         plan_id: d.plan_id,
         plan_date: d.plan_date,
         place_code: d.place_code.clone(),
+        for_person_code: items.first().and_then(|f| f.for_person.clone().flatten()).filter(|c| items.iter().all(|x| x.for_person.clone().flatten().as_ref() == Some(c))),
+        recipients_differ: items.iter().any(|x| x.for_person != items[0].for_person),
+        items,
     }
 }
 
@@ -131,6 +146,7 @@ impl Ledger for Arc<FakeLedger> {
             .unwrap()
             .iter()
             .filter(|t| filter.kind.as_ref().is_none_or(|k| &t.kind == k) && filter.place_code.as_ref().is_none_or(|p| t.place_code.as_ref() == Some(p)))
+            .filter(|t| filter.for_person.as_ref().is_none_or(|who| t.items.iter().any(|x| x.for_person.as_ref() == Some(who))))
             .cloned()
             .collect();
         let total = all.len() as i64;
@@ -227,6 +243,7 @@ struct FakeDirs {
     accounts: Mutex<Vec<Account>>,
     categories: Mutex<Vec<Category>>,
     places: Mutex<Vec<Place>>,
+    people: Mutex<Vec<Person>>,
     openings: Mutex<Vec<(String, Decimal, NaiveDate)>>,
 }
 
@@ -268,6 +285,10 @@ impl Default for FakeDirs {
                     archived: false,
                 },
                 Place { code: "OLD".into(), name: "Old market".into(), aliases: vec![], category_code: None, account_code: None, kind: "MARKET".into(), location: None, archived: true },
+            ]),
+            people: Mutex::new(vec![
+                Person { code: "PINPAN".into(), name: "Pinpan".into(), aliases: vec!["ปิ่นปั่น".into()], user_id: None, former_member: false, archived: false },
+                Person { code: "NANNY".into(), name: "Old nanny".into(), aliases: vec![], user_id: None, former_member: false, archived: true },
             ]),
             openings: Mutex::default(),
         }
@@ -326,6 +347,16 @@ impl Directories for Arc<FakeDirs> {
     }
     async fn update_place(&self, _p: Uuid, x: &Place) -> AppResult<Place> {
         upsert(&self.places, x, |y| y.code == x.code)
+    }
+    async fn people(&self, _p: Uuid) -> AppResult<Vec<Person>> {
+        Ok(self.people.lock().unwrap().clone())
+    }
+    async fn create_person(&self, _p: Uuid, x: &Person) -> AppResult<Person> {
+        self.people.lock().unwrap().push(x.clone());
+        Ok(x.clone())
+    }
+    async fn update_person(&self, _p: Uuid, x: &Person) -> AppResult<Person> {
+        upsert(&self.people, x, |y| y.code == x.code)
     }
 }
 
@@ -847,7 +878,7 @@ async fn directories_checkbox_grants_all_directory_rights() {
     let e = env();
     e.grant(&["directories", "limits:write"]).await;
     let g = e.svc.grants(e.user).await.unwrap().remove(0);
-    assert_eq!(g.scopes, vec!["read", "currencies:write", "accounts:write", "categories:write", "places:write", "rates:write", "limits:write"]);
+    assert_eq!(g.scopes, vec!["read", "currencies:write", "accounts:write", "categories:write", "places:write", "people:write", "rates:write", "limits:write"]);
     let c = e.caller(&e.oauth()).await;
     assert!(e.svc.visible(&c, "add_currency") && e.svc.visible(&c, "set_rate") && e.svc.visible(&c, "set_limit") && e.svc.visible(&c, "add_place"));
     assert!(!e.svc.visible(&c, "add_plan") && !e.svc.visible(&c, "add_expense"));
@@ -1344,4 +1375,70 @@ async fn places_directory_tools() {
     let p = e.dirs.places.lock().unwrap().iter().find(|p| p.code == "CAFE_AMAZON").cloned().unwrap();
     assert_eq!((p.aliases.len(), p.category_code), (0, None));
     assert!(e.svc.update_place(&c, UpdatePlaceArgs { code: "CAFE_AMAZON".into(), ..Default::default() }).await.unwrap_err().0.contains("nothing to change"));
+}
+
+// ---------------------------------------------------------------- люди и «Для кого» (шаг 6)
+
+/// `for` у операции и позиций — по коду или имени; по умолчанию — для всех; правка шапки меняет позиции с прежним
+/// общим получателем; фильтр ленты; get_context отдаёт людей и запись пользователя.
+#[tokio::test]
+async fn recipients_in_transactions() {
+    let e = env();
+    e.dirs.people.lock().unwrap().push(Person { code: "ALEKSEY".into(), name: "Алексей".into(), aliases: vec![], user_id: Some(e.user), former_member: false, archived: false });
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let ctx = e.svc.get_context(&c).await.unwrap();
+    assert_eq!(ctx.data["my_person_code"], "ALEKSEY");
+    assert_eq!(ctx.data["people"].as_array().unwrap().len(), 2, "архивных нет");
+    assert_eq!(ctx.data["permissions"]["write_people"], false);
+    e.svc.add_expense(&c, expense("10", "cafe")).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[0].items[0].for_person, Some(None), "по умолчанию — для всех");
+    let out = e.svc.add_expense(&c, AddFlowArgs { for_whom: Some("ปิ่นปั่น".into()), ..expense("45", "cafe") }).await.unwrap();
+    assert!(out.summary.contains("For PINPAN"), "{}", out.summary);
+    assert_eq!(out.data["transaction"]["for"], "PINPAN");
+    let items = vec![
+        ItemArgs { category: Some("cafe".into()), amount: Some("88".into()), for_whom: Some("all".into()), ..Default::default() },
+        ItemArgs { category: Some("cafe".into()), amount: Some("45".into()), for_whom: Some("Алексей".into()), ..Default::default() },
+        ItemArgs { category: Some("cafe".into()), amount: Some("22".into()), ..Default::default() },
+    ];
+    let out = e.svc.add_expense(&c, AddFlowArgs { for_whom: Some("PINPAN".into()), items: Some(items), ..Default::default() }).await.unwrap();
+    let who: Vec<Option<Option<String>>> = e.ledger.txs.lock().unwrap()[2].items.iter().map(|x| x.for_person.clone()).collect();
+    assert_eq!(who, vec![Some(None), Some(Some("ALEKSEY".into())), Some(Some("PINPAN".into()))]);
+    assert_eq!(out.data["transaction"]["recipients_differ"], true);
+    assert_eq!(out.data["transaction"]["items"][1]["for"], "ALEKSEY");
+    for bad in ["Old nanny", "Nobody"] {
+        let err = e.svc.add_expense(&c, AddFlowArgs { for_whom: Some(bad.into()), ..expense("1", "cafe") }).await.unwrap_err();
+        assert!(err.0.starts_with("for:") && err.0.contains("add_person"), "{bad}: {}", err.0);
+    }
+    // Правка: шапка PINPAN → all меняет позиции с прежним общим получателем.
+    let id = e.ledger.txs.lock().unwrap()[1].id.to_string();
+    e.svc.update_transaction(&c, UpdateTransactionArgs { id: id.clone(), for_whom: Some("all".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(e.ledger.txs.lock().unwrap()[1].for_person_code, None);
+    let list = e.svc.list_transactions(&c, ListTransactionsArgs { for_whom: Some("pinpan".into()), from: Some("2000-01-01".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(list.data["total"], 1);
+    e.svc.add_transfer(&c, AddTransferArgs { from_account: "CASH".into(), to_account: "CARD".into(), amount: "100".into(), ..Default::default() }).await.unwrap();
+    let transfer = e.ledger.txs.lock().unwrap().last().unwrap().id.to_string();
+    let err = e.svc.update_transaction(&c, UpdateTransactionArgs { id: transfer, for_whom: Some("PINPAN".into()), ..Default::default() }).await.unwrap_err();
+    assert!(err.0.contains("no recipient"), "{}", err.0);
+}
+
+/// Людей добавляют и меняют только с правом «Люди» (или «Все справочники»); код ALL занят под «Для всех».
+#[tokio::test]
+async fn people_directory_tools() {
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let add = || AddPersonArgs { code: "nanny_ann".into(), name: "Ann".into(), aliases: Some(vec!["Аня".into()]) };
+    assert!(e.svc.add_person(&c, add()).await.unwrap_err().0.contains("people:write"));
+    e.grant(&["read", "directories"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let out = e.svc.add_person(&c, add()).await.unwrap();
+    assert!(out.summary.contains("NANNY_ANN 'Ann'"), "{}", out.summary);
+    assert!(e.svc.add_person(&c, add()).await.unwrap_err().0.contains("already exists"));
+    let found = e.svc.list_people(&c, ListPeopleArgs { text: Some("аня".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(found.data["people"].as_array().unwrap().len(), 1);
+    e.svc.update_person(&c, UpdatePersonArgs { code: "Ann".into(), name: Some("Ann B.".into()), ..Default::default() }).await.unwrap();
+    assert!(e.dirs.people.lock().unwrap().iter().any(|p| p.code == "NANNY_ANN" && p.name == "Ann B."));
+    assert!(e.svc.update_person(&c, UpdatePersonArgs { code: "NANNY_ANN".into(), ..Default::default() }).await.unwrap_err().0.contains("nothing to change"));
+    assert!(e.svc.visible(&c, "add_person"));
 }

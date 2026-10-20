@@ -146,6 +146,8 @@ pub struct Item {
     /// Сумма позиции > 0: с ценой — `round(количество × цена) − скидка`, без цены — введённая.
     pub amount: Decimal,
     pub note: Option<String>,
+    /// Для кого (справочник `people`, шаг 6); `None` — «Для всех».
+    pub for_person: Option<String>,
 }
 
 impl Item {
@@ -174,6 +176,8 @@ pub struct ItemDraft {
     pub discount: Option<Decimal>,
     pub amount: Option<Decimal>,
     pub note: Option<String>,
+    /// Для кого: `None` — не указано (из шапки, у позиции с `id` — по правилу 5.6), `Some(None)` — «Для всех».
+    pub for_person: Option<Option<String>>,
 }
 
 impl ItemDraft {
@@ -197,6 +201,9 @@ pub struct ItemsDraft {
     pub remove: Vec<Uuid>,
     /// Скидка на чек: делится по позициям пропорционально сумме и прибавляется к их скидкам; не хранится.
     pub discount_total: Option<Decimal>,
+    /// «Для кого по умолчанию» (шапка, раздел 5.6): не хранится — выводится из позиций. `None` — не указано,
+    /// `Some(None)` — «Для всех».
+    pub for_default: Option<Option<String>>,
 }
 
 impl ItemsDraft {
@@ -475,7 +482,20 @@ fn item(i: usize, d: ItemDraft, old: Option<&Item>, patch: bool, cur: &AccountCu
         discount,
         amount,
         note: keep(d.note, base.map(|o| &o.note)),
+        // Получателя выбирает `resolve_items`: он зависит от шапки и остальных позиций.
+        for_person: None,
     })
+}
+
+/// Получатель всего чека (раздел 5.6): у всех позиций один — он, иначе (и без позиций) — «Для всех».
+pub fn common_recipient(items: &[Item]) -> Option<String> {
+    let first = items.first()?.for_person.clone();
+    items.iter().all(|x| x.for_person == first).then_some(first).flatten()
+}
+
+/// Код получателя из запроса: пусто — «Для всех».
+fn recipient(field: &str, value: Option<String>) -> Result<Option<String>, Problem> {
+    value.filter(|v| !v.trim().is_empty()).map(|v| kernel::code::code(field, &v)).transpose()
 }
 
 /// Скидка на чек: доли пропорционально суммам позиций (вниз до точности валюты), остаток округления —
@@ -519,7 +539,17 @@ fn resolve_items(d: ItemsDraft, existing: &[Item], cur: &AccountCurrency) -> Res
         }
     }
     let patch = !d.replace;
-    let mut out: Vec<Item> = if patch { existing.iter().filter(|x| !d.remove.contains(&x.id)).cloned().collect() } else { Vec::new() };
+    // Для кого (раздел 5.6): шапка не хранится. Её смена меняет позиции со старым — выведенным — значением;
+    // новые позиции без получателя берут шапку.
+    let old_default = common_recipient(existing);
+    let header = d.for_default.map(|v| recipient("for_person_code", v)).transpose()?;
+    let new_default = header.clone().unwrap_or_else(|| old_default.clone());
+    let follow = |cur: &Option<String>| if header.is_some() && *cur == old_default { new_default.clone() } else { cur.clone() };
+    let mut out: Vec<Item> = if patch {
+        existing.iter().filter(|x| !d.remove.contains(&x.id)).map(|x| Item { for_person: follow(&x.for_person), ..x.clone() }).collect()
+    } else {
+        Vec::new()
+    };
     let mut seen: Vec<Uuid> = Vec::new();
     for (n, draft) in d.items.into_iter().enumerate() {
         let old = match draft.id {
@@ -534,7 +564,12 @@ fn resolve_items(d: ItemsDraft, existing: &[Item], cur: &AccountCurrency) -> Res
             }
         };
         let slot = if patch { old.and_then(|o| out.iter().position(|x| x.id == o.id)) } else { None };
-        let new = item(slot.map_or(out.len(), |s| s) + 1, draft, old, patch, cur)?;
+        let n = slot.map_or(out.len(), |s| s) + 1;
+        let for_person = match draft.for_person.clone() {
+            Some(v) => recipient(&format!("items[{n}].for_person_code"), v)?,
+            None => old.map_or_else(|| new_default.clone(), |o| follow(&o.for_person)),
+        };
+        let new = Item { for_person, ..item(n, draft, old, patch, cur)? };
         match slot {
             Some(s) => out[s] = new,
             None => out.push(new),

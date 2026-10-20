@@ -189,3 +189,27 @@ impl ::transactions::PlacesLookup for PlacesLookupAdapter {
         Ok(Vec::new())
     }
 }
+
+/// Люди из фичи `people` (без неё все позиции — «Для всех»).
+#[derive(Default)]
+pub struct PeopleLookupAdapter {
+    #[cfg(feature = "people")]
+    pub people: Option<Arc<::people::Service>>,
+}
+
+#[async_trait]
+impl ::transactions::PeopleLookup for PeopleLookupAdapter {
+    async fn all(&self, project_id: Uuid, lang: kernel::i18n::Lang) -> AppResult<Vec<::transactions::PersonInfo>> {
+        #[cfg(feature = "people")]
+        if let Some(people) = &self.people {
+            return Ok(people
+                .all(project_id, true)
+                .await?
+                .into_iter()
+                .map(|p| ::transactions::PersonInfo { title: p.title(lang), search: p.search(lang), code: p.code, user_id: p.user_id, archived: p.archived })
+                .collect());
+        }
+        let _ = (project_id, lang);
+        Ok(Vec::new())
+    }
+}

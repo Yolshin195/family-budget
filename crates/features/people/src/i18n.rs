@@ -40,6 +40,7 @@ pub fn dict(key: &str) -> Option<Tr> {
         ),
         // Ошибки (техдолг #9): на языке запроса.
         "err.code_taken" => ("код «{code}» уже занят", "the code “{code}” is already taken", "รหัส “{code}” ถูกใช้แล้ว"),
+        "err.code_reserved" => ("код «{code}» зарезервирован: так в запросах обозначают «Для всех»", "the code “{code}” is reserved: it means “For everyone” in requests", "รหัส “{code}” สงวนไว้ หมายถึง “สำหรับทุกคน” ในคำขอ"),
         "err.not_found" => ("человек «{code}» не найден", "person “{code}” not found", "ไม่พบบุคคล “{code}”"),
         "err.too_long" => ("не длиннее {max} знаков", "{max} characters at most", "ไม่เกิน {max} ตัวอักษร"),
         "err.too_many_aliases" => ("не больше {max} имён", "{max} names at most", "ไม่เกิน {max} ชื่อ"),

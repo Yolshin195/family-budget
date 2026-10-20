@@ -10,9 +10,9 @@
 {% block content %}
 <div class="toolbar">
   <nav class="pager" aria-label="{{ page.t("month_nav") }}">
-    <a class="btn-icon" href="?month={{ prev }}&amp;account={{ kernel::web::url_encode(params.account) }}&amp;kind={{ params.kind }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("prev_month") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
+    <a class="btn-icon" href="?month={{ prev }}&amp;{{ params.query() }}" aria-label="{{ page.t("prev_month") }}" rel="prev"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-left") }}"></use></svg></a>
     <span class="pager-title" aria-live="polite">{{ month_title }}</span>
-    <a class="btn-icon" href="?month={{ next }}&amp;account={{ kernel::web::url_encode(params.account) }}&amp;kind={{ params.kind }}&amp;member={{ params.member }}&amp;untranslated={{ params.untranslated }}" aria-label="{{ page.t("next_month") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
+    <a class="btn-icon" href="?month={{ next }}&amp;{{ params.query() }}" aria-label="{{ page.t("next_month") }}" rel="next"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("chevron-right") }}"></use></svg></a>
   </nav>
   <form class="filters" method="get" data-autosubmit>
     <input type="hidden" name="month" value="{{ month }}">
@@ -31,6 +31,14 @@
     <select class="input input-sm" id="f-member" name="member">
       <option value="">{{ page.t("all_members") }}</option>
       {% for mbr in page.session.members %}<option value="{{ mbr.user_id }}" {% if params.member == mbr.user_id.to_string() %}selected{% endif %}>{{ mbr.name }}</option>{% endfor %}
+    </select>
+    {% endif %}
+    {% if !people.is_empty() %}
+    <label class="sr-only" for="f-for">{{ page.t("for_whom") }}</label>
+    <select class="input input-sm" id="f-for" name="for">
+      <option value="">{{ page.t("all_recipients") }}</option>
+      <option value="all" {% if params.for_person == "all" %}selected{% endif %}>{{ page.t("for_all") }}</option>
+      {% for x in people %}<option value="{{ x.code }}" {% if params.for_person.to_uppercase() == x.code %}selected{% endif %}>{{ x.label }}</option>{% endfor %}
     </select>
     {% endif %}
     <label class="checkbox checkbox-sm">
@@ -60,19 +68,21 @@
         <p class="flex flex-wrap items-center gap-2">
           <span class="font-medium">{{ t.desc }}</span>
           {% call m::no_tr(page, t.missing) %}{% endcall %}
+          {% if let Some(r) = t.recipient %}<span class="badge"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("users") }}"></use></svg>{{ r }}</span>{% endif %}
           {% if t.dto.plan_id.is_some() %}<span class="badge badge-info"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("calendar-check") }}"></use></svg>{{ page.t("from_plan") }}</span>{% endif %}
         </p>
         <p class="text-xs text-subtle mt-0.5">{{ t.meta }}</p>
         {% if !t.groups.is_empty() %}
         <ul class="tx-lines">
           {% for g in t.groups %}
-            <li><span>{{ g.category }}</span><span class="amount">{{ g.amount }}</span></li>
-            {% for x in g.items %}<li class="tx-item">{{ x }}</li>{% endfor %}
+            <li><span>{{ g.category }}{% if let Some(l) = g.label %} <span class="tx-for">{{ l }}</span>{% endif %}</span><span class="amount">{{ g.amount }}</span></li>
+            {% for (x, l) in g.items %}<li class="tx-item">{{ x }}{% if let Some(l) = l %} <span class="tx-for">{{ l }}</span>{% endif %}</li>{% endfor %}
           {% endfor %}
         </ul>
         {% else if !t.category.is_empty() %}
           <p class="text-sm text-muted mt-1">{{ t.category }}</p>
         {% endif %}
+        {% if let Some(sm) = t.for_summary %}<p class="text-xs text-muted mt-0.5">{{ sm }}</p>{% endif %}
         {% for n in t.notes %}<p class="text-xs text-muted mt-0.5">{{ n }}</p>{% endfor %}
       </div>
       <div class="tx-side">

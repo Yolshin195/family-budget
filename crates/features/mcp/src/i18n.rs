@@ -31,6 +31,7 @@ pub fn dict(key: &str) -> Option<Tr> {
         "scope.accounts:write" => ("Счета: добавлять и изменять", "Accounts: add and edit", "บัญชี: เพิ่มและแก้ไข"),
         "scope.categories:write" => ("Категории: добавлять, переименовывать, переносить", "Categories: add, rename, move", "หมวดหมู่: เพิ่ม เปลี่ยนชื่อ ย้าย"),
         "scope.places:write" => ("Места: добавлять и изменять", "Places: add and edit", "สถานที่: เพิ่มและแก้ไข"),
+        "scope.people:write" => ("Люди: добавлять и изменять", "People: add and edit", "บุคคล: เพิ่มและแก้ไข"),
         "scope.rates:write" => ("Курсы валют: задавать и исправлять", "Exchange rates: set and correct", "อัตราแลกเปลี่ยน: กำหนดและแก้ไข"),
         "scope.limits:write" => ("Лимиты: задавать и изменять", "Limits: set and change", "วงเงิน: กำหนดและเปลี่ยน"),
         "scope.planning:write" => (

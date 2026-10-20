@@ -22,10 +22,12 @@ Call get_context first: it returns the project, base currency, accounts with bal
 frequent categories and places, and your permissions. Use exact codes from it (or names — they are matched in any language). \
 A place (shop, café, market) fills in its category and account: pass `place` when the receipt or the user names one; \
 a place is never created from a receipt alone — only with add_place when the user agrees. Place names are not translated. \
+By default a purchase is for everyone; pass `for` (a person from get_context → people, my_person_code is the user) only when \
+the user says who it is for — for the whole transaction or per item. A person is added only with add_person when the user agrees. \
 Transaction amounts are in the account currency; budget figures are in the base currency. \
 Dates are YYYY-MM-DD in the user's local calendar. Write the description in the user's language and, when you can, \
 pass translations into the other two languages (ru, en, th) — names of currencies, accounts, categories and plans too. \
-Depending on permissions you can also add and edit currencies, accounts, categories, places, exchange rates, limits and plans; \
+Depending on permissions you can also add and edit currencies, accounts, categories, places, people, exchange rates, limits and plans; \
 an exchange rate is the number of base-currency units for 1 unit of the currency (set_rate also takes the inverse: \
 units of the currency for 1 unit of the base currency). \
 Deleting or archiving anything is not possible through this server; \
@@ -266,6 +268,33 @@ impl BudgetServer {
     async fn update_place(&self, Parameters(a): Parameters<UpdatePlaceArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
         let c = caller(&ctx)?;
         reply(kernel::i18n::scope(c.lang, self.svc.update_place(&c, a)).await)
+    }
+
+    #[tool(
+        description = "People the purchases can be for: project members (created automatically) and people without an account, such as kids. Code, name, other names; you=true marks the user. Pass text to search names in any language.",
+        annotations(title = "People", read_only_hint = true, open_world_hint = false)
+    )]
+    async fn list_people(&self, Parameters(a): Parameters<ListPeopleArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
+        let c = caller(&ctx)?;
+        reply(kernel::i18n::scope(c.lang, self.svc.list_people(&c, a)).await)
+    }
+
+    #[tool(
+        description = "Add a person without an account (a child, a nanny) only when the user asks or confirms: code, name (not translated), other names. Project members get their record automatically.",
+        annotations(title = "Add person", read_only_hint = false, destructive_hint = false, idempotent_hint = false, open_world_hint = false)
+    )]
+    async fn add_person(&self, Parameters(a): Parameters<AddPersonArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
+        let c = caller(&ctx)?;
+        reply(kernel::i18n::scope(c.lang, self.svc.add_person(&c, a)).await)
+    }
+
+    #[tool(
+        description = "Change a person by code: name, other names (the list is replaced). Only the passed fields change. Confirm with the user first.",
+        annotations(title = "Edit person", read_only_hint = false, destructive_hint = true, idempotent_hint = true, open_world_hint = false)
+    )]
+    async fn update_person(&self, Parameters(a): Parameters<UpdatePersonArgs>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, McpError> {
+        let c = caller(&ctx)?;
+        reply(kernel::i18n::scope(c.lang, self.svc.update_person(&c, a)).await)
     }
 
     #[tool(

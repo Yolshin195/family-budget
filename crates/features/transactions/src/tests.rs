@@ -17,8 +17,11 @@ use kernel::testing::TestDb;
 use crate::adapters::memory::InMemoryTransactionRepository;
 use crate::adapters::postgres::PostgresTransactionRepository;
 use crate::dto::{ItemInput, LineDto, ListQuery, TransactionInput, TranslationInput};
-use crate::domain::{AccountCurrency, Description};
-use crate::ports::{AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, Deps, PlaceInfo, PlacesLookup, PlanOccurrence, PlansLookup};
+use crate::domain::{AccountCurrency, Description, Draft, ItemDraft, ItemsDraft, Transaction, TransactionData};
+use crate::ports::{
+    AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, Deps, PeopleLookup, PersonInfo, PlaceInfo, PlacesLookup, PlanOccurrence,
+    PlansLookup,
+};
 use crate::service::TransactionService;
 
 struct FakeAccounts;
@@ -135,8 +138,26 @@ impl PlacesLookup for FakePlaces {
     }
 }
 
+/// Люди: PINPAN и ANNA (участник), OLD — в архиве.
+struct FakePeople;
+
+#[async_trait::async_trait]
+impl PeopleLookup for FakePeople {
+    async fn all(&self, _p: Uuid, _lang: Lang) -> AppResult<Vec<PersonInfo>> {
+        let x = |code: &str, user: Option<Uuid>, archived: bool| PersonInfo { code: code.into(), title: code.to_lowercase(), search: code.into(), user_id: user, archived };
+        Ok(vec![x("PINPAN", None, false), x("ANNA", Some(Uuid::nil()), false), x("OLD", None, true)])
+    }
+}
+
 fn deps() -> Deps {
-    Deps { accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), budget: Arc::new(FakeBudget), plans: Arc::new(FakePlans), places: Arc::new(FakePlaces) }
+    Deps {
+        accounts: Arc::new(FakeAccounts),
+        categories: Arc::new(FakeCategories),
+        budget: Arc::new(FakeBudget),
+        plans: Arc::new(FakePlans),
+        places: Arc::new(FakePlaces),
+        people: Arc::new(FakePeople),
+    }
 }
 
 fn service() -> TransactionService {
@@ -806,6 +827,85 @@ on_each_repo! {
         edit.place_code = None;
         let edited = svc.update(p, t.id, edit).await.unwrap();
         assert_eq!((edited.place_code, edited.items[0].category_code.as_str()), (None, "FOOD"));
+    }
+}
+
+fn item(cat: &str, amount: &str, who: Option<&str>) -> ItemInput {
+    ItemInput { category_code: Some(cat.into()), amount: Some(d(amount)), for_person_code: who.map(Into::into), ..Default::default() }
+}
+
+on_each_repo! {
+    /// Шаг 6 (разделы 5.2, 5.6): «Для кого» шапки получают позиции без своего получателя, `all` — «Для всех» явно;
+    /// шапка не хранится — выводится из позиций; новый получатель — только активный человек.
+    async fn recipients_on_create(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let plain = svc.create(p, u, receipt(&[("food", "10")])).await.unwrap();
+        assert_eq!((plain.items[0].for_person_code.clone(), plain.for_person_code.clone(), plain.recipients_differ), (None, None, false), "по умолчанию — для всех");
+        let one = TransactionInput { for_person_code: Some("pinpan".into()), items: vec![item("food", "45", None), item("cafe", "22", None)], ..input("EXPENSE", "card") };
+        let t = svc.create(p, u, one).await.unwrap();
+        assert!(t.items.iter().all(|x| x.for_person_code.as_deref() == Some("PINPAN")));
+        assert_eq!((t.for_person_code.as_deref(), t.recipients_differ), (Some("PINPAN"), false));
+        let mixed = TransactionInput {
+            for_person_code: Some("PINPAN".into()),
+            items: vec![item("food", "88", Some("all")), item("cafe", "45", Some("anna")), item("home", "22", None)],
+            ..input("EXPENSE", "card")
+        };
+        let t = svc.create(p, u, mixed).await.unwrap();
+        let who: Vec<Option<&str>> = t.items.iter().map(|x| x.for_person_code.as_deref()).collect();
+        assert_eq!(who, vec![None, Some("ANNA"), Some("PINPAN")]);
+        assert_eq!((t.for_person_code.clone(), t.recipients_differ), (None, true));
+        for (bad, field) in [(TransactionInput { for_person_code: Some("OLD".into()), ..receipt(&[("food", "1")]) }, "for_person_code"), (TransactionInput { items: vec![item("food", "1", Some("NOBODY"))], ..input("EXPENSE", "card") }, "items[1].for_person_code")] {
+            assert_eq!(problem(svc.create(p, u, bad).await.unwrap_err()), (kernel::error::codes::NOT_FOUND, field.to_string()));
+        }
+        let tr = svc.create(p, u, TransactionInput { for_person_code: Some("PINPAN".into()), ..transfer("card", "cash", "100", None, None) }).await.unwrap();
+        assert_eq!((tr.items.len(), tr.for_person_code), (0, None), "у перевода получателя нет");
+    }
+}
+
+on_each_repo! {
+    /// Правка (5.6): смена шапки меняет только позиции с прежним выведенным получателем; не названные позиции
+    /// остаются как были; новая позиция берёт шапку; получатель, который уже был, остаётся и после архива.
+    async fn recipients_on_update(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let t = svc.create(p, u, TransactionInput { items: vec![item("food", "88", None), item("cafe", "45", Some("ANNA")), item("home", "22", None)], ..input("EXPENSE", "card") }).await.unwrap();
+        // Выведенная шапка — «Для всех» (разные): PINPAN получают позиции «Для всех», у Анны — её позиция.
+        let ids: Vec<Uuid> = t.items.iter().map(|x| x.id).collect();
+        let patch = TransactionInput { for_person_code: Some("PINPAN".into()), items: vec![ItemInput { id: Some(ids[0]), ..Default::default() }, item("food", "5", None)], ..input("EXPENSE", "card") };
+        let t2 = svc.update(p, t.id, patch).await.unwrap();
+        let who: Vec<Option<&str>> = t2.items.iter().map(|x| x.for_person_code.as_deref()).collect();
+        assert_eq!(who, vec![Some("PINPAN"), Some("ANNA"), Some("PINPAN"), Some("PINPAN")]);
+        // Без шапки — получатели как были; позиция по `id` с `all` — «Для всех».
+        let t3 = svc.update(p, t.id, TransactionInput { items: vec![ItemInput { id: Some(ids[1]), for_person_code: Some("all".into()), ..Default::default() }], ..input("EXPENSE", "card") }).await.unwrap();
+        assert_eq!(t3.items.iter().filter(|x| x.for_person_code.is_none()).count(), 1);
+    }
+}
+
+/// Получатель в архиве остаётся у операции, у которой он уже был; новой операции его не дать.
+#[test]
+fn archived_recipient_is_kept() {
+    let people = vec![PersonInfo { code: "OLD".into(), title: "old".into(), search: "OLD".into(), user_id: None, archived: true }];
+    let accounts = vec![AccountCurrency { code: "CARD".into(), currency: "THB".into(), minor_units: 2 }];
+    let items = ItemsDraft { for_default: Some(Some("OLD".into())), ..ItemsDraft::replace(vec![ItemDraft::simple("FOOD", d("3"))]) };
+    let data = TransactionData { occurred_on: day(3), description: Description::default(), plan: None, place_code: None, body: Draft::Flow { income: false, account: "CARD".into(), items, refund: false } };
+    let t = Transaction::create(Uuid::new_v4(), Uuid::new_v4(), data, &accounts).unwrap();
+    assert!(crate::service::check_people(&people, &t, None).is_err(), "новый получатель — только активный");
+    assert!(crate::service::check_people(&people, &t, Some(&t)).is_ok(), "прежний остаётся");
+}
+
+on_each_repo! {
+    /// Фильтр «Для кого» (раздел 6): операции с позицией этого человека, `all` — с позицией «Для всех»;
+    /// итоги ленты — только по его позициям.
+    async fn feed_by_recipient(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        svc.create(p, u, TransactionInput { items: vec![item("food", "88", None), item("cafe", "45", Some("ANNA")), item("home", "22", Some("PINPAN"))], ..input("EXPENSE", "card") }).await.unwrap();
+        svc.create(p, u, TransactionInput { for_person_code: Some("PINPAN".into()), items: vec![item("food", "10", None)], ..input("EXPENSE", "card") }).await.unwrap();
+        svc.create(p, u, receipt(&[("food", "7")])).await.unwrap();
+        let by = |who: &str| ListQuery { for_person_code: Some(who.into()), ..Default::default() };
+        let pinpan = svc.feed(p, by("pinpan")).await.unwrap();
+        assert_eq!((pinpan.items.len(), pinpan.totals.clone()), (2, vec![("THB".to_string(), Decimal::ZERO, d("32"))]));
+        let all = svc.feed(p, by("all")).await.unwrap();
+        assert_eq!((all.items.len(), all.totals[0].2), (2, d("95")));
+        assert_eq!(svc.list(p, by("ANNA"), Pagination { page: 0, size: 10 }).await.unwrap().page.total_elements, 1);
     }
 }
 

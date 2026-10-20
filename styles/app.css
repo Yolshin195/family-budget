@@ -415,6 +415,17 @@
   @supports not selector(:has(*)) { .item-price { @apply flex; } }
   .item-price .op { @apply pb-2.5 text-muted; }
   .item-sum { @apply pb-2.5 font-semibold tabular-nums; }
+  /* Для кого (шаг 6, раздел 3.2): строка у позиции и сводка видны при «Разные получатели в чеке» — через :has()
+     и без JS. «Сбросить всё на …?» — строка под переключателем, не окно. */
+  .item-for { @apply mt-2 hidden flex-wrap items-center gap-x-3 gap-y-1 text-sm; }
+  .item-for > select { @apply w-auto min-w-40; }
+  form:has(#for_split:checked) .item-for { @apply flex; }
+  @supports not selector(:has(*)) { .item-for { @apply flex; } }
+  .for-summary { @apply mt-2 hidden text-sm text-muted; }
+  form:has(#for_split:checked) .for-summary { @apply block; }
+  .for-reset { @apply mt-2 flex flex-wrap items-center gap-2 rounded-lg bg-warn-soft px-3 py-2 text-sm; }
+  .for-reset > span { @apply w-full; }
+  .tx-for { @apply ml-1 rounded-full bg-sunken px-1.5 text-xs text-muted; }
 
   /* календарь: сетка на компьютере, список дней на телефоне */
   .calendar { @apply hidden overflow-hidden md:block; }

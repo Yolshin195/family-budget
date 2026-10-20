@@ -65,7 +65,7 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "people")] list.push(people::feature(people_api.clone())); // @f:people
     #[cfg(feature = "transactions")] let budget_view = wire_transactions::BudgetViewAdapter::default(); // @f:transactions
     #[cfg(feature = "transactions")] let plans_lookup = wire_transactions::PlansLookupAdapter::default(); // @f:transactions
-    #[cfg(feature = "transactions")] let transactions_api = transactions::api(ctx, transactions::Deps { accounts: Arc::new(wire_transactions::AccountsLookupAdapter(accounts_api.clone(), currencies_api.clone())), categories: Arc::new(wire_transactions::CategoriesLookupAdapter(categories_api.clone())), budget: Arc::new(budget_view.clone()), plans: Arc::new(plans_lookup.clone()), places: Arc::new(wire_transactions::PlacesLookupAdapter { #[cfg(feature = "places")] places: Some(places_api.clone()) }) }); // @f:transactions
+    #[cfg(feature = "transactions")] let transactions_api = transactions::api(ctx, transactions::Deps { accounts: Arc::new(wire_transactions::AccountsLookupAdapter(accounts_api.clone(), currencies_api.clone())), categories: Arc::new(wire_transactions::CategoriesLookupAdapter(categories_api.clone())), budget: Arc::new(budget_view.clone()), plans: Arc::new(plans_lookup.clone()), places: Arc::new(wire_transactions::PlacesLookupAdapter { #[cfg(feature = "places")] places: Some(places_api.clone()) }), people: Arc::new(wire_transactions::PeopleLookupAdapter { #[cfg(feature = "people")] people: Some(people_api.clone()) }) }); // @f:transactions
     #[cfg(feature = "transactions")] let _ = ledger.0.set(transactions_api.clone()); // @f:transactions
     #[cfg(feature = "transactions")] list.push(transactions::feature(transactions_api.clone())); // @f:transactions
     #[cfg(feature = "limits")] let limits_api = limits::api(ctx, limits::Deps { categories: Arc::new(wire_limits::CategoriesLookupAdapter(categories_api.clone())) }); // @f:limits
@@ -78,7 +78,7 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(feature = "budget")] list.push(budget::feature(budget_api.clone())); // @f:budget
     #[cfg(feature = "site")] let site_api = site::api(ctx, site::Deps { funnel: Arc::new(wire_site::FunnelAdapter { projects: projects_api.clone(), #[cfg(feature = "transactions")] transactions: transactions_api.clone() }) }); // @f:site
     #[cfg(feature = "site")] list.push(site::feature(ctx, site_api.clone())); // @f:site
-    #[cfg(feature = "mcp")] let mcp_api = mcp::api(ctx, mcp::Deps { ledger: Arc::new(wire_mcp::LedgerAdapter(transactions_api.clone())), budget: Arc::new(wire_mcp::BudgetAdapter(budget_api.clone())), plans: Arc::new(wire_mcp::PlansAdapter(planning_api.clone())), directories: Arc::new(wire_mcp::DirectoriesAdapter { currencies: currencies_api.clone(), accounts: accounts_api.clone(), categories: categories_api.clone(), places: places_api.clone() }), rates: Arc::new(wire_mcp::RatesAdapter(rates_api.clone())), limits: Arc::new(wire_mcp::LimitsAdapter(limits_api.clone())), accounts: Arc::new(wire_mcp::AccountsAdapter(projects_api.clone())), authenticator: projects_api.clone(), memberships: projects_api.clone() }); // @f:mcp
+    #[cfg(feature = "mcp")] let mcp_api = mcp::api(ctx, mcp::Deps { ledger: Arc::new(wire_mcp::LedgerAdapter(transactions_api.clone())), budget: Arc::new(wire_mcp::BudgetAdapter(budget_api.clone())), plans: Arc::new(wire_mcp::PlansAdapter(planning_api.clone())), directories: Arc::new(wire_mcp::DirectoriesAdapter { currencies: currencies_api.clone(), accounts: accounts_api.clone(), categories: categories_api.clone(), places: places_api.clone(), people: people_api.clone() }), rates: Arc::new(wire_mcp::RatesAdapter(rates_api.clone())), limits: Arc::new(wire_mcp::LimitsAdapter(limits_api.clone())), accounts: Arc::new(wire_mcp::AccountsAdapter(projects_api.clone())), authenticator: projects_api.clone(), memberships: projects_api.clone() }); // @f:mcp
     #[cfg(feature = "mcp")] list.push(mcp::feature(ctx, mcp_api.clone())); // @f:mcp
     // @arch:build:end
     // Где используются валюты и категории (этап 0, Ц2 и Ц8): фичи, собранные после справочников.
@@ -123,6 +123,7 @@ pub fn features(ctx: &AppContext) -> Wired {
             rates: rates_api,
             accounts: accounts_api,
             places: places_api,
+            people: people_api,
             transactions: transactions_api,
             limits: limits_api,
             planning: planning_api,

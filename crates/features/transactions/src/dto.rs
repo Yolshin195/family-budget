@@ -65,7 +65,20 @@ pub struct ItemInput {
     pub amount: Option<Decimal>,
     #[serde(default)]
     pub note: Option<String>,
+    /// Для кого (код из справочника людей); `all` или "" — «Для всех». Не указано — как в шапке
+    /// (`for_person_code` операции), у позиции с `id` — прежний получатель
+    #[serde(default)]
+    #[schema(example = "PINPAN")]
+    pub for_person_code: Option<String>,
 }
+
+/// Получатель из запроса: `all` или пусто — «Для всех» явно.
+pub fn recipient_of(value: Option<String>) -> Option<Option<String>> {
+    value.map(|v| Some(v.trim().to_string()).filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case(ALL)))
+}
+
+/// «Для всех» в запросах и фильтрах (код человека не может быть таким — его занимает справочник).
+pub const ALL: &str = "all";
 
 impl ItemInput {
     fn into_draft(self) -> ItemDraft {
@@ -79,6 +92,7 @@ impl ItemInput {
             discount: self.discount,
             amount: self.amount,
             note: self.note,
+            for_person: recipient_of(self.for_person_code),
         }
     }
 }
@@ -103,6 +117,8 @@ pub struct ItemDto {
     #[schema(value_type = String, example = "47")]
     pub amount: Decimal,
     pub note: Option<String>,
+    /// Для кого (код из справочника людей); пусто — «Для всех»
+    pub for_person_code: Option<String>,
 }
 
 impl From<Item> for ItemDto {
@@ -117,6 +133,7 @@ impl From<Item> for ItemDto {
             discount: x.discount,
             amount: x.amount,
             note: x.note,
+            for_person_code: x.for_person,
         }
     }
 }
@@ -213,6 +230,11 @@ pub struct TransactionInput {
     #[serde(default)]
     #[schema(example = "SEVEN_ELEVEN")]
     pub place_code: Option<String>,
+    /// Для кого по умолчанию (расход и доход): код из справочника людей, `all` — «Для всех». Получают позиции без
+    /// своего `for_person_code`; при правке — ещё и позиции с прежним общим получателем
+    #[serde(default)]
+    #[schema(example = "PINPAN")]
+    pub for_person_code: Option<String>,
 }
 
 /// Переводы описания (оригинал не меняется).
@@ -267,6 +289,10 @@ pub struct TransactionDto {
     pub plan_date: Option<NaiveDate>,
     /// Место (расход и доход)
     pub place_code: Option<String>,
+    /// Для кого: общий получатель всех позиций; пусто — «Для всех» или разные (`recipients_differ`)
+    pub for_person_code: Option<String>,
+    /// У позиций разные получатели
+    pub recipients_differ: bool,
     pub postings: Vec<PostingDto>,
 }
 
@@ -284,6 +310,8 @@ pub struct ListQuery {
     pub untranslated: Option<String>,
     /// Только операции в этом месте
     pub place_code: Option<String>,
+    /// Только операции с позицией для этого человека (`all` — для всех); итоги ленты — по этим позициям
+    pub for_person_code: Option<String>,
 }
 
 impl From<Transaction> for TransactionDto {
@@ -295,7 +323,11 @@ impl From<Transaction> for TransactionDto {
             Body::Transfer { from, to, to_amount, fee, .. } => (from, Some(to), false, Vec::new(), to_amount, fee),
             Body::Opening { account, .. } => (account, None, false, Vec::new(), None, None),
         };
+        let for_person_code = crate::domain::common_recipient(&items);
+        let recipients_differ = items.iter().any(|i| i.for_person != items[0].for_person);
         Self {
+            for_person_code,
+            recipients_differ,
             id: x.id,
             occurred_on: x.occurred_on,
             tx_kind: x.tx_kind.as_str().to_string(),
@@ -346,9 +378,15 @@ impl TransactionInput {
                     (false, true) => ItemsDraft::replace(
                         self.lines.into_iter().map(|l| ItemDraft { name: l.note, ..ItemDraft::simple(&l.category_code, l.amount) }).collect(),
                     ),
-                    _ => ItemsDraft { items: self.items.into_iter().map(ItemInput::into_draft).collect(), replace: self.replace_items, remove: self.remove_item_ids, discount_total: None },
+                    _ => ItemsDraft {
+                        items: self.items.into_iter().map(ItemInput::into_draft).collect(),
+                        replace: self.replace_items,
+                        remove: self.remove_item_ids,
+                        ..Default::default()
+                    },
                 };
-                Draft::Flow { income: tx_kind == TxKind::Income, account: self.account_code.clone(), items: ItemsDraft { discount_total: self.discount_total, ..items }, refund: self.refund }
+                let items = ItemsDraft { discount_total: self.discount_total, for_default: recipient_of(self.for_person_code), ..items };
+                Draft::Flow { income: tx_kind == TxKind::Income, account: self.account_code.clone(), items, refund: self.refund }
             }
             TxKind::Transfer => Draft::Transfer {
                 from: self.account_code.clone(),

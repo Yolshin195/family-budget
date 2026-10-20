@@ -328,7 +328,7 @@
       if (!rm) return;
       var row = rm.closest('[data-line]');
       if (visible().length > 1) row.remove(); else clearRow(row);
-      total(); warn();
+      total(); warn(); syncFor();
     });
     var add = $('[data-add-line]', form);
     if (add) {
@@ -343,7 +343,10 @@
           $$('[aria-label]', row).forEach(function (el) { el.setAttribute('aria-label', el.getAttribute('aria-label').replace(/\d+$/, n)); });
           lines.appendChild(row);
         }
-        row.hidden = false; filterCats(); total(); $('select', row).focus();
+        row.hidden = false;
+        var f = $('[data-item-for]', row), d = $('[data-for-default]', form);
+        if (f && d) f.value = d.value;
+        filterCats(); total(); syncFor(); $('select', row).focus();
       });
     }
     // Место (шаг 5): пустые категории видимых позиций — из места (без JS их заполнит сервер); счёт — только у новой
@@ -358,12 +361,72 @@
         if (c && !c.value && op && !op.disabled) c.value = o.dataset.category;
       });
     }
-    form.addEventListener('input', function () { total(); syncTransfer(); });
+    // Для кого (шаг 6, раздел 3.2): без «Разные получатели» все позиции — «Для кого по умолчанию» (сервер сделает
+    // так же); с ним — у каждой позиции своя строка, смена шапки меняет позиции с прежним значением, выключение при
+    // разных — «Сбросить всё на …?». Под позициями — сводка по получателям.
+    var forDefault = $('[data-for-default]', form), forSplit = $('[data-for-split]', form), forReset = $('[data-for-reset]', form);
+    var forSummary = $('[data-for-summary]', form), forPrev = forDefault ? forDefault.value : '';
+    function forSelects() { return visible().map(function (r) { return $('[data-item-for]', r); }).filter(Boolean); }
+    function optText(sel) { var o = sel && sel.selectedOptions[0]; return o ? o.textContent : ''; }
+    function syncFor() {
+      if (!forDefault) return;
+      // «Всей категории «…»» — если в чеке больше одной позиции этой категории.
+      var rows = visible(), cats = {};
+      rows.forEach(function (r) { var c = $('[name=item_category]', r).value; if (c) cats[c] = (cats[c] || 0) + 1; });
+      rows.forEach(function (r) {
+        var b = $('[data-for-category]', r), c = $('[name=item_category]', r);
+        if (!b) return;
+        b.hidden = !(c.value && cats[c.value] > 1);
+        if (!b.hidden) b.textContent = b.dataset.label.replace('{category}', optText(c).trim());
+      });
+      if (!forSummary) return;
+      var sums = [], sym = opt($('[name=account_code]', form)).sym;
+      rows.forEach(function (r) {
+        var sel = $('[data-item-for]', r), v = evalAmount($('[data-amount]', r).value);
+        if (!sel || isNaN(v)) return;
+        var hit = sums.filter(function (x) { return x.code === sel.value; })[0];
+        if (hit) hit.sum += v; else sums.push({ code: sel.value, label: sel.value ? optText(sel) : forSummary.dataset.all, sum: v });
+      });
+      sums.sort(function (a, b) { return (a.code ? 1 : 0) - (b.code ? 1 : 0); });
+      forSummary.textContent = sums.map(function (x) { return x.label + ' ' + money(x.sum) + (sym ? '\u00a0' + sym : ''); }).join(' · ');
+    }
+    function forDiffer() { return forSelects().some(function (s) { return s.value !== forDefault.value; }); }
+    if (forDefault) {
+      forDefault.addEventListener('change', function () {
+        // Без «Разные получатели» все позиции — шапка; с ним — только позиции с прежним значением.
+        var all = !forSplit || !forSplit.checked;
+        forSelects().forEach(function (s) { if (all || s.value === forPrev) s.value = forDefault.value; });
+        forPrev = forDefault.value;
+        syncFor();
+      });
+      if (forSplit) forSplit.addEventListener('change', function () {
+        if (forSplit.checked) { forReset.hidden = true; forSelects().forEach(function (s) { s.value = forDefault.value; }); syncFor(); return; }
+        if (!forDiffer()) return;
+        forSplit.checked = true;
+        $('span', forReset).textContent = forReset.dataset.text.replace('{value}', optText(forDefault));
+        forReset.hidden = false;
+        $('[data-for-reset-yes]', forReset).focus();
+      });
+      if (forReset) forReset.addEventListener('click', function (e) {
+        if (e.target.closest('[data-for-reset-yes]')) { forSplit.checked = false; forSelects().forEach(function (s) { s.value = forDefault.value; }); syncFor(); forSplit.focus(); }
+        else if (e.target.closest('[data-for-reset-no]')) forSplit.focus();
+        else return;
+        forReset.hidden = true;
+      });
+      lines.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-for-category]');
+        if (!b) return;
+        var row = b.closest('[data-line]'), cat = $('[name=item_category]', row).value, who = $('[data-item-for]', row).value;
+        visible().forEach(function (r) { if ($('[name=item_category]', r).value === cat) $('[data-item-for]', r).value = who; });
+        syncFor();
+      });
+    }
+    form.addEventListener('input', function () { total(); syncTransfer(); syncFor(); });
     form.addEventListener('change', function (e) {
       if (e.target.name === 'tx_kind') syncKind();
       if (e.target.name === 'account_code') accTouched = true;
       if (e.target.matches && e.target.matches('[data-place]')) applyPlace(e.target);
-      filterCats(); total(); warn(); syncTransfer();
+      filterCats(); total(); warn(); syncTransfer(); syncFor();
     });
     // «120+45» в поле суммы → 165 при выходе из поля (и в добавленных строках позиций).
     form.addEventListener('focusout', function (e) {
@@ -372,7 +435,7 @@
       var v = evalAmount(i.value);
       if (!isNaN(v) && /[+*/]|\d-/.test(i.value)) { i.value = String(v); total(); syncTransfer(); }
     });
-    filterCats(); total(); syncKind(); warn();
+    filterCats(); total(); syncKind(); warn(); syncFor();
   });
   }
 

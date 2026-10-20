@@ -9,7 +9,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::adapters::postgres::fact;
-use crate::domain::{RefKind, Transaction, TxKind, check_balanced, system};
+use crate::domain::{Posting, RefKind, Transaction, TxKind, check_balanced, system};
 use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
 #[derive(Default)]
@@ -26,6 +26,12 @@ fn matches(r: &Transaction, project_id: Uuid, f: &Filter) -> bool {
         && f.created_by.is_none_or(|u| r.created_by == u)
         && f.untranslated.is_none_or(|l| r.description.localized().is_some_and(|d| d.missing(l)))
         && f.place_code.as_deref().is_none_or(|p| r.place_code.as_deref() == Some(p))
+        && f.for_person.as_ref().is_none_or(|who| r.items.iter().any(|x| x.for_person == *who))
+}
+
+/// Проводка относится к позиции получателя из фильтра (без фильтра — любая).
+fn of_recipient(filter: &Filter, r: &Transaction, p: &Posting) -> bool {
+    filter.for_person.as_ref().is_none_or(|who| r.items.iter().any(|x| Some(x.id) == p.item_id && x.for_person == *who))
 }
 
 /// То же, что уникальные индексы шапки в БД: оплата вхождения плана и начальный остаток счёта — по одному.
@@ -86,7 +92,9 @@ impl TransactionRepository for InMemoryTransactionRepository {
         let rows = self.rows.lock().unwrap();
         let mut sums: Vec<(String, Decimal, Decimal)> = Vec::new();
         for r in rows.iter().filter(|r| matches(r, project_id, filter)) {
-            for p in r.postings.iter().filter(|p| p.ref_kind == RefKind::Category) {
+            // С фильтром «Для кого» — только позиции этого получателя.
+            let mine = |p: &&Posting| of_recipient(filter, r, p);
+            for p in r.postings.iter().filter(|p| p.ref_kind == RefKind::Category).filter(mine) {
                 let i = match sums.iter().position(|x| x.0 == p.currency) {
                     Some(i) => i,
                     None => {

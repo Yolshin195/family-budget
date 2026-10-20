@@ -27,12 +27,22 @@ impl Right {
 }
 
 /// Права доступа ассистента, которые можно выдать в браузере. «Просмотр» есть всегда.
-pub const GRANT_SCOPES: [&str; 9] =
-    ["read", "transactions:write", "currencies:write", "accounts:write", "categories:write", "places:write", "rates:write", "limits:write", "planning:write"];
+pub const GRANT_SCOPES: [&str; 10] = [
+    "read",
+    "transactions:write",
+    "currencies:write",
+    "accounts:write",
+    "categories:write",
+    "places:write",
+    "people:write",
+    "rates:write",
+    "limits:write",
+    "planning:write",
+];
 /// Отмечены по умолчанию: просмотр всего и операции.
 pub const DEFAULT_GRANT_SCOPES: [&str; 2] = ["read", "transactions:write"];
 /// Справочники: их разом отмечает флажок «Справочники».
-pub const DIRECTORY_SCOPES: [&str; 5] = ["currencies:write", "accounts:write", "categories:write", "places:write", "rates:write"];
+pub const DIRECTORY_SCOPES: [&str; 6] = ["currencies:write", "accounts:write", "categories:write", "places:write", "people:write", "rates:write"];
 /// Значение флажка «Справочники» в форме — все права из `DIRECTORY_SCOPES` (форма работает и без JS).
 pub const ALL_DIRECTORIES: &str = "directories";
 
@@ -219,6 +229,9 @@ pub struct TxItem {
     pub discount: Option<Decimal>,
     pub amount: Option<Decimal>,
     pub note: Option<String>,
+    /// Для кого (код человека): в черновике `None` — не указано (как в шапке, у позиции с `id` — как было),
+    /// `Some(None)` — «Для всех»; у сохранённой операции всегда `Some`.
+    pub for_person: Option<Option<String>>,
 }
 
 impl TxItem {
@@ -257,6 +270,8 @@ pub struct TxDraft {
     pub plan_date: Option<NaiveDate>,
     /// Место (расход и доход).
     pub place_code: Option<String>,
+    /// Для кого по умолчанию (расход и доход): `None` — не указано, `Some(None)` — «Для всех».
+    pub for_person: Option<Option<String>>,
 }
 
 /// Сохранённая операция.
@@ -284,6 +299,9 @@ pub struct Tx {
     pub plan_id: Option<Uuid>,
     pub plan_date: Option<NaiveDate>,
     pub place_code: Option<String>,
+    /// Общий получатель всех позиций; `None` — «Для всех» или разные (`recipients_differ`).
+    pub for_person_code: Option<String>,
+    pub recipients_differ: bool,
 }
 
 impl Tx {
@@ -312,6 +330,7 @@ impl Tx {
             plan_id: self.plan_id,
             plan_date: self.plan_date,
             place_code: self.place_code.clone(),
+            for_person: None,
         }
     }
 
@@ -335,6 +354,8 @@ pub struct TxFilter {
     pub account_code: Option<String>,
     pub kind: Option<String>,
     pub place_code: Option<String>,
+    /// С позицией для этого человека; `Some(None)` — с позицией «Для всех».
+    pub for_person: Option<Option<String>>,
 }
 
 /// Строка бюджета по категории (суммы по поддереву, в базовой валюте).
@@ -574,6 +595,19 @@ impl Place {
     }
 }
 
+/// Человек (справочник `people`): для кого покупка. Имя не переводится; у удалённого участника — пустое.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Person {
+    pub code: String,
+    pub name: String,
+    pub aliases: Vec<String>,
+    /// Участник проекта; `None` — человек без аккаунта.
+    pub user_id: Option<Uuid>,
+    /// Участник удалил аккаунт.
+    pub former_member: bool,
+    pub archived: bool,
+}
+
 pub const ACCOUNT_KINDS: [&str; 4] = ["CASH", "CARD", "BANK", "SAVINGS"];
 pub const PLACE_KINDS: [&str; 6] = ["SHOP", "CAFE", "MARKET", "ONLINE", "SERVICE", "OTHER"];
 pub const CATEGORY_KINDS: [&str; 2] = ["EXPENSE", "INCOME"];
@@ -626,6 +660,18 @@ impl Record for Category {
 }
 
 impl Record for Place {
+    fn code(&self) -> &str {
+        &self.code
+    }
+    fn names(&self) -> String {
+        kernel::search::join(std::iter::once(self.name.as_str()).chain(self.aliases.iter().map(String::as_str)))
+    }
+    fn archived(&self) -> bool {
+        self.archived
+    }
+}
+
+impl Record for Person {
     fn code(&self) -> &str {
         &self.code
     }

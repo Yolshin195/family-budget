@@ -12,8 +12,8 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::domain::{Body, Description, Draft, ItemDraft, ItemsDraft, RefKind, Transaction, TransactionData, TxKind};
-use crate::dto::{ItemInput, ListQuery, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, QuickPlaceDto, TransactionDto, TransactionInput, TranslationInput};
-use crate::ports::{CategoryInfo, Deps, ExchangeLine, FactLine, Filter, Payment, PlaceInfo, TransactionRepository, taken};
+use crate::dto::{ItemInput, ListQuery, recipient_of, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, QuickPlaceDto, TransactionDto, TransactionInput, TranslationInput};
+use crate::ports::{CategoryInfo, Deps, ExchangeLine, FactLine, Filter, Payment, PersonInfo, PlaceInfo, TransactionRepository, taken};
 
 /// Частых категорий в форме быстрого расхода.
 pub const FREQUENT: usize = 6;
@@ -48,10 +48,12 @@ impl TransactionService {
     /// Создать транзакцию. `created_by` — текущий пользователь, не из тела запроса.
     pub async fn create(&self, project_id: Uuid, created_by: Uuid, mut input: TransactionInput) -> AppResult<TransactionDto> {
         self.apply_place(project_id, &mut input, None).await?;
+        let people = self.check_header_person(project_id, &input, None).await?;
         let data = input.into_domain()?;
         let accounts = self.deps.accounts.currencies(project_id).await?;
         let item = Transaction::create(project_id, created_by, data, &accounts)?;
         self.check_refs(project_id, &item, None).await?;
+        check_people(&people, &item, None)?;
         self.check_plan(&item, None).await?;
         self.check_opening(&item).await?;
         self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
@@ -106,10 +108,12 @@ impl TransactionService {
         let mut item = self.load(project_id, id).await?;
         let before = item.clone();
         self.apply_place(project_id, &mut input, before.place_code.as_deref()).await?;
+        let people = self.check_header_person(project_id, &input, Some(&before)).await?;
         let data = input.into_domain()?;
         let accounts = self.deps.accounts.currencies(project_id).await?;
         item.change(data, &accounts)?;
         self.check_refs(project_id, &item, Some(&before)).await?;
+        check_people(&people, &item, Some(&before))?;
         self.check_plan(&item, Some(&before)).await?;
         self.check_opening(&item).await?;
         self.repo.update(&item).await.map_err(|e| conflict(e, &item))?;
@@ -145,6 +149,25 @@ impl TransactionService {
         }
         input.place_code = Some(code);
         Ok(())
+    }
+
+    /// «Для кого по умолчанию» из запроса — человек из справочника (раздел 5.9). Возвращает людей проекта для
+    /// проверки позиций; если получателей нет нигде, справочник не читается.
+    async fn check_header_person(&self, project_id: Uuid, input: &TransactionInput, before: Option<&Transaction>) -> AppResult<Vec<PersonInfo>> {
+        let named = input.items.iter().any(|x| recipient_of(x.for_person_code.clone()).flatten().is_some());
+        let header = recipient_of(input.for_person_code.clone()).flatten();
+        let had = before.is_some_and(|b| b.items.iter().any(|x| x.for_person.is_some()));
+        if header.is_none() && !named && !had {
+            return Ok(Vec::new());
+        }
+        let people = self.deps.people.all(project_id, Lang::default()).await?;
+        if let Some(code) = header.map(|c| c.trim().to_uppercase()) {
+            let kept = before.is_some_and(|b| b.items.iter().any(|x| x.for_person.as_deref() == Some(code.as_str())));
+            if !people.iter().any(|p| p.code == code && (!p.archived || kept)) {
+                return Err(Problem::new(codes::NOT_FOUND, "for_person_code", tr("err.person_not_found", &[("code", &code)])).into());
+            }
+        }
+        Ok(people)
     }
 
     /// Изменить только переводы описания.
@@ -391,6 +414,11 @@ impl TransactionService {
         self.deps.categories.choices(project_id, lang).await
     }
 
+    /// Люди проекта, с архивными (форма показывает активных и получателей самой операции), имена — на языке `lang`.
+    pub async fn people(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<PersonInfo>> {
+        self.deps.people.all(project_id, lang).await
+    }
+
     /// Места проекта, с архивными (форма показывает активные и место самой операции).
     pub async fn places(&self, project_id: Uuid) -> AppResult<Vec<PlaceInfo>> {
         self.deps.places.all(project_id).await
@@ -522,7 +550,21 @@ fn filter_of(query: ListQuery) -> AppResult<Filter> {
         created_by: query.created_by,
         untranslated: query.untranslated.as_deref().and_then(Lang::parse),
         place_code: query.place_code.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_uppercase),
+        for_person: recipient_of(query.for_person_code).map(|who| who.map(|c| c.to_uppercase())),
     })
+}
+
+/// Получатели позиций (раздел 5.9): новый — активный человек проекта; получатель, который у операции уже был,
+/// остаётся и после архивации (как место и категории).
+pub(crate) fn check_people(people: &[PersonInfo], item: &Transaction, before: Option<&Transaction>) -> AppResult<()> {
+    for (i, x) in item.items.iter().enumerate() {
+        let Some(code) = x.for_person.as_deref() else { continue };
+        let kept = before.is_some_and(|b| b.items.iter().any(|y| y.for_person.as_deref() == Some(code)));
+        if !people.iter().any(|p| p.code == code && (!p.archived || kept)) {
+            return Err(Problem::new(codes::NOT_FOUND, &format!("items[{}].for_person_code", i + 1), tr("err.person_not_found", &[("code", &code)])).into());
+        }
+    }
+    Ok(())
 }
 
 /// Строка словаря фичи на языке запроса.

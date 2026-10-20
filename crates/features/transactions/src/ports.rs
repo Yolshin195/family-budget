@@ -33,6 +33,8 @@ pub struct Filter {
     pub untranslated: Option<Lang>,
     /// Только операции в этом месте.
     pub place_code: Option<String>,
+    /// Только операции с позицией для этого человека; `Some(None)` — с позицией «Для всех». Итоги — по этим позициям.
+    pub for_person: Option<Option<String>>,
 }
 
 /// Проводка на категорию — факт для бюджета и лимитов.
@@ -134,6 +136,28 @@ pub struct Deps {
     pub plans: Arc<dyn PlansLookup>,
     /// Места операций (из фичи `places`; без неё мест нет).
     pub places: Arc<dyn PlacesLookup>,
+    /// Для кого позиции (из фичи `people`; без неё все позиции — «Для всех»).
+    pub people: Arc<dyn PeopleLookup>,
+}
+
+/// Человек из справочника `people`: для кого позиция.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PersonInfo {
+    pub code: String,
+    /// Имя на языке запроса («Удалённый участник» — у записи без имени).
+    pub title: String,
+    /// Имя, другие имена и код через `kernel::search::SEP`.
+    pub search: String,
+    /// Участник проекта: запись того, кто смотрит, в выборе — «Для себя».
+    pub user_id: Option<Uuid>,
+    pub archived: bool,
+}
+
+/// Что этой фиче нужно от справочника `people`.
+#[async_trait]
+pub trait PeopleLookup: Send + Sync {
+    /// Все люди проекта, с архивными (старые операции показывают своего получателя), имена — на языке `lang`.
+    async fn all(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<PersonInfo>>;
 }
 
 /// Место операции (справочник `places`).

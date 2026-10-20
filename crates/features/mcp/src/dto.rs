@@ -56,6 +56,10 @@ pub struct ListTransactionsArgs {
     pub text: Option<String>,
     /// Place code or name: only transactions at this place
     pub place: Option<String>,
+    /// Person code or name (get_context → people): only transactions with an item for this person;
+    /// "all" — with an item for everyone
+    #[serde(rename = "for")]
+    pub for_whom: Option<String>,
     /// Page size, 1–200 (default 50)
     pub limit: Option<u32>,
     /// Skip this many transactions (paging)
@@ -110,6 +114,10 @@ pub struct ItemArgs {
     pub amount: Option<String>,
     /// Optional note for this item
     pub note: Option<String>,
+    /// Who this item is for: person code or name (get_context → people), "all" — for everyone. Omit to use the
+    /// transaction's "for" (an existing item keeps its recipient)
+    #[serde(rename = "for")]
+    pub for_whom: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -141,6 +149,10 @@ pub struct AddFlowArgs {
     /// Place (shop, café, market) code, name or other spelling — only an existing one (get_context, list_places);
     /// fills in its category and account unless you pass them
     pub place: Option<String>,
+    /// Who the purchase is for: person code or name (get_context → people; my_person_code is the user), "all" —
+    /// for everyone (default). Items without their own "for" get it. Pass it only when the user says so
+    #[serde(rename = "for")]
+    pub for_whom: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -187,6 +199,10 @@ pub struct UpdateTransactionArgs {
     pub category: Option<String>,
     /// New place code or name (expense and income); "" removes the place
     pub place: Option<String>,
+    /// Who it is for (expense and income): person code or name, "all" — for everyone. Changes the items that had
+    /// the previous common recipient; an item's own "for" wins
+    #[serde(rename = "for")]
+    pub for_whom: Option<String>,
     /// Expense/income items to change (with id) or add (without id); items not listed stay as they are
     pub items: Option<Vec<ItemArgs>>,
     /// Ids of items to delete from this expense/income
@@ -395,6 +411,34 @@ pub struct UpdatePlaceArgs {
     pub kind: Option<String>,
     /// New branch or address; "" removes it
     pub location: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct ListPeopleArgs {
+    /// Text to find in names and other names (any language, case and accents ignored)
+    pub text: Option<String>,
+    /// Include archived people (default false)
+    pub include_archived: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AddPersonArgs {
+    /// New person code, UPPER_SNAKE: Latin letters, digits and _, e.g. "PINPAN" (not "ALL")
+    pub code: String,
+    /// Name as the family calls them, not translated, e.g. "Pinpan"
+    pub name: String,
+    /// Other names to find them by, any language, e.g. ["Пинпан", "ปิ่นปั่น"]
+    pub aliases: Option<Vec<String>>,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct UpdatePersonArgs {
+    /// Person code (or name) to change
+    pub code: String,
+    /// New name
+    pub name: Option<String>,
+    /// Replace the other names with this list ([] removes them all)
+    pub aliases: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
