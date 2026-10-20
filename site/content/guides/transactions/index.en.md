@@ -26,7 +26,7 @@ The same window has an "Expense", "Income", "Transfer" switch; the <kbd>I</kbd> 
 
 Groceries, a coffee and pastries on one receipt? Click "Full details" in the window — the full form opens, and the amount you entered becomes the first item. Each item has its own category, amount and "Name", as on the receipt; "Add item" adds a row and the "Total" adds itself up. Tick "Refund" when a shop gives money back: the amounts reduce the categories' actuals.
 
-The "× price" button opens "Quantity", "Unit" (pcs, kg, l, g), "Price" and "Discount" under the item, and the app works out the item amount: two croissants at 25 with a discount of 3 make 47, 0.45 kg of bananas at 60 makes 27. To type the amount yourself, clear the price. A discount on the whole receipt goes in "More", field "Receipt discount": it is split across the items in proportion to their amounts.
+The "× price" button opens "Quantity", "Unit" (pcs, kg, l, g), "Price" and "Discount" under the item, and the app works out the item amount: two croissants at 25 with a discount of 3 make 47, 0.45 kg of bananas at 60 makes 27. To type the amount yourself, clear the price. A discount on the whole receipt goes in "More", field "Receipt discount": it is split across the items in proportion to their amounts. “More” also has “For whom by default” and “Different recipients in one receipt” for purchases that aren't for everyone: see [“People and “For whom””](@/guides/people/index.en.md).
 
 ![Full details: a 7-Eleven receipt with prices and quantities](split.en.webp)
 
@@ -42,11 +42,11 @@ Did the bank charge a fee? Open "Fee", choose a category and an amount. The fee 
 
 ## 4. The transaction list
 
-The "Transactions" section shows all of the month's transactions by day; the arrows switch months. At the top are the totals: income, expenses and net in each currency. Filters: account, type ("Expenses", "Income", "Transfers", "Opening balances"), member in a family budget, and the "Description not in my language" checkbox, which finds transactions that need a translation.
+The "Transactions" section shows all of the month's transactions by day; the arrows switch months. At the top are the totals: income, expenses and net in each currency. Filters: account, type ("Expenses", "Income", "Transfers", "Opening balances"), member in a family budget, “For whom”, and the "Description not in my language" checkbox, which finds transactions that need a translation.
 
 ![A month's transactions with filters and totals](list.en.webp)
 
-A receipt with several items is shown by category: the category total, and under it the goods in receipt order — "Croissant · 2 pcs × 25 − 3 → 47", or "Latte · 45" without a price. A transaction with a single unnamed item looks as usual.
+A receipt with several items is shown by category: the category total, and under it the goods in receipt order — "Croissant · 2 pcs × 25 − 3 → 47", or "Latte · 45" without a price. A transaction with a single unnamed item looks as usual. A label with a name — “Pinpan”, “For myself” — shows who the purchase is for; “For everyone” isn't labelled.
 
 Transactions paid from a calendar plan carry a "planned" badge. A badge with a language code and a question mark, such as "EN?", means the description has no translation into your language.
 

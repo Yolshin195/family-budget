@@ -49,9 +49,9 @@ pub fn dict(key: &str) -> Option<Tr> {
             "ยอดยกมาของบัญชีต้องมีสิทธิ์ “รายการ” ด้วย",
         ),
         "directories_nojs" => (
-            "«Все справочники» выдаёт все четыре права. Чтобы снять одно из них, снимите и этот флажок.",
-            "“All directories” grants all four rights. To remove one of them, untick this box too.",
-            "“ข้อมูลหลักทั้งหมด” ให้สิทธิ์ทั้งสี่ หากต้องการยกเลิกสิทธิ์ใด ให้ยกเลิกช่องนี้ด้วย",
+            "«Все справочники» выдаёт все права справочников. Чтобы снять одно из них, снимите и этот флажок.",
+            "“All directories” grants all directory rights. To remove one of them, untick this box too.",
+            "“ข้อมูลหลักทั้งหมด” ให้สิทธิ์ข้อมูลอ้างอิงทั้งหมด หากต้องการยกเลิกสิทธิ์ใด ให้ยกเลิกช่องนี้ด้วย",
         ),
         "scope_read_always" => ("всегда", "always", "เสมอ"),
         "viewer_hint" => ("Роль VIEWER в проекте — только просмотр.", "VIEWER role in the project — view only.", "บทบาท VIEWER ในโปรเจกต์ — ดูอย่างเดียว"),

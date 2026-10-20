@@ -6,8 +6,10 @@
 //   node scripts/guide-screenshots.mjs site/content/guides/first-budget overview=/budget quick-expense=/budget@n limits=/limits
 //
 // «@клавиша» — нажать клавишу после загрузки (n — окно «Новый расход»); «@селектор=текст» — ввести текст в поле,
-// «@!селектор» — нажать на элемент; действий может быть несколько:
+// «@!селектор» — нажать на элемент, «@^селектор» — прокрутить страницу к элементу (кадр — с этого места);
+// действий может быть несколько:
 //   quick-place='/budget@n@#q-search=cafe@!#q-results [data-place]'
+//   card-recipients='/transactions/<id>/edit@^details.more'
 // APP_URL — адрес приложения
 // (по умолчанию http://localhost:8080), DEMO_PROJECT — проект для съёмки (по умолчанию «Семья»), CHROMIUM — путь к браузеру. Кадр 1280×800, WebP ~30–50 КБ.
 import puppeteer from 'puppeteer-core';
@@ -43,12 +45,14 @@ for (const [lang, locale] of Object.entries(locales)) {
     const [path, ...actions] = spec.slice(spec.indexOf('=') + 1).split('@');
     await page.goto(base + path, { waitUntil: 'networkidle0' });
     for (const act of actions) {
-      if (act.startsWith('!')) await page.click(act.slice(1));
+      if (act.startsWith('^')) await page.$eval(act.slice(1), (el) => el.scrollIntoView({ block: 'start' }));
+      else if (act.startsWith('!')) await page.click(act.slice(1));
       else if (act.includes('=')) await page.type(act.slice(0, act.indexOf('=')), act.slice(act.indexOf('=') + 1));
       else await page.keyboard.press(act);
       await new Promise((r) => setTimeout(r, 600));
     }
-    const png = await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 800 } });
+    const y = await page.evaluate(() => window.scrollY);
+    const png = await page.screenshot({ clip: { x: 0, y, width: 1280, height: 800 } });
     await sharp(png).resize(1280).webp({ quality: 78 }).toFile(`${dir}/${name}.${lang}.webp`);
     console.log(`${dir}/${name}.${lang}.webp`);
   }
