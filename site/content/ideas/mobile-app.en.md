@@ -35,4 +35,4 @@ In the computer app, Claude Desktop will be able to work with the budget directl
 
 Data on the device will be encrypted, and the app will open with your fingerprint or face. You turn on access to notifications and the gallery yourself and can turn it off at any time.
 
-We will start with a trial version for Android. If you need such an app or know which notifications your bank sends, tell us on the [Reviews](@/feedback.en.md) page.
+We will start with iPhone: first a Shortcut that sends bank SMS to your inbox by itself, then the app; Android comes next. If you need such an app or know which notifications your bank sends, tell us on the [Reviews](@/feedback.en.md) page.
