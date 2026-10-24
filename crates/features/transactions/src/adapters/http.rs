@@ -84,7 +84,7 @@ pub async fn find_ref(State(svc): Svc, Extension(scope): Extension<Scope>, Query
 }
 
 #[utoipa::path(get, path = "/api/transactions", tag = "Транзакции", params(Pagination, ListQuery),
-    responses((status = 200, body = PagedResponse<TransactionDto>)), security(("bearer_auth" = [])))]
+    responses((status = 200, body = PagedResponse<TransactionDto>, description = "Операции, новые сначала")), security(("bearer_auth" = [])))]
 pub async fn list(
     State(svc): Svc,
     Extension(scope): Extension<Scope>,
@@ -95,26 +95,37 @@ pub async fn list(
 }
 
 #[utoipa::path(get, path = "/api/transactions/{id}", tag = "Транзакции", params(("id" = Uuid, Path)),
-    responses((status = 200, body = TransactionDto), (status = 404)), security(("bearer_auth" = [])))]
+    responses(
+        (status = 200, body = TransactionDto, description = "Операция"),
+        (status = 404, description = "Не найдена"),
+    ), security(("bearer_auth" = [])))]
 pub async fn get_one(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>) -> AppResult<Json<TransactionDto>> {
     Ok(Json(svc.get(scope.project_id, id).await?))
 }
 
 #[utoipa::path(put, path = "/api/transactions/{id}", tag = "Транзакции", params(("id" = Uuid, Path)), request_body = TransactionInput,
-    responses((status = 200, body = TransactionDto), (status = 404), (status = 422)), security(("bearer_auth" = [])))]
+    responses(
+        (status = 200, body = TransactionDto, description = "Операция обновлена"),
+        (status = 404, description = "Не найдена"),
+        (status = 422, description = "Ошибка валидации"),
+    ), security(("bearer_auth" = [])))]
 pub async fn update(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>, Json(body): Json<TransactionInput>) -> AppResult<Json<TransactionDto>> {
     Ok(Json(svc.update(scope.project_id, id, body).await?))
 }
 
 #[utoipa::path(delete, path = "/api/transactions/{id}", tag = "Транзакции", params(("id" = Uuid, Path)),
-    responses((status = 204), (status = 404)), security(("bearer_auth" = [])))]
+    responses((status = 204, description = "Операция удалена"), (status = 404, description = "Не найдена")), security(("bearer_auth" = [])))]
 pub async fn delete(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>) -> AppResult<StatusCode> {
     svc.delete(scope.project_id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(put, path = "/api/transactions/{id}/translation", tag = "Транзакции", params(("id" = Uuid, Path)), request_body = TranslationInput,
-    responses((status = 200, body = TransactionDto), (status = 404), (status = 422)), security(("bearer_auth" = [])))]
+    responses(
+        (status = 200, body = TransactionDto, description = "Переводы описания сохранены"),
+        (status = 404, description = "Не найдена"),
+        (status = 422, description = "Ошибка валидации"),
+    ), security(("bearer_auth" = [])))]
 pub async fn translate(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>, Json(body): Json<TranslationInput>) -> AppResult<Json<TransactionDto>> {
     Ok(Json(svc.translate(scope.project_id, id, body).await?))
 }
@@ -122,7 +133,7 @@ pub async fn translate(State(svc): Svc, Extension(scope): Extension<Scope>, Path
 /// Быстрый расход: счёт по умолчанию, частые категории и остатки лимитов по ним. Сохранение —
 /// обычный `POST /api/transactions`.
 #[utoipa::path(get, path = "/api/transactions/quick-defaults", tag = "Транзакции", params(QuickQuery),
-    responses((status = 200, body = QuickDefaultsDto)), security(("bearer_auth" = [])))]
+    responses((status = 200, body = QuickDefaultsDto, description = "Данные для быстрого ввода")), security(("bearer_auth" = [])))]
 pub async fn quick_defaults(State(svc): Svc, Extension(s): Extension<Session>, Query(q): Query<QuickQuery>) -> AppResult<Json<QuickDefaultsDto>> {
     let date = q.date.unwrap_or_else(|| chrono::Local::now().date_naive());
     Ok(Json(svc.quick_defaults(s.project_id, s.user_id, &s.base_currency, s.lang, date).await?))
@@ -130,7 +141,7 @@ pub async fn quick_defaults(State(svc): Svc, Extension(s): Extension<Session>, Q
 
 /// Остатки счетов на дату: сумма проводок по счёту (начальный остаток — тоже проводка).
 #[utoipa::path(get, path = "/api/transactions/balances", tag = "Транзакции", params(BalanceQuery),
-    responses((status = 200, body = Vec<BalanceDto>)), security(("bearer_auth" = [])))]
+    responses((status = 200, body = Vec<BalanceDto>, description = "Остатки счетов на дату")), security(("bearer_auth" = [])))]
 pub async fn balances(State(svc): Svc, Extension(scope): Extension<Scope>, Query(q): Query<BalanceQuery>) -> AppResult<Json<Vec<BalanceDto>>> {
     let date = q.date.unwrap_or_else(|| chrono::Local::now().date_naive());
     let items = svc.balances(scope.project_id, date).await?;

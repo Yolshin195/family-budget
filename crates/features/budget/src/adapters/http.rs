@@ -71,7 +71,8 @@ pub struct BudgetDto {
     pub missing_rates: Vec<String>,
 }
 
-#[utoipa::path(get, path = "/api/budget", tag = "Бюджет", params(ReportQuery), responses((status = 200, body = BudgetDto)), security(("bearer_auth" = [])))]
+#[utoipa::path(get, path = "/api/budget", tag = "Бюджет", params(ReportQuery),
+    responses((status = 200, body = BudgetDto, description = "Бюджет за период")), security(("bearer_auth" = [])))]
 pub async fn report(State(svc): Svc, Extension(s): Extension<Session>, Query(q): Query<ReportQuery>) -> AppResult<Json<BudgetDto>> {
     let today = chrono::Local::now().date_naive();
     let period = Period::containing(View::parse(q.view.as_deref().unwrap_or("month")), q.date.unwrap_or(today));

@@ -46,7 +46,8 @@ pub struct ProjectDto {
     pub members: Vec<MemberDto>,
 }
 
-#[utoipa::path(get, path = "/api/projects", tag = "Проекты", responses((status = 200, body = Vec<ProjectDto>)), security(("bearer_auth" = [])))]
+#[utoipa::path(get, path = "/api/projects", tag = "Проекты",
+    responses((status = 200, body = Vec<ProjectDto>, description = "Проекты пользователя; по API-токену — только его проект")), security(("bearer_auth" = [])))]
 pub async fn list(State(svc): Svc, Extension(s): Extension<Session>) -> AppResult<Json<Vec<ProjectDto>>> {
     Ok(Json(
         svc.overview(s.user_id)
