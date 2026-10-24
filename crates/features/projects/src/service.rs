@@ -6,7 +6,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
-use kernel::auth::{API_TOKEN_PREFIX, Authenticator, Credential, Identity, MemberRef, Memberships, ProjectRef, RequestMeta, Role, SessionInfo, Theme, Via};
+use kernel::auth::{
+    API_TOKEN_PREFIX, Authenticator, Credential, Identity, MemberRef, Memberships, ProjectRef, RequestMeta, Role,
+    SessionInfo, Theme, Via,
+};
 use kernel::code::require_text;
 use kernel::config::Config;
 use kernel::crypto::{ct_eq, random_token, sha256_hex};
@@ -15,9 +18,10 @@ use kernel::i18n::Lang;
 use uuid::Uuid;
 
 use crate::domain::{
-    ApiToken, AuditEvent, GUEST_SESSION_MAX, Invite, InviteState, MAX_ACTIVE_INVITES, Member, PendingLogin, Project, ProjectKind, SESSION_MAX, SessionRecord,
-    TOKEN_TERMS, User, action, check_members, family_name, is_default_personal_name, normalize_currency, normalize_email, normalize_name, normalize_scopes,
-    personal_name, safe_next, split_invite_code,
+    ApiToken, AuditEvent, GUEST_SESSION_MAX, Invite, InviteState, MAX_ACTIVE_INVITES, Member, PendingLogin, Project,
+    ProjectKind, SESSION_MAX, SessionRecord, TOKEN_TERMS, User, action, check_members, family_name,
+    is_default_personal_name, normalize_currency, normalize_email, normalize_name, normalize_scopes, personal_name,
+    safe_next, split_invite_code,
 };
 use crate::ports::{AccessRepository, Deps, ProjectRepository};
 
@@ -100,7 +104,13 @@ fn invite_state(invite: &Invite, members: &[Member], now: DateTime<Utc>) -> Invi
     if state == InviteState::Active && !owner { InviteState::Revoked } else { state }
 }
 
-fn audit_event(user: Option<Uuid>, project: Option<Uuid>, act: &str, meta: &RequestMeta, details: &[(&str, String)]) -> AuditEvent {
+fn audit_event(
+    user: Option<Uuid>,
+    project: Option<Uuid>,
+    act: &str,
+    meta: &RequestMeta,
+    details: &[(&str, String)],
+) -> AuditEvent {
     AuditEvent {
         id: Uuid::new_v4(),
         at: Utc::now(),
@@ -114,7 +124,12 @@ fn audit_event(user: Option<Uuid>, project: Option<Uuid>, act: &str, meta: &Requ
 }
 
 impl ProjectService {
-    pub fn new(repo: Arc<dyn ProjectRepository>, access: Arc<dyn AccessRepository>, deps: Deps, config: Arc<Config>) -> Self {
+    pub fn new(
+        repo: Arc<dyn ProjectRepository>,
+        access: Arc<dyn AccessRepository>,
+        deps: Deps,
+        config: Arc<Config>,
+    ) -> Self {
         Self { repo, access, deps, config }
     }
 
@@ -151,13 +166,26 @@ impl ProjectService {
     /// Начать вход: адрес Rauthy (code + PKCE S256) и что запомнить в подписанной cookie.
     pub async fn begin_login(&self, next: &str, lang: Lang) -> AppResult<(String, PendingLogin)> {
         let r = self.deps.identity.authorize(lang).await?;
-        let pending = PendingLogin { state: r.state, nonce: r.nonce, pkce_verifier: r.pkce_verifier, next: safe_next(next), started: Utc::now().timestamp() };
+        let pending = PendingLogin {
+            state: r.state,
+            nonce: r.nonce,
+            pkce_verifier: r.pkce_verifier,
+            next: safe_next(next),
+            started: Utc::now().timestamp(),
+        };
         Ok((r.url, pending))
     }
 
     /// Вернулись из Rauthy: проверить `state`, обменять код, проверить ID-токен, найти или создать
     /// пользователя по `sub`, открыть новую сессию (новый id при каждом входе).
-    pub async fn finish_login(&self, pending: &PendingLogin, state: &str, code: &str, lang: Lang, meta: &RequestMeta) -> AppResult<LoginResult> {
+    pub async fn finish_login(
+        &self,
+        pending: &PendingLogin,
+        state: &str,
+        code: &str,
+        lang: Lang,
+        meta: &RequestMeta,
+    ) -> AppResult<LoginResult> {
         if pending.expired(Utc::now()) {
             return Err(AppError::Validation("вход занял больше 10 минут — начните заново".into()));
         }
@@ -171,10 +199,15 @@ impl ProjectService {
         // пока владелец не привяжет его в Rauthy.
         // Разработка: демо-пользователи (`demo:*`) стенда Rauthy сопоставляются по email — так
         // заранее настроенная копия Rauthy входит в демо-данные. В продакшене — только по sub.
-        if !self.config.is_prod() && self.repo.user_by_sub(&login.sub).await?.is_none() {
-            if let Some(demo) = self.repo.user_by_email(&email).await?.filter(|u| u.rauthy_sub.starts_with("demo:") && u.rauthy_sub != GUEST_SUB) {
-                self.repo.set_sub(demo.id, &login.sub).await?;
-            }
+        if !self.config.is_prod()
+            && self.repo.user_by_sub(&login.sub).await?.is_none()
+            && let Some(demo) = self
+                .repo
+                .user_by_email(&email)
+                .await?
+                .filter(|u| u.rauthy_sub.starts_with("demo:") && u.rauthy_sub != GUEST_SUB)
+        {
+            self.repo.set_sub(demo.id, &login.sub).await?;
         }
         let user = match self.repo.user_by_sub(&login.sub).await? {
             Some(u) => {
@@ -196,7 +229,14 @@ impl ProjectService {
             }
         };
         let raw = self.open_session(user.id, login.mfa(), meta, SESSION_MAX).await?;
-        self.audit(audit_event(Some(user.id), None, action::LOGIN, meta, &[("method", "rauthy".into()), ("mfa", login.mfa().to_string())])).await;
+        self.audit(audit_event(
+            Some(user.id),
+            None,
+            action::LOGIN,
+            meta,
+            &[("method", "rauthy".into()), ("mfa", login.mfa().to_string())],
+        ))
+        .await;
         let onboarding = self.repo.projects_of(user.id).await?.is_empty();
         Ok(LoginResult { raw_session: raw, user_id: user.id, onboarding, next: pending.next.clone() })
     }
@@ -210,7 +250,9 @@ impl ProjectService {
 
     async fn open_session(&self, user_id: Uuid, mfa: bool, meta: &RequestMeta, max: Duration) -> AppResult<String> {
         let raw = random_token(32);
-        let rec = SessionRecord::new(sha256_hex(&raw), user_id, mfa, meta.ip.clone(), meta.user_agent.clone(), Utc::now()).lasting(max);
+        let rec =
+            SessionRecord::new(sha256_hex(&raw), user_id, mfa, meta.ip.clone(), meta.user_agent.clone(), Utc::now())
+                .lasting(max);
         self.access.insert_session(&rec).await?;
         Ok(raw)
     }
@@ -221,7 +263,11 @@ impl ProjectService {
             return Err(AppError::NotFound("вход для разработки выключен".into()));
         }
         let email = normalize_email(email).map_err(AppError::Validation)?;
-        let user = self.repo.user_by_email(&email).await?.ok_or_else(|| AppError::Validation(format!("email: пользователь '{email}' не найден")))?;
+        let user = self
+            .repo
+            .user_by_email(&email)
+            .await?
+            .ok_or_else(|| AppError::Validation(format!("email: пользователь '{email}' не найден")))?;
         let raw = self.open_session(user.id, false, meta, SESSION_MAX).await?;
         self.audit(audit_event(Some(user.id), None, action::LOGIN, meta, &[("method", "dev".into())])).await;
         Ok(raw)
@@ -232,8 +278,18 @@ impl ProjectService {
         if !self.config.guest_demo {
             return Err(AppError::NotFound("демо выключено".into()));
         }
-        let guest = self.repo.user_by_sub(GUEST_SUB).await?.ok_or_else(|| AppError::NotFound("демо-проект ещё не готов".into()))?;
-        let project = self.repo.projects_of(guest.id).await?.into_iter().next().ok_or_else(|| AppError::NotFound("демо-проект ещё не готов".into()))?;
+        let guest = self
+            .repo
+            .user_by_sub(GUEST_SUB)
+            .await?
+            .ok_or_else(|| AppError::NotFound("демо-проект ещё не готов".into()))?;
+        let project = self
+            .repo
+            .projects_of(guest.id)
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::NotFound("демо-проект ещё не готов".into()))?;
         // Гость не регистрировался: сессия живёт сутки, а не 30 дней.
         let raw = self.open_session(guest.id, false, meta, GUEST_SESSION_MAX).await?;
         Ok((raw, project.0.id))
@@ -277,6 +333,7 @@ impl ProjectService {
     // ------------------------------------------------------------ API-токены
 
     /// Новый личный API-токен на один проект. Сырой токен возвращается один раз, в БД — хеш.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_token(
         &self,
         user_id: Uuid,
@@ -302,7 +359,9 @@ impl ProjectService {
             .find(|(p, _)| p.id == project_id)
             .ok_or_else(|| AppError::NotFound("проект не найден".into()))?;
         if project.require_2fa && !session_mfa {
-            return Err(AppError::Forbidden("проект требует 2FA: войдите со вторым фактором, чтобы выпустить токен".into()));
+            return Err(AppError::Forbidden(
+                "проект требует 2FA: войдите со вторым фактором, чтобы выпустить токен".into(),
+            ));
         }
         let raw = format!("{API_TOKEN_PREFIX}{}", random_token(32));
         let now = Utc::now();
@@ -320,7 +379,14 @@ impl ProjectService {
             mfa: session_mfa,
         };
         self.access.insert_token(&token).await?;
-        self.audit(audit_event(Some(user_id), Some(project_id), action::TOKEN_CREATED, meta, &[("name", token.name.clone()), ("scopes", token.scopes.join(" "))])).await;
+        self.audit(audit_event(
+            Some(user_id),
+            Some(project_id),
+            action::TOKEN_CREATED,
+            meta,
+            &[("name", token.name.clone()), ("scopes", token.scopes.join(" "))],
+        ))
+        .await;
         Ok((raw, token))
     }
 
@@ -354,10 +420,13 @@ impl ProjectService {
         let currency = normalize_currency(base_currency).map_err(v)?;
         let user = self.user(user_id).await?;
         self.repo.update_user_profile(user_id, &name, lang, user.theme).await?;
-        if let Some((p, _)) = self.repo.projects_of(user_id).await?.into_iter().find(|(p, _)| p.kind == ProjectKind::Personal) {
+        if let Some((p, _)) =
+            self.repo.projects_of(user_id).await?.into_iter().find(|(p, _)| p.kind == ProjectKind::Personal)
+        {
             return Ok(p.id);
         }
-        self.create_project(user_id, personal_name(lang), ProjectKind::Personal, &currency, &RequestMeta::default()).await
+        self.create_project(user_id, personal_name(lang), ProjectKind::Personal, &currency, &RequestMeta::default())
+            .await
     }
 
     pub async fn update_profile(&self, user_id: Uuid, name: &str, lang: Lang, theme: Theme) -> AppResult<()> {
@@ -408,14 +477,25 @@ impl ProjectService {
         self.audit(audit_event(None, None, action::ACCOUNT_DELETED, meta, &[])).await;
         self.access.anonymize_audit(user_id).await?;
         self.repo.delete_user(user_id).await?;
-        let rauthy = if user.rauthy_sub.contains(':') { false } else { self.deps.identity.delete_user(&user.rauthy_sub).await.unwrap_or(false) };
+        let rauthy = if user.rauthy_sub.contains(':') {
+            false
+        } else {
+            self.deps.identity.delete_user(&user.rauthy_sub).await.unwrap_or(false)
+        };
         Ok(Deleted { rauthy })
     }
 
     // ------------------------------------------------------------ проекты и участники
 
     /// Новый проект; создатель — владелец. Справочники наполняются через порт `ProjectBootstrap`.
-    pub async fn create_project(&self, user_id: Uuid, name: &str, kind: ProjectKind, base_currency: &str, meta: &RequestMeta) -> AppResult<Uuid> {
+    pub async fn create_project(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        kind: ProjectKind,
+        base_currency: &str,
+        meta: &RequestMeta,
+    ) -> AppResult<Uuid> {
         self.deny_guest(user_id).await?;
         let user = self.user(user_id).await?;
         let project = Project::new(name, kind, base_currency, user_id).map_err(AppError::Validation)?;
@@ -423,7 +503,14 @@ impl ProjectService {
         self.repo.insert_project(&project, &owner).await?;
         self.deps.bootstrap.init(project.id, &project.base_currency, user.lang).await?;
         self.deps.people.joined(project.id, user_id, &user.display_name).await?;
-        self.audit(audit_event(Some(user_id), Some(project.id), action::PROJECT_CREATED, meta, &[("kind", kind.as_str().into())])).await;
+        self.audit(audit_event(
+            Some(user_id),
+            Some(project.id),
+            action::PROJECT_CREATED,
+            meta,
+            &[("kind", kind.as_str().into())],
+        ))
+        .await;
         Ok(project.id)
     }
 
@@ -439,27 +526,56 @@ impl ProjectService {
     }
 
     /// «Требовать 2FA от участников» — только владелец.
-    pub async fn set_require_2fa(&self, user_id: Uuid, project_id: Uuid, value: bool, meta: &RequestMeta) -> AppResult<()> {
+    pub async fn set_require_2fa(
+        &self,
+        user_id: Uuid,
+        project_id: Uuid,
+        value: bool,
+        meta: &RequestMeta,
+    ) -> AppResult<()> {
         self.deny_guest(user_id).await?;
         self.require_owner(user_id, project_id).await?;
         self.repo.set_require_2fa(project_id, value).await?;
-        self.audit(audit_event(Some(user_id), Some(project_id), action::REQUIRE_2FA, meta, &[("value", value.to_string())])).await;
+        self.audit(audit_event(
+            Some(user_id),
+            Some(project_id),
+            action::REQUIRE_2FA,
+            meta,
+            &[("value", value.to_string())],
+        ))
+        .await;
         Ok(())
     }
 
     /// Удалить семейный проект со всеми данными — только владелец, необратимо (с подтверждением).
-    pub async fn delete_project(&self, user_id: Uuid, project_id: Uuid, confirm_name: &str, meta: &RequestMeta) -> AppResult<()> {
+    pub async fn delete_project(
+        &self,
+        user_id: Uuid,
+        project_id: Uuid,
+        confirm_name: &str,
+        meta: &RequestMeta,
+    ) -> AppResult<()> {
         self.deny_guest(user_id).await?;
         let project = self.require_owner(user_id, project_id).await?;
         if project.kind == ProjectKind::Personal {
             return Err(AppError::Validation("личный проект удаляется только вместе с аккаунтом".into()));
         }
         if confirm_name.trim() != project.name {
-            return Err(AppError::Validation(format!("confirm: введите название проекта «{}» для подтверждения", project.name)));
+            return Err(AppError::Validation(format!(
+                "confirm: введите название проекта «{}» для подтверждения",
+                project.name
+            )));
         }
         self.deps.purge.purge(project_id).await?;
         self.repo.delete_project(project_id).await?;
-        self.audit(audit_event(Some(user_id), Some(project_id), action::PROJECT_DELETED, meta, &[("name", project.name)])).await;
+        self.audit(audit_event(
+            Some(user_id),
+            Some(project_id),
+            action::PROJECT_DELETED,
+            meta,
+            &[("name", project.name)],
+        ))
+        .await;
         Ok(())
     }
 
@@ -476,12 +592,20 @@ impl ProjectService {
                     .await?
                     .into_iter()
                     .filter(|i| invite_state(i, &raw, now) == InviteState::Active)
-                    .map(|i| InviteView { url: self.invite_url(i.id), id: i.id, role: i.role, expires_at: i.expires_at })
+                    .map(|i| InviteView {
+                        url: self.invite_url(i.id),
+                        id: i.id,
+                        role: i.role,
+                        expires_at: i.expires_at,
+                    })
                     .collect()
             } else {
                 Vec::new()
             };
-            let members = rows.into_iter().map(|(m, u)| MemberView { user_id: u.id, name: u.display_name, email: u.email, role: m.role }).collect();
+            let members = rows
+                .into_iter()
+                .map(|(m, u)| MemberView { user_id: u.id, name: u.display_name, email: u.email, role: m.role })
+                .collect();
             out.push(ProjectView {
                 id: p.id,
                 name: p.name,
@@ -496,7 +620,14 @@ impl ProjectService {
         Ok(out)
     }
 
-    pub async fn set_role(&self, by: Uuid, project_id: Uuid, user_id: Uuid, role: Role, meta: &RequestMeta) -> AppResult<()> {
+    pub async fn set_role(
+        &self,
+        by: Uuid,
+        project_id: Uuid,
+        user_id: Uuid,
+        role: Role,
+        meta: &RequestMeta,
+    ) -> AppResult<()> {
         self.deny_guest(by).await?;
         let project = self.require_owner(by, project_id).await?;
         self.change_members(&project, |ms| {
@@ -509,14 +640,25 @@ impl ProjectService {
         if !self.repo.update_role(project_id, user_id, role).await? {
             return Err(AppError::NotFound(format!("участник {user_id} не найден в проекте")));
         }
-        self.audit(audit_event(Some(by), Some(project_id), action::MEMBER_ROLE, meta, &[("member", user_id.to_string()), ("role", role.as_str().into())])).await;
+        self.audit(audit_event(
+            Some(by),
+            Some(project_id),
+            action::MEMBER_ROLE,
+            meta,
+            &[("member", user_id.to_string()), ("role", role.as_str().into())],
+        ))
+        .await;
         Ok(())
     }
 
     /// Удалить участника (владелец) или выйти самому. Его API-токены этого проекта отзываются.
     pub async fn remove_member(&self, by: Uuid, project_id: Uuid, user_id: Uuid, meta: &RequestMeta) -> AppResult<()> {
         self.deny_guest(by).await?;
-        let project = if by == user_id { self.load_project(project_id).await? } else { self.require_owner(by, project_id).await? };
+        let project = if by == user_id {
+            self.load_project(project_id).await?
+        } else {
+            self.require_owner(by, project_id).await?
+        };
         if !self.repo.members(project_id).await?.iter().any(|(m, _)| m.user_id == by) {
             return Err(AppError::NotFound(format!("проект {project_id} не найден")));
         }
@@ -524,7 +666,14 @@ impl ProjectService {
         self.repo.remove_member(project_id, user_id).await?;
         self.deps.people.left(project_id, user_id).await?;
         self.access.revoke_project_tokens(user_id, project_id, Utc::now()).await?;
-        self.audit(audit_event(Some(by), Some(project_id), action::MEMBER_REMOVED, meta, &[("member", user_id.to_string())])).await;
+        self.audit(audit_event(
+            Some(by),
+            Some(project_id),
+            action::MEMBER_REMOVED,
+            meta,
+            &[("member", user_id.to_string())],
+        ))
+        .await;
         Ok(())
     }
 
@@ -536,7 +685,11 @@ impl ProjectService {
         if project.kind == ProjectKind::Family {
             return Ok(());
         }
-        let name = if is_default_personal_name(&project.name) { family_name(self.user(by).await?.lang).to_string() } else { project.name };
+        let name = if is_default_personal_name(&project.name) {
+            family_name(self.user(by).await?.lang).to_string()
+        } else {
+            project.name
+        };
         self.repo.set_kind(project_id, ProjectKind::Family, &name).await?;
         self.audit(audit_event(Some(by), Some(project_id), action::PROJECT_MADE_FAMILY, meta, &[])).await;
         Ok(())
@@ -572,27 +725,52 @@ impl ProjectService {
         self.deny_guest(by).await?;
         let project = self.require_owner(by, project_id).await?;
         if project.kind != ProjectKind::Family {
-            return Err(AppError::Validation("личный проект — только для одного человека: сделайте его семейным, чтобы пригласить близких".into()));
+            return Err(AppError::Validation(
+                "личный проект — только для одного человека: сделайте его семейным, чтобы пригласить близких".into(),
+            ));
         }
         let now = Utc::now();
-        let active = self.repo.invites_of(project_id).await?.iter().filter(|i| i.state(now) == InviteState::Active).count();
+        let active =
+            self.repo.invites_of(project_id).await?.iter().filter(|i| i.state(now) == InviteState::Active).count();
         if active >= MAX_ACTIVE_INVITES {
-            return Err(AppError::Validation(format!("действующих приглашений уже {MAX_ACTIVE_INVITES}: отзовите ненужные")));
+            return Err(AppError::Validation(format!(
+                "действующих приглашений уже {MAX_ACTIVE_INVITES}: отзовите ненужные"
+            )));
         }
         let invite = Invite::new(project_id, role, by, now).map_err(AppError::Validation)?;
         self.repo.insert_invite(&invite).await?;
-        self.audit(audit_event(Some(by), Some(project_id), action::INVITE_CREATED, meta, &[("invite", invite.id.to_string()), ("role", role.as_str().into())])).await;
+        self.audit(audit_event(
+            Some(by),
+            Some(project_id),
+            action::INVITE_CREATED,
+            meta,
+            &[("invite", invite.id.to_string()), ("role", role.as_str().into())],
+        ))
+        .await;
         Ok(invite.id)
     }
 
     /// Отозвать приглашение — ссылка и QR-код перестают работать. Только владелец.
-    pub async fn revoke_invite(&self, by: Uuid, project_id: Uuid, invite_id: Uuid, meta: &RequestMeta) -> AppResult<()> {
+    pub async fn revoke_invite(
+        &self,
+        by: Uuid,
+        project_id: Uuid,
+        invite_id: Uuid,
+        meta: &RequestMeta,
+    ) -> AppResult<()> {
         self.deny_guest(by).await?;
         self.require_owner(by, project_id).await?;
         if !self.repo.revoke_invite(project_id, invite_id, Utc::now()).await? {
             return Err(AppError::NotFound("приглашение не найдено или уже использовано".into()));
         }
-        self.audit(audit_event(Some(by), Some(project_id), action::INVITE_REVOKED, meta, &[("invite", invite_id.to_string())])).await;
+        self.audit(audit_event(
+            Some(by),
+            Some(project_id),
+            action::INVITE_REVOKED,
+            meta,
+            &[("invite", invite_id.to_string())],
+        ))
+        .await;
         Ok(())
     }
 
@@ -631,7 +809,9 @@ impl ProjectService {
         match invite_state(&invite, &members, now) {
             InviteState::Active => {}
             InviteState::Used => return Err(used()),
-            InviteState::Expired => return Err(AppError::Validation("срок приглашения истёк — попросите новое".into())),
+            InviteState::Expired => {
+                return Err(AppError::Validation("срок приглашения истёк — попросите новое".into()));
+            }
             InviteState::Revoked => return Err(AppError::Validation("приглашение отозвано — попросите новое".into())),
         }
         let member = Member { project_id: project.id, user_id, role: invite.role };
@@ -642,7 +822,11 @@ impl ProjectService {
         }
         let name = self.user(user_id).await?.display_name;
         self.deps.people.joined(project.id, user_id, &name).await?;
-        let details = [("invite", invite.id.to_string()), ("role", invite.role.as_str().into()), ("invited_by", invite.created_by.to_string())];
+        let details = [
+            ("invite", invite.id.to_string()),
+            ("role", invite.role.as_str().into()),
+            ("invited_by", invite.created_by.to_string()),
+        ];
         self.audit(audit_event(Some(user_id), Some(project.id), action::MEMBER_JOINED, meta, &details)).await;
         Ok(project.id)
     }
@@ -721,7 +905,14 @@ impl ProjectService {
     }
 
     /// Записать событие другой фичи в журнал безопасности (например, действия ассистента через MCP).
-    pub async fn record_event(&self, user_id: Uuid, project_id: Option<Uuid>, action: &str, meta: &RequestMeta, details: &[(&str, String)]) {
+    pub async fn record_event(
+        &self,
+        user_id: Uuid,
+        project_id: Option<Uuid>,
+        action: &str,
+        meta: &RequestMeta,
+        details: &[(&str, String)],
+    ) {
         self.audit(audit_event(Some(user_id), project_id, action, meta, details)).await;
     }
 
@@ -744,7 +935,8 @@ impl ProjectService {
     /// Сделать гостя демо (`demo:guest`) наблюдателем проекта — только владелец.
     pub async fn add_guest(&self, by: Uuid, project_id: Uuid) -> AppResult<()> {
         let project = self.require_owner(by, project_id).await?;
-        let guest = self.repo.user_by_sub(GUEST_SUB).await?.ok_or_else(|| AppError::NotFound("гость демо не создан".into()))?;
+        let guest =
+            self.repo.user_by_sub(GUEST_SUB).await?.ok_or_else(|| AppError::NotFound("гость демо не создан".into()))?;
         let member = Member { project_id, user_id: guest.id, role: Role::Viewer };
         self.change_members(&project, |ms| {
             ms.retain(|m| m.user_id != guest.id);
@@ -779,7 +971,9 @@ impl Memberships for ProjectService {
     async fn session(&self, user_id: Uuid, project: Option<Uuid>) -> AppResult<Option<SessionInfo>> {
         let Some(user) = self.repo.user(user_id).await? else { return Ok(None) };
         let mine = self.repo.projects_of(user_id).await?;
-        let Some((p, me)) = project.and_then(|id| mine.iter().find(|(p, _)| p.id == id)).or_else(|| mine.first()).cloned() else {
+        let Some((p, me)) =
+            project.and_then(|id| mine.iter().find(|(p, _)| p.id == id)).or_else(|| mine.first()).cloned()
+        else {
             return Ok(None);
         };
         let members = self
@@ -835,7 +1029,11 @@ impl Authenticator for ProjectService {
                 }
                 // Второй фактор — тот, что был у сессии при выпуске: если проект позже потребовал 2FA,
                 // токен без него перестаёт открывать данные (как и такая сессия).
-                Ok(Some(Identity { user_id: t.user_id, mfa: t.mfa, via: Via::Token { token_id: t.id, project_id: t.project_id, scopes: t.scopes } }))
+                Ok(Some(Identity {
+                    user_id: t.user_id,
+                    mfa: t.mfa,
+                    via: Via::Token { token_id: t.id, project_id: t.project_id, scopes: t.scopes },
+                }))
             }
         }
     }

@@ -172,7 +172,9 @@ pub fn check_tree(all: &[Category], item: &Category) -> Result<(), String> {
                 break;
             }
             cur = match &c.parent_code {
-                Some(p) if *p == item.code => return Err("parent_code: нельзя перенести категорию в собственного потомка".into()),
+                Some(p) if *p == item.code => {
+                    return Err("parent_code: нельзя перенести категорию в собственного потомка".into());
+                }
                 Some(p) => find(p),
                 None => None,
             };
@@ -186,7 +188,10 @@ pub fn check_tree(all: &[Category], item: &Category) -> Result<(), String> {
         let mut h = 0;
         for child in others.iter().filter(|c| c.parent_code.as_deref() == Some(code)) {
             if child.category_kind != kind {
-                return Err(format!("category_kind: у подкатегории '{}' другой тип — сначала перенесите её", child.code));
+                return Err(format!(
+                    "category_kind: у подкатегории '{}' другой тип — сначала перенесите её",
+                    child.code
+                ));
             }
             h = h.max(1 + height(others, &child.code, kind, guard + 1)?);
         }
@@ -204,14 +209,17 @@ pub fn check_tree(all: &[Category], item: &Category) -> Result<(), String> {
 pub fn flatten(all: &[Category]) -> Vec<(usize, &Category)> {
     let has = |code: &str| all.iter().any(|c| c.code == code);
     let mut roots: Vec<&Category> = all.iter().filter(|c| c.parent_code.as_deref().is_none_or(|p| !has(p))).collect();
-    roots.sort_by(|a, b| (a.category_kind.as_str(), a.sort_order, &a.code).cmp(&(b.category_kind.as_str(), b.sort_order, &b.code)));
+    roots.sort_by(|a, b| {
+        (a.category_kind.as_str(), a.sort_order, &a.code).cmp(&(b.category_kind.as_str(), b.sort_order, &b.code))
+    });
     let mut out = Vec::with_capacity(all.len());
     fn walk<'a>(all: &'a [Category], node: &'a Category, depth: usize, out: &mut Vec<(usize, &'a Category)>) {
         out.push((depth, node));
         if depth > MAX_DEPTH {
             return;
         }
-        let mut kids: Vec<&Category> = all.iter().filter(|c| c.parent_code.as_deref() == Some(node.code.as_str())).collect();
+        let mut kids: Vec<&Category> =
+            all.iter().filter(|c| c.parent_code.as_deref() == Some(node.code.as_str())).collect();
         kids.sort_by(|a, b| (a.sort_order, &a.code).cmp(&(b.sort_order, &b.code)));
         for k in kids {
             walk(all, k, depth + 1, out);

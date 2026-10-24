@@ -11,7 +11,10 @@ use kernel::i18n::Lang;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::{Account, BudgetReport, Category, Currency, Grant, Limit, Occurrence, Person, Place, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter};
+use crate::domain::{
+    Account, BudgetReport, Category, Currency, Grant, Limit, Occurrence, Person, Place, Plan, PlanDraft, QuickInfo,
+    Rate, Tx, TxDraft, TxFilter,
+};
 
 #[async_trait]
 pub trait GrantRepository: Send + Sync {
@@ -29,7 +32,14 @@ pub trait GrantRepository: Send + Sync {
 /// Операции и остатки (фича `transactions`).
 #[async_trait]
 pub trait Ledger: Send + Sync {
-    async fn quick(&self, project_id: Uuid, user_id: Uuid, base_currency: &str, lang: Lang, date: NaiveDate) -> AppResult<QuickInfo>;
+    async fn quick(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        base_currency: &str,
+        lang: Lang,
+        date: NaiveDate,
+    ) -> AppResult<QuickInfo>;
     /// Страница операций (новые сначала) и общее число.
     async fn list(&self, project_id: Uuid, filter: TxFilter, limit: i64, offset: i64) -> AppResult<(Vec<Tx>, i64)>;
     async fn get(&self, project_id: Uuid, id: Uuid) -> AppResult<Tx>;
@@ -42,13 +52,27 @@ pub trait Ledger: Send + Sync {
 #[async_trait]
 pub trait Budget: Send + Sync {
     /// `view` — week / month / year; период, содержащий `date`.
-    async fn report(&self, project_id: Uuid, base_currency: &str, view: &str, date: NaiveDate, lang: Lang) -> AppResult<BudgetReport>;
+    async fn report(
+        &self,
+        project_id: Uuid,
+        base_currency: &str,
+        view: &str,
+        date: NaiveDate,
+        lang: Lang,
+    ) -> AppResult<BudgetReport>;
 }
 
 /// Плановые операции и их платежи (фича `planning`). Удаления нет.
 #[async_trait]
 pub trait Plans: Send + Sync {
-    async fn occurrences(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate, today: NaiveDate, lang: Lang) -> AppResult<Vec<Occurrence>>;
+    async fn occurrences(
+        &self,
+        project_id: Uuid,
+        from: NaiveDate,
+        to: NaiveDate,
+        today: NaiveDate,
+        lang: Lang,
+    ) -> AppResult<Vec<Occurrence>>;
     async fn skip(&self, project_id: Uuid, user_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<()>;
     /// Все планы проекта (и приостановленные).
     async fn list(&self, project_id: Uuid) -> AppResult<Vec<Plan>>;
@@ -70,7 +94,14 @@ pub trait Directories: Send + Sync {
     async fn create_account(&self, project_id: Uuid, account: &Account) -> AppResult<Account>;
     async fn update_account(&self, project_id: Uuid, account: &Account) -> AppResult<Account>;
     /// Начальный остаток счёта на дату (операция OPENING в журнале); ноль — убрать.
-    async fn set_opening(&self, project_id: Uuid, user_id: Uuid, account_code: &str, amount: Decimal, date: NaiveDate) -> AppResult<()>;
+    async fn set_opening(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        account_code: &str,
+        amount: Decimal,
+        date: NaiveDate,
+    ) -> AppResult<()>;
     /// Все категории проекта, с архивными.
     async fn categories(&self, project_id: Uuid) -> AppResult<Vec<Category>>;
     async fn create_category(&self, project_id: Uuid, category: &Category) -> AppResult<Category>;
@@ -112,7 +143,14 @@ pub trait Accounts: Send + Sync {
     /// Издатель access-токенов провайдера (для метаданных ресурса). `None` — вход не настроен.
     async fn issuer(&self) -> Option<String>;
     async fn is_guest(&self, user_id: Uuid) -> AppResult<bool>;
-    async fn record(&self, user_id: Uuid, project_id: Option<Uuid>, action: &str, meta: &RequestMeta, details: &[(&str, String)]);
+    async fn record(
+        &self,
+        user_id: Uuid,
+        project_id: Option<Uuid>,
+        action: &str,
+        meta: &RequestMeta,
+        details: &[(&str, String)],
+    );
 }
 
 /// Зависимости фичи от других фич (порты объявлены здесь, реализации — в app/wiring).

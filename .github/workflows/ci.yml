@@ -1,5 +1,9 @@
-# Проверки на каждый PR (ТЗ, раздел 13): тесты, уязвимые зависимости (cargo audit, cargo deny),
+# Проверки на каждый PR (ТЗ, раздел 13): тесты, линтеры, уязвимые зависимости (cargo audit, cargo deny),
 # сканирование образа (Trivy), OWASP ZAP baseline — без предупреждений уровней High и Medium.
+#
+# - Линтеры — те же, что make lint: rustfmt и clippy (предупреждения — ошибки), shellcheck, actionlint, hadolint, ruff.
+#   Версии линтеров скриптов — в Makefile; Rust — stable, как у тестов: новый clippy может найти новое, это
+#   исправляется отдельным PR.
 #
 # - На main не запускается: тесты и сборку образа там делает docker-publish.yml (теги — только при зелёных тестах),
 #   уже опубликованный образ раз в неделю проверяет security-scan.yml.
@@ -50,6 +54,30 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Если база не поднялась, тесты на PostgreSQL падают на подключении, а не пропускаются.
       - run: cargo test --workspace --locked
+
+  lint-rust:
+    name: Lint (rustfmt, clippy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      # Кэш тестов с main: из него берутся собранные proc-macro и build-скрипты; свой кэш не пишется.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+          save-if: false
+      - run: make lint-rust
+
+  lint:
+    name: Lint (shell, workflows, Dockerfile, Python)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: make lint-scripts ENGINE=docker
 
   audit:
     name: Dependency audit
@@ -114,7 +142,7 @@ jobs:
         run: |
           docker compose up -d --no-build
           wait_for() {
-            for i in $(seq 1 90); do curl -fs -o /dev/null "$1" && return 0; sleep 2; done
+            for _ in $(seq 1 90); do curl -fs -o /dev/null "$1" && return 0; sleep 2; done
             echo "::error::$1 не ответил за 3 минуты"; return 1
           }
           wait_for http://localhost:8080/health

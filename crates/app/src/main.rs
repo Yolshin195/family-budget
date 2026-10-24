@@ -85,7 +85,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     assets::register();
-    let database_url = kernel::config::secret_var("DATABASE_URL").ok_or_else(|| anyhow::anyhow!("DATABASE_URL не задан"))?;
+    let database_url =
+        kernel::config::secret_var("DATABASE_URL").ok_or_else(|| anyhow::anyhow!("DATABASE_URL не задан"))?;
     let pool = connect(&database_url).await?;
     let ctx = AppContext { pool, config: config.clone() };
 
@@ -200,7 +201,12 @@ async fn main() -> anyhow::Result<()> {
     let cors = CorsLayer::new()
         .allow_origin(HeaderValue::from_str(&config.origin())?)
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, HeaderName::from_static("x-csrf-token"), HeaderName::from_static("x-project-id")])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-csrf-token"),
+            HeaderName::from_static("x-project-id"),
+        ])
         .allow_credentials(true);
 
     let app = app
@@ -219,7 +225,11 @@ async fn main() -> anyhow::Result<()> {
 
     // По умолчанию — только эта машина: в dev открыт «Вход для разработки». В контейнере BIND_ADDR задан явно.
     let addr = env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".into());
-    println!("Server starting on http://{addr}  ({}; {})", if config.is_prod() { "production" } else { "development" }, config.base_url);
+    println!(
+        "Server starting on http://{addr}  ({}; {})",
+        if config.is_prod() { "production" } else { "development" },
+        config.base_url
+    );
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
     Ok(())

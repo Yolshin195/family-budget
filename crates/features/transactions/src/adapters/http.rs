@@ -13,8 +13,9 @@ use utoipa::OpenApi;
 use uuid::Uuid;
 
 use crate::dto::{
-    BalanceDto, BalanceQuery, ExternalRefDto, ExternalRefFoundDto, ExternalRefInput, ExternalRefQuery, ItemDto, ItemInput, LineDto, ListQuery, PostingDto, QuickAccountDto,
-    QuickCategoryDto, QuickDefaultsDto, QuickQuery, TransactionDto, TransactionInput, TranslationInput,
+    BalanceDto, BalanceQuery, ExternalRefDto, ExternalRefFoundDto, ExternalRefInput, ExternalRefQuery, ItemDto,
+    ItemInput, LineDto, ListQuery, PostingDto, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, QuickQuery,
+    TransactionDto, TransactionInput, TranslationInput,
 };
 use crate::service::TransactionService;
 
@@ -55,7 +56,11 @@ pub struct ApiDoc;
         (status = 422, description = "Ошибка валидации (в том числе полей `external_ref.*`)")
     ),
     security(("bearer_auth" = [])))]
-pub async fn create(State(svc): Svc, Extension(scope): Extension<Scope>, Json(body): Json<TransactionInput>) -> AppResult<(StatusCode, Json<TransactionDto>)> {
+pub async fn create(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Json(body): Json<TransactionInput>,
+) -> AppResult<(StatusCode, Json<TransactionDto>)> {
     let (dto, created) = svc.create_once(scope.project_id, scope.user_id, body).await?;
     Ok((if created { StatusCode::CREATED } else { StatusCode::OK }, Json(dto)))
 }
@@ -70,7 +75,12 @@ pub async fn create(State(svc): Svc, Extension(scope): Extension<Scope>, Json(bo
         (status = 422, description = "Ошибка проверки полей; операция — начальный остаток")
     ),
     security(("bearer_auth" = [])))]
-pub async fn attach(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>, Json(body): Json<ExternalRefInput>) -> AppResult<(StatusCode, Json<ExternalRefDto>)> {
+pub async fn attach(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ExternalRefInput>,
+) -> AppResult<(StatusCode, Json<ExternalRefDto>)> {
     let (dto, created) = svc.attach(scope.project_id, scope.user_id, id, body).await?;
     Ok((if created { StatusCode::CREATED } else { StatusCode::OK }, Json(dto)))
 }
@@ -79,7 +89,11 @@ pub async fn attach(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id
 #[utoipa::path(get, path = "/api/transactions/external-refs", tag = "Транзакции", params(ExternalRefQuery),
     responses((status = 200, body = ExternalRefFoundDto), (status = 404, description = "Связи нет"), (status = 422, description = "Нет параметра или он неверный")),
     security(("bearer_auth" = [])))]
-pub async fn find_ref(State(svc): Svc, Extension(scope): Extension<Scope>, Query(q): Query<ExternalRefQuery>) -> AppResult<Json<ExternalRefFoundDto>> {
+pub async fn find_ref(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Query(q): Query<ExternalRefQuery>,
+) -> AppResult<Json<ExternalRefFoundDto>> {
     Ok(Json(svc.find_ref(scope.project_id, &q.provider, &q.external_id).await?))
 }
 
@@ -99,7 +113,11 @@ pub async fn list(
         (status = 200, body = TransactionDto, description = "Операция"),
         (status = 404, description = "Не найдена"),
     ), security(("bearer_auth" = [])))]
-pub async fn get_one(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>) -> AppResult<Json<TransactionDto>> {
+pub async fn get_one(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<TransactionDto>> {
     Ok(Json(svc.get(scope.project_id, id).await?))
 }
 
@@ -109,13 +127,22 @@ pub async fn get_one(State(svc): Svc, Extension(scope): Extension<Scope>, Path(i
         (status = 404, description = "Не найдена"),
         (status = 422, description = "Ошибка валидации"),
     ), security(("bearer_auth" = [])))]
-pub async fn update(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>, Json(body): Json<TransactionInput>) -> AppResult<Json<TransactionDto>> {
+pub async fn update(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<TransactionInput>,
+) -> AppResult<Json<TransactionDto>> {
     Ok(Json(svc.update(scope.project_id, id, body).await?))
 }
 
 #[utoipa::path(delete, path = "/api/transactions/{id}", tag = "Транзакции", params(("id" = Uuid, Path)),
     responses((status = 204, description = "Операция удалена"), (status = 404, description = "Не найдена")), security(("bearer_auth" = [])))]
-pub async fn delete(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>) -> AppResult<StatusCode> {
+pub async fn delete(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Path(id): Path<Uuid>,
+) -> AppResult<StatusCode> {
     svc.delete(scope.project_id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -126,7 +153,12 @@ pub async fn delete(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id
         (status = 404, description = "Не найдена"),
         (status = 422, description = "Ошибка валидации"),
     ), security(("bearer_auth" = [])))]
-pub async fn translate(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>, Json(body): Json<TranslationInput>) -> AppResult<Json<TransactionDto>> {
+pub async fn translate(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<TranslationInput>,
+) -> AppResult<Json<TransactionDto>> {
     Ok(Json(svc.translate(scope.project_id, id, body).await?))
 }
 
@@ -134,7 +166,11 @@ pub async fn translate(State(svc): Svc, Extension(scope): Extension<Scope>, Path
 /// обычный `POST /api/transactions`.
 #[utoipa::path(get, path = "/api/transactions/quick-defaults", tag = "Транзакции", params(QuickQuery),
     responses((status = 200, body = QuickDefaultsDto, description = "Данные для быстрого ввода")), security(("bearer_auth" = [])))]
-pub async fn quick_defaults(State(svc): Svc, Extension(s): Extension<Session>, Query(q): Query<QuickQuery>) -> AppResult<Json<QuickDefaultsDto>> {
+pub async fn quick_defaults(
+    State(svc): Svc,
+    Extension(s): Extension<Session>,
+    Query(q): Query<QuickQuery>,
+) -> AppResult<Json<QuickDefaultsDto>> {
     let date = q.date.unwrap_or_else(|| chrono::Local::now().date_naive());
     Ok(Json(svc.quick_defaults(s.project_id, s.user_id, &s.base_currency, s.lang, date).await?))
 }
@@ -142,7 +178,11 @@ pub async fn quick_defaults(State(svc): Svc, Extension(s): Extension<Session>, Q
 /// Остатки счетов на дату: сумма проводок по счёту (начальный остаток — тоже проводка).
 #[utoipa::path(get, path = "/api/transactions/balances", tag = "Транзакции", params(BalanceQuery),
     responses((status = 200, body = Vec<BalanceDto>, description = "Остатки счетов на дату")), security(("bearer_auth" = [])))]
-pub async fn balances(State(svc): Svc, Extension(scope): Extension<Scope>, Query(q): Query<BalanceQuery>) -> AppResult<Json<Vec<BalanceDto>>> {
+pub async fn balances(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Query(q): Query<BalanceQuery>,
+) -> AppResult<Json<Vec<BalanceDto>>> {
     let date = q.date.unwrap_or_else(|| chrono::Local::now().date_naive());
     let items = svc.balances(scope.project_id, date).await?;
     Ok(Json(items.into_iter().map(|(account_code, balance)| BalanceDto { account_code, balance }).collect()))

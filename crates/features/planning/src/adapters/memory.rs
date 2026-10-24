@@ -52,7 +52,14 @@ impl PlanRepository for InMemoryPlanRepository {
     }
 
     async fn skips(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<(Uuid, NaiveDate)>> {
-        Ok(self.skips.lock().unwrap().iter().filter(|s| s.0 == project_id && s.2 >= from && s.2 <= to).map(|s| (s.1, s.2)).collect())
+        Ok(self
+            .skips
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.0 == project_id && s.2 >= from && s.2 <= to)
+            .map(|s| (s.1, s.2))
+            .collect())
     }
 
     async fn add_skip(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate, _by: Uuid) -> AppResult<()> {

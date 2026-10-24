@@ -43,6 +43,12 @@ pub fn feature(ctx: &AppContext, api: Arc<Service>) -> Feature {
         migrator: sqlx::migrate::Migrator::DEFAULT,
         router: Router::new(),
         openapi: ApiDoc::openapi(),
-        web: Some(Web { pages: Router::new(), root: None, public: Some(adapters::web::public(api, ctx.config.clone())), account: None, nav: None }),
+        web: Some(Web {
+            pages: Router::new(),
+            root: None,
+            public: Some(adapters::web::public(api, ctx.config.clone())),
+            account: None,
+            nav: None,
+        }),
     }
 }

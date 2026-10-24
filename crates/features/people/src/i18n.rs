@@ -19,15 +19,23 @@ pub fn dict(key: &str) -> Option<Tr> {
         "account_deleted" => ("Аккаунт удалён", "Account deleted", "ลบบัญชีผู้ใช้แล้ว"),
         "you" => ("это вы", "you", "คุณ"),
         "former_member" => ("Удалённый участник", "Former member", "อดีตสมาชิก"),
-        "code_hint" => ("Латиница, цифры и _: PINPAN", "Latin letters, digits and _: PINPAN", "อักษรละติน ตัวเลข และ _: PINPAN"),
-        "name_hint" => ("Как вы его называете; не переводится", "As you call them; not translated", "ชื่อที่คุณเรียก ไม่ต้องแปล"),
+        "code_hint" => {
+            ("Латиница, цифры и _: PINPAN", "Latin letters, digits and _: PINPAN", "อักษรละติน ตัวเลข และ _: PINPAN")
+        }
+        "name_hint" => {
+            ("Как вы его называете; не переводится", "As you call them; not translated", "ชื่อที่คุณเรียก ไม่ต้องแปล")
+        }
         "former_hint" => (
             "Участник удалил аккаунт, его имя стёрто. Пустое имя — «Удалённый участник»",
             "The member deleted their account and their name was erased. An empty name shows “Former member”",
             "สมาชิกลบบัญชีแล้วและชื่อถูกลบ ถ้าเว้นว่างจะแสดง “อดีตสมาชิก”",
         ),
         "aliases" => ("Другие имена", "Other names", "ชื่ออื่น"),
-        "aliases_hint" => ("Через запятую — для поиска: Пинпан, ปิ่นปั่น", "Comma-separated, for search: Pinpan, ปิ่นปั่น", "คั่นด้วยจุลภาค ใช้สำหรับค้นหา: Pinpan, ปิ่นปั่น"),
+        "aliases_hint" => (
+            "Через запятую — для поиска: Пинпан, ปิ่นปั่น",
+            "Comma-separated, for search: Pinpan, ปิ่นปั่น",
+            "คั่นด้วยจุลภาค ใช้สำหรับค้นหา: Pinpan, ปิ่นปั่น",
+        ),
         "member_hint" => (
             "Запись участника проекта создаётся сама, когда он вступает в проект, и уходит в архив, когда выходит. Имя можно поправить — в профиле оно не изменится.",
             "A project member’s record is created when they join the project and archived when they leave. You can edit the name here; their profile stays the same.",
@@ -40,7 +48,11 @@ pub fn dict(key: &str) -> Option<Tr> {
         ),
         // Ошибки (техдолг #9): на языке запроса.
         "err.code_taken" => ("код «{code}» уже занят", "the code “{code}” is already taken", "รหัส “{code}” ถูกใช้แล้ว"),
-        "err.code_reserved" => ("код «{code}» зарезервирован: так в запросах обозначают «Для всех»", "the code “{code}” is reserved: it means “For everyone” in requests", "รหัส “{code}” สงวนไว้ หมายถึง “สำหรับทุกคน” ในคำขอ"),
+        "err.code_reserved" => (
+            "код «{code}» зарезервирован: так в запросах обозначают «Для всех»",
+            "the code “{code}” is reserved: it means “For everyone” in requests",
+            "รหัส “{code}” สงวนไว้ หมายถึง “สำหรับทุกคน” ในคำขอ",
+        ),
         "err.not_found" => ("человек «{code}» не найден", "person “{code}” not found", "ไม่พบบุคคล “{code}”"),
         "err.too_long" => ("не длиннее {max} знаков", "{max} characters at most", "ไม่เกิน {max} ตัวอักษร"),
         "err.too_many_aliases" => ("не больше {max} имён", "{max} names at most", "ไม่เกิน {max} ชื่อ"),

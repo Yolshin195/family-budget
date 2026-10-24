@@ -14,7 +14,8 @@ pub trait CategoryRepository: Send + Sync {
     async fn insert(&self, item: &Category) -> AppResult<()>;
     async fn update(&self, item: &Category) -> AppResult<()>;
     async fn find_by_code(&self, project_id: Uuid, code: &str) -> AppResult<Option<Category>>;
-    async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Category>>;
+    async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64)
+    -> AppResult<Vec<Category>>;
     async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64>;
     /// Удалить все записи проекта (удаление проекта или аккаунта).
     async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
@@ -33,4 +34,3 @@ pub trait CategoryUsage: Send + Sync {
     /// иначе старые суммы уйдут в другое дерево бюджета и итоги разойдутся (этап 0, Ц2).
     async fn in_use(&self, project_id: Uuid, code: &str) -> AppResult<bool>;
 }
-

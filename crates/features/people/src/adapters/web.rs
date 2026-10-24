@@ -87,10 +87,20 @@ impl PersonForm {
     }
 }
 
-async fn form_page(svc: &PersonService, page: PageCtx, is_new: bool, f: PersonForm, error: Option<String>) -> PageResult {
+async fn form_page(
+    svc: &PersonService,
+    page: PageCtx,
+    is_new: bool,
+    f: PersonForm,
+    error: Option<String>,
+) -> PageResult {
     let (member, former) = match is_new {
         true => (false, false),
-        false => svc.get(page.session.project_id, &f.code).await.map(|p| (p.is_member(), p.former_member)).unwrap_or_default(),
+        false => svc
+            .get(page.session.project_id, &f.code)
+            .await
+            .map(|p| (p.is_member(), p.former_member))
+            .unwrap_or_default(),
     };
     render(&FormPage { page: form_ctx(page), is_new, f, member, former, error })
 }
@@ -107,7 +117,9 @@ async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageR
 async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): Form<PersonForm>) -> PageResult {
     match svc.create(page.session.project_id, CreatePersonDto { code: f.code.clone(), data: f.fields() }).await {
         Ok(_) => Ok(see_other(crate::MOUNT)),
-        Err(e @ (AppError::Validation(_) | AppError::Invalid(_) | AppError::Conflict(_))) => form_page(&svc, page, true, f, Some(e.to_string())).await,
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_) | AppError::Conflict(_))) => {
+            form_page(&svc, page, true, f, Some(e.to_string())).await
+        }
         Err(e) => Err(PageError(e)),
     }
 }
@@ -117,11 +129,18 @@ async fn edit_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(co
     form_page(&svc, page, false, PersonForm::from_dto(p), None).await
 }
 
-async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>, Form(mut f): Form<PersonForm>) -> PageResult {
+async fn update(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Path(code): Path<String>,
+    Form(mut f): Form<PersonForm>,
+) -> PageResult {
     f.code = code.clone();
     match svc.update(page.session.project_id, &code, f.fields()).await {
         Ok(_) => Ok(see_other(crate::MOUNT)),
-        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => form_page(&svc, page, false, f, Some(e.to_string())).await,
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => {
+            form_page(&svc, page, false, f, Some(e.to_string())).await
+        }
         Err(e) => Err(PageError(e)),
     }
 }
@@ -130,10 +149,17 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
 async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
     match svc.archive(page.session.project_id, &code).await {
         Ok(()) => {
-            let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("{}/{}/restore", crate::MOUNT, url_segment(&code)));
+            let flash = Flash::with_undo(
+                format!("{} · {code}", page.t("toast.archived")),
+                format!("{}/{}/restore", crate::MOUNT, url_segment(&code)),
+            );
             Ok(see_other_flash(&page.config, crate::MOUNT, flash))
         }
-        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => Ok(see_other_flash(&page.config, crate::MOUNT, Flash::error(kernel::web::FormError::parse(&e.to_string()).message))),
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => Ok(see_other_flash(
+            &page.config,
+            crate::MOUNT,
+            Flash::error(kernel::web::FormError::parse(&e.to_string()).message),
+        )),
         Err(e) => Err(PageError(e)),
     }
 }

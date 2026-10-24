@@ -10,7 +10,6 @@ use crate::adapters::memory::InMemoryAccountRepository;
 use crate::dto::{CreateAccountDto, ListQuery, UpdateAccountDto};
 use crate::service::AccountService;
 
-
 /// Фейковый справочник для тестов: знает любой код, кроме UNKNOWN.
 struct FakeLookup;
 
@@ -27,13 +26,28 @@ struct FakeLedger(std::sync::Mutex<Vec<(String, rust_decimal::Decimal, chrono::N
 
 #[async_trait::async_trait]
 impl super::ports::Ledger for Arc<FakeLedger> {
-    async fn balances(&self, _p: Uuid, date: chrono::NaiveDate) -> kernel::error::AppResult<Vec<(String, rust_decimal::Decimal)>> {
+    async fn balances(
+        &self,
+        _p: Uuid,
+        date: chrono::NaiveDate,
+    ) -> kernel::error::AppResult<Vec<(String, rust_decimal::Decimal)>> {
         Ok(self.0.lock().unwrap().iter().filter(|x| x.2 <= date).map(|x| (x.0.clone(), x.1)).collect())
     }
-    async fn opening(&self, _p: Uuid, code: &str) -> kernel::error::AppResult<Option<(rust_decimal::Decimal, chrono::NaiveDate)>> {
+    async fn opening(
+        &self,
+        _p: Uuid,
+        code: &str,
+    ) -> kernel::error::AppResult<Option<(rust_decimal::Decimal, chrono::NaiveDate)>> {
         Ok(self.0.lock().unwrap().iter().find(|x| x.0 == code).map(|x| (x.1, x.2)))
     }
-    async fn set_opening(&self, _p: Uuid, _u: Uuid, code: &str, amount: rust_decimal::Decimal, date: chrono::NaiveDate) -> kernel::error::AppResult<()> {
+    async fn set_opening(
+        &self,
+        _p: Uuid,
+        _u: Uuid,
+        code: &str,
+        amount: rust_decimal::Decimal,
+        date: chrono::NaiveDate,
+    ) -> kernel::error::AppResult<()> {
         let mut rows = self.0.lock().unwrap();
         rows.retain(|x| x.0 != code);
         if !amount.is_zero() {
@@ -47,10 +61,7 @@ impl super::ports::Ledger for Arc<FakeLedger> {
 }
 
 fn deps() -> super::ports::Deps {
-    super::ports::Deps {
-        currencies: Arc::new(FakeLookup),
-        ledger: Arc::new(Arc::new(FakeLedger::default())),
-    }
+    super::ports::Deps { currencies: Arc::new(FakeLookup), ledger: Arc::new(Arc::new(FakeLedger::default())) }
 }
 
 fn service() -> AccountService {
@@ -229,6 +240,7 @@ async fn archive_can_be_undone_and_project_purged() {
 #[test]
 fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }

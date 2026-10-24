@@ -204,7 +204,8 @@ pub struct NoRate {
 /// Разложить суммы без курса по строкам: у строки — суммы её поддерева по валютам.
 pub fn attach_no_rate(rows: &mut [Row], items: &[NoRate]) {
     let index: HashMap<String, usize> = rows.iter().enumerate().map(|(i, r)| (r.code.clone(), i)).collect();
-    let parent: Vec<Option<usize>> = rows.iter().map(|r| r.parent_code.as_ref().and_then(|p| index.get(p).copied())).collect();
+    let parent: Vec<Option<usize>> =
+        rows.iter().map(|r| r.parent_code.as_ref().and_then(|p| index.get(p).copied())).collect();
     for item in items {
         let mut at = index.get(&item.category_code).copied();
         while let Some(i) = at {
@@ -219,7 +220,13 @@ pub fn attach_no_rate(rows: &mut [Row], items: &[NoRate]) {
 }
 
 /// Посчитать строки бюджета. `facts` и `planned` — уже в базовой валюте и уже отфильтрованы по периоду.
-pub fn compute(nodes: &[Node], facts: &[Amount], planned: &[Amount], limits: &[LimitRule], period: &Period) -> Vec<Row> {
+pub fn compute(
+    nodes: &[Node],
+    facts: &[Amount],
+    planned: &[Amount],
+    limits: &[LimitRule],
+    period: &Period,
+) -> Vec<Row> {
     let index: HashMap<&str, usize> = nodes.iter().enumerate().map(|(i, n)| (n.code.as_str(), i)).collect();
     let mut fact = vec![Decimal::ZERO; nodes.len()];
     let mut plan = vec![Decimal::ZERO; nodes.len()];
@@ -233,7 +240,8 @@ pub fn compute(nodes: &[Node], facts: &[Amount], planned: &[Amount], limits: &[L
             plan[i] += a.amount;
         }
     }
-    let parent: Vec<Option<usize>> = nodes.iter().map(|n| n.parent_code.as_deref().and_then(|p| index.get(p).copied())).collect();
+    let parent: Vec<Option<usize>> =
+        nodes.iter().map(|n| n.parent_code.as_deref().and_then(|p| index.get(p).copied())).collect();
     // Свёртка снизу вверх: обход в глубину гарантирует, что дети идут после родителя.
     for i in (0..nodes.len()).rev() {
         if let Some(p) = parent[i] {
@@ -264,7 +272,8 @@ pub fn compute(nodes: &[Node], facts: &[Amount], planned: &[Amount], limits: &[L
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
-        let percent = limit[i].filter(|l| *l > Decimal::ZERO).and_then(|l| (forecast * Decimal::from(100) / l).round().to_u32());
+        let percent =
+            limit[i].filter(|l| *l > Decimal::ZERO).and_then(|l| (forecast * Decimal::from(100) / l).round().to_u32());
         let level = match (limit[i], available[i]) {
             (Some(l), _) if forecast > l => Level::Over,
             // У нулевого лимита «почти исчерпан» не бывает: любая трата — сразу перерасход.
@@ -310,7 +319,15 @@ pub enum SortKey {
 }
 
 impl SortKey {
-    pub const ALL: [SortKey; 7] = [SortKey::Category, SortKey::Limit, SortKey::Fact, SortKey::Plan, SortKey::Forecast, SortKey::Available, SortKey::Percent];
+    pub const ALL: [SortKey; 7] = [
+        SortKey::Category,
+        SortKey::Limit,
+        SortKey::Fact,
+        SortKey::Plan,
+        SortKey::Forecast,
+        SortKey::Available,
+        SortKey::Percent,
+    ];
 
     pub fn parse(s: &str) -> Option<SortKey> {
         SortKey::ALL.into_iter().find(|k| k.code() == s)
@@ -361,7 +378,9 @@ impl Dir {
 /// Сортировка после клика по колонке `col`: направление колонки по умолчанию → обратное → исходный порядок.
 pub fn next_sort(current: Option<(SortKey, Dir)>, col: SortKey) -> Option<(SortKey, Dir)> {
     match current {
-        Some((k, d)) if k == col && d == col.default_dir() => Some((col, if d == Dir::Asc { Dir::Desc } else { Dir::Asc })),
+        Some((k, d)) if k == col && d == col.default_dir() => {
+            Some((col, if d == Dir::Asc { Dir::Desc } else { Dir::Asc }))
+        }
         Some((k, _)) if k == col => None,
         _ => Some((col, col.default_dir())),
     }
@@ -440,7 +459,14 @@ mod tests {
         Decimal::from_str(s).unwrap()
     }
     fn node(code: &str, parent: Option<&str>, depth: usize) -> Node {
-        Node { code: code.into(), parent_code: parent.map(Into::into), kind: "EXPENSE".into(), title: code.into(), depth, archived: false }
+        Node {
+            code: code.into(),
+            parent_code: parent.map(Into::into),
+            kind: "EXPENSE".into(),
+            title: code.into(),
+            depth,
+            archived: false,
+        }
     }
     fn amt(c: &str, a: &str) -> Amount {
         Amount { category_code: c.into(), amount: dec(a) }
@@ -474,8 +500,14 @@ mod tests {
     fn latest_limit_wins() {
         let mut rules = vec![lim("FOOD", View::Month, "10000")];
         rules.push(LimitRule { valid_from: d(2026, 10, 15), ..lim("FOOD", View::Month, "12000") });
-        assert_eq!(effective_limit(&rules, "FOOD", &Period::containing(View::Month, d(2026, 9, 1))), Some(dec("10000")));
-        assert_eq!(effective_limit(&rules, "FOOD", &Period::containing(View::Month, d(2026, 10, 1))), Some(dec("12000")));
+        assert_eq!(
+            effective_limit(&rules, "FOOD", &Period::containing(View::Month, d(2026, 9, 1))),
+            Some(dec("10000"))
+        );
+        assert_eq!(
+            effective_limit(&rules, "FOOD", &Period::containing(View::Month, d(2026, 10, 1))),
+            Some(dec("12000"))
+        );
     }
 
     #[test]
@@ -504,8 +536,18 @@ mod tests {
     #[test]
     fn over_limit_and_inconsistent_children() {
         let nodes = vec![node("HOME", None, 0), node("RENT", Some("HOME"), 1), node("UTIL", Some("HOME"), 1)];
-        let limits = vec![lim("HOME", View::Month, "16000"), lim("RENT", View::Month, "15000"), lim("UTIL", View::Month, "3000")];
-        let rows = compute(&nodes, &[amt("RENT", "15000")], &[amt("UTIL", "2500")], &limits, &Period::containing(View::Month, d(2026, 10, 1)));
+        let limits = vec![
+            lim("HOME", View::Month, "16000"),
+            lim("RENT", View::Month, "15000"),
+            lim("UTIL", View::Month, "3000"),
+        ];
+        let rows = compute(
+            &nodes,
+            &[amt("RENT", "15000")],
+            &[amt("UTIL", "2500")],
+            &limits,
+            &Period::containing(View::Month, d(2026, 10, 1)),
+        );
         assert_eq!(rows[0].level, Level::Over);
         assert_eq!(rows[0].percent, Some(109));
         assert!(rows[0].children_over_limit, "15 000 + 3 000 > 16 000");
@@ -524,9 +566,17 @@ mod tests {
             node("UTIL", Some("HOME"), 1),
             node("PHONE", None, 0),
         ];
-        let facts = vec![amt("VEG", "100"), amt("GROC", "50"), amt("CAFE", "240"), amt("RENT", "300"), amt("UTIL", "80"), amt("PHONE", "20")];
+        let facts = vec![
+            amt("VEG", "100"),
+            amt("GROC", "50"),
+            amt("CAFE", "240"),
+            amt("RENT", "300"),
+            amt("UTIL", "80"),
+            amt("PHONE", "20"),
+        ];
         let planned = vec![amt("UTIL", "40"), amt("PHONE", "10")];
-        let limits = vec![lim("FOOD", View::Month, "500"), lim("RENT", View::Month, "300"), lim("PHONE", View::Month, "100")];
+        let limits =
+            vec![lim("FOOD", View::Month, "500"), lim("RENT", View::Month, "300"), lim("PHONE", View::Month, "100")];
         compute(&nodes, &facts, &planned, &limits, &Period::containing(View::Month, d(2026, 10, 1)))
     }
     fn codes(rows: &[Row]) -> Vec<&str> {
@@ -560,14 +610,19 @@ mod tests {
             let rows = sort_tree(sample_rows(), SortKey::Limit, dir);
             let roots: Vec<&str> = rows.iter().filter(|r| r.depth == 0).map(|r| r.code.as_str()).collect();
             assert_eq!(roots.last(), Some(&"HOME"), "{dir:?}: без лимита — в конце");
-            let home_kids: Vec<&str> = rows.iter().filter(|r| r.parent_code.as_deref() == Some("HOME")).map(|r| r.code.as_str()).collect();
+            let home_kids: Vec<&str> =
+                rows.iter().filter(|r| r.parent_code.as_deref() == Some("HOME")).map(|r| r.code.as_str()).collect();
             assert_eq!(home_kids, ["RENT", "UTIL"], "{dir:?}");
             assert_tree_order(&rows);
         }
         // план есть только у Света и Связи (и у Дома как суммы); нулевой план — пустой
         for dir in [Dir::Desc, Dir::Asc] {
             let rows = sort_tree(sample_rows(), SortKey::Plan, dir);
-            assert_eq!(rows.last().map(|r| r.code.as_str()), Some("CAFE"), "{dir:?}: Еда без плана — после Дома и Связи");
+            assert_eq!(
+                rows.last().map(|r| r.code.as_str()),
+                Some("CAFE"),
+                "{dir:?}: Еда без плана — после Дома и Связи"
+            );
             assert_eq!(rows.iter().rfind(|r| r.depth == 0).map(|r| r.code.as_str()), Some("FOOD"), "{dir:?}");
         }
     }
@@ -575,16 +630,24 @@ mod tests {
     #[test]
     fn sort_tree_category_alphabetical_and_stable() {
         let mut rows = sample_rows();
-        for (r, t) in rows.iter_mut().zip(["еда", "Продукты", "Овощи", "Кафе", "Ёлка", "Аренда", "Свет", "Жильё"]) {
+        for (r, t) in rows.iter_mut().zip(["еда", "Продукты", "Овощи", "Кафе", "Ёлка", "Аренда", "Свет", "Жильё"])
+        {
             r.title = t.into();
         }
         // регистр не важен, «Ёлка» сравнивается как «Елка»: между «еда» и «Жильё»
-        assert_eq!(codes(&sort_tree(rows.clone(), SortKey::Category, Dir::Asc)), ["FOOD", "CAFE", "GROC", "VEG", "HOME", "RENT", "UTIL", "PHONE"]);
-        assert_eq!(codes(&sort_tree(rows, SortKey::Category, Dir::Desc)), ["PHONE", "HOME", "UTIL", "RENT", "FOOD", "GROC", "VEG", "CAFE"]);
+        assert_eq!(
+            codes(&sort_tree(rows.clone(), SortKey::Category, Dir::Asc)),
+            ["FOOD", "CAFE", "GROC", "VEG", "HOME", "RENT", "UTIL", "PHONE"]
+        );
+        assert_eq!(
+            codes(&sort_tree(rows, SortKey::Category, Dir::Desc)),
+            ["PHONE", "HOME", "UTIL", "RENT", "FOOD", "GROC", "VEG", "CAFE"]
+        );
         // при равенстве — исходный порядок, в обе стороны
         for dir in [Dir::Asc, Dir::Desc] {
             let same = sort_tree(sample_rows(), SortKey::Percent, dir);
-            let kids: Vec<&str> = same.iter().filter(|r| r.parent_code.as_deref() == Some("FOOD")).map(|r| r.code.as_str()).collect();
+            let kids: Vec<&str> =
+                same.iter().filter(|r| r.parent_code.as_deref() == Some("FOOD")).map(|r| r.code.as_str()).collect();
             assert_eq!(kids, ["GROC", "CAFE"], "{dir:?}: процента нет ни у кого — порядок справочника");
         }
     }
@@ -598,7 +661,11 @@ mod tests {
         assert_eq!(next_sort(None, Category), Some((Category, Dir::Asc)), "названия — по алфавиту");
         assert_eq!(next_sort(Some((Category, Dir::Asc)), Category), Some((Category, Dir::Desc)));
         assert_eq!(next_sort(Some((Category, Dir::Desc)), Category), None);
-        assert_eq!(next_sort(Some((Fact, Dir::Asc)), Limit), Some((Limit, Dir::Desc)), "другая колонка — с её направления");
+        assert_eq!(
+            next_sort(Some((Fact, Dir::Asc)), Limit),
+            Some((Limit, Dir::Desc)),
+            "другая колонка — с её направления"
+        );
         assert_eq!(SortKey::ALL.map(|k| SortKey::parse(k.code())), SortKey::ALL.map(Some));
         assert_eq!((SortKey::parse("title"), Dir::parse("up")), (None, None));
     }
@@ -614,7 +681,12 @@ mod tests {
     }
 
     fn coffee(valid_from: NaiveDate) -> Vec<LimitRule> {
-        vec![LimitRule { category_code: "FOOD_COFFEE".into(), period: View::Month, amount: Some(dec("1500")), valid_from }]
+        vec![LimitRule {
+            category_code: "FOOD_COFFEE".into(),
+            period: View::Month,
+            amount: Some(dec("1500")),
+            valid_from,
+        }]
     }
 
     /// Ц1: месячный лимит в годовом отчёте — 12 месяцев, а не 365/31.
@@ -672,7 +744,12 @@ mod tests {
     #[test]
     fn removed_limit_keeps_the_past() {
         let mut rules = coffee(d(2026, 1, 1));
-        rules.push(LimitRule { category_code: "FOOD_COFFEE".into(), period: View::Month, amount: None, valid_from: d(2026, 11, 1) });
+        rules.push(LimitRule {
+            category_code: "FOOD_COFFEE".into(),
+            period: View::Month,
+            amount: None,
+            valid_from: d(2026, 11, 1),
+        });
         let at = |v: View, day: NaiveDate| effective_limit(&rules, "FOOD_COFFEE", &Period::containing(v, day));
         assert_eq!(at(View::Month, d(2026, 10, 1)), Some(dec("1500")));
         assert_eq!(at(View::Month, d(2026, 11, 1)), None);

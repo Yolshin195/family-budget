@@ -129,7 +129,8 @@ async fn errors_are_translated() {
     let svc = PersonService::new(Arc::new(InMemoryPersonRepository::default()));
     let p = Uuid::new_v4();
     svc.create(p, person("A", "A")).await.unwrap();
-    let th = kernel::i18n::scope(Lang::Th, async { svc.create(p, person("A", "B")).await.unwrap_err().to_string() }).await;
+    let th =
+        kernel::i18n::scope(Lang::Th, async { svc.create(p, person("A", "B")).await.unwrap_err().to_string() }).await;
     assert_eq!(th, "code: รหัส “A” ถูกใช้แล้ว");
     let en = kernel::i18n::scope(Lang::En, async { svc.get(p, "NOPE").await.unwrap_err().to_string() }).await;
     assert_eq!(en, "person “NOPE” not found");
@@ -138,7 +139,8 @@ async fn errors_are_translated() {
 #[test]
 fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
 
@@ -157,8 +159,15 @@ fn no_russian_literals_in_code() {
             }
             let code_part = line.split(" //").next().unwrap_or_default();
             let literals: Vec<&str> = code_part.split('"').skip(1).step_by(2).collect();
-            let russian = literals.iter().find(|l| l.chars().any(|c| ('а'..='я').contains(&c.to_ascii_lowercase()) || ('А'..='Я').contains(&c) || c == 'ё'));
-            assert!(russian.is_none(), "{file}:{}: строка на русском в коде — перенесите в i18n.rs: {:?}", n + 1, russian);
+            let russian = literals.iter().find(|l| {
+                l.chars().any(|c| ('а'..='я').contains(&c.to_ascii_lowercase()) || ('А'..='Я').contains(&c) || c == 'ё')
+            });
+            assert!(
+                russian.is_none(),
+                "{file}:{}: строка на русском в коде — перенесите в i18n.rs: {:?}",
+                n + 1,
+                russian
+            );
         }
     }
 }

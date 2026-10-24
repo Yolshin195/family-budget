@@ -19,7 +19,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Request, State};
-use axum::http::header::{ACCEPT, ACCEPT_LANGUAGE, AUTHORIZATION, CONTENT_TYPE, COOKIE, ORIGIN, REFERER, SET_COOKIE, USER_AGENT};
+use axum::http::header::{
+    ACCEPT, ACCEPT_LANGUAGE, AUTHORIZATION, CONTENT_TYPE, COOKIE, ORIGIN, REFERER, SET_COOKIE, USER_AGENT,
+};
 use axum::http::{HeaderMap, HeaderName, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
@@ -190,7 +192,13 @@ impl RequestMeta {
     pub fn from_request(headers: &HeaderMap, peer: Option<SocketAddr>, trust_proxy: bool) -> Self {
         // Правый адрес — тот, что дописал наш прокси; левые клиент может прислать сам.
         let forwarded = trust_proxy
-            .then(|| headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()).and_then(|v| v.rsplit(',').next()).map(|v| v.trim().to_string()))
+            .then(|| {
+                headers
+                    .get("x-forwarded-for")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.rsplit(',').next())
+                    .map(|v| v.trim().to_string())
+            })
             .flatten()
             .filter(|v| !v.is_empty());
         RequestMeta {
@@ -268,7 +276,8 @@ pub struct SessionInfo {
 /// Символы валют для показа рядом с суммами из пар (код, символ). Пустой символ и символ, общий
 /// для нескольких валют проекта (`$` у USD и CAD), не берутся — у таких валют остаётся код.
 pub fn currency_marks(list: impl IntoIterator<Item = (String, String)>) -> HashMap<String, String> {
-    let list: Vec<(String, String)> = list.into_iter().map(|(c, s)| (c, s.trim().to_string())).filter(|(_, s)| !s.is_empty()).collect();
+    let list: Vec<(String, String)> =
+        list.into_iter().map(|(c, s)| (c, s.trim().to_string())).filter(|(_, s)| !s.is_empty()).collect();
     list.iter().filter(|(_, s)| list.iter().filter(|(_, x)| x == s).count() == 1).cloned().collect()
 }
 
@@ -328,9 +337,9 @@ pub fn session_cookie(config: &Config, raw_id: &str, max_age: i64) -> (HeaderNam
 
 /// Язык интерфейса из cookie / Accept-Language (без настройки пользователя — для публичных страниц).
 pub fn request_lang(headers: &HeaderMap) -> Option<Lang> {
-    cookie(headers, LANG_COOKIE).and_then(|v| Lang::parse(&v)).or_else(|| {
-        headers.get(ACCEPT_LANGUAGE).and_then(|v| v.to_str().ok()).and_then(Lang::from_accept_language)
-    })
+    cookie(headers, LANG_COOKIE)
+        .and_then(|v| Lang::parse(&v))
+        .or_else(|| headers.get(ACCEPT_LANGUAGE).and_then(|v| v.to_str().ok()).and_then(Lang::from_accept_language))
 }
 
 /// CSRF-токен сессии: HMAC от хеша её id. Хранить не нужно — проверяется пересчётом.
@@ -340,7 +349,8 @@ pub fn csrf_token(config: &Config, id_hash: &str) -> String {
 
 /// Учётные данные запроса: Bearer API-токен или cookie сессии.
 pub fn credential(config: &Config, headers: &HeaderMap) -> Option<Credential> {
-    let bearer = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::trim);
+    let bearer =
+        headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::trim);
     if let Some(token) = bearer {
         return Some(Credential::ApiToken(token.to_string()));
     }
@@ -437,6 +447,8 @@ pub fn same_origin_strict(config: &Config, headers: &HeaderMap) -> bool {
 
 /// CSRF-проверка меняющего запроса по cookie-сессии. Тело формы буферизуется (≤ 64 КБ) и
 /// возвращается в запрос нетронутым.
+// Err — готовый ответ middleware (403, 401), как принято в axum; Ok — запрос того же размера.
+#[allow(clippy::result_large_err)]
 async fn check_csrf(config: &Config, id_hash: &str, req: Request) -> Result<Request, Response> {
     let forbidden = |m: &str| AppError::Forbidden(m.into()).into_response();
     if !same_origin(config, req.headers()) {
@@ -455,7 +467,8 @@ async fn check_csrf(config: &Config, id_hash: &str, req: Request) -> Result<Requ
         return Err(forbidden("CSRF: нет токена (заголовок X-CSRF-Token)"));
     }
     let (parts, body) = req.into_parts();
-    let bytes = axum::body::to_bytes(body, MAX_BODY).await.map_err(|_| StatusCode::PAYLOAD_TOO_LARGE.into_response())?;
+    let bytes =
+        axum::body::to_bytes(body, MAX_BODY).await.map_err(|_| StatusCode::PAYLOAD_TOO_LARGE.into_response())?;
     match form_field(&bytes, CSRF_FIELD) {
         Some(token) if ct_eq(&token, &expected) => Ok(Request::from_parts(parts, Body::from(bytes))),
         _ => Err(forbidden("CSRF: неверный или отсутствующий токен формы")),
@@ -463,6 +476,8 @@ async fn check_csrf(config: &Config, id_hash: &str, req: Request) -> Result<Requ
 }
 
 /// Аутентификация + CSRF + лимит запросов. Общая часть обоих middleware.
+// Err — готовый ответ middleware (403, 401), как принято в axum; Ok — запрос того же размера.
+#[allow(clippy::result_large_err)]
 async fn identify(auth: &AuthState, req: Request) -> Result<(Identity, Request), Response> {
     let headers = req.headers();
     let pq = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());
@@ -531,7 +546,9 @@ pub async fn require_user(State(auth): State<AuthState>, req: Request, next: Nex
     let info = match auth.memberships.session(identity.user_id, hint).await {
         Ok(Some(info)) => info,
         Ok(None) if wants_html(headers) && !is_api(&path) => return Redirect::to("/onboarding").into_response(),
-        Ok(None) => return AppError::Forbidden("нет ни одного проекта: пройдите онбординг в браузере".into()).into_response(),
+        Ok(None) => {
+            return AppError::Forbidden("нет ни одного проекта: пройдите онбординг в браузере".into()).into_response();
+        }
         Err(e) => return e.into_response(),
     };
     let (csrf, via_token) = match &identity.via {
@@ -543,7 +560,8 @@ pub async fn require_user(State(auth): State<AuthState>, req: Request, next: Nex
             }
             let write = !safe_method(req.method());
             if is_api(&path) && !scope_allows(scopes, api_feature(&path), write) {
-                return AppError::Forbidden(format!("у API-токена нет права {}", if write { "write" } else { "read" })).into_response();
+                return AppError::Forbidden(format!("у API-токена нет права {}", if write { "write" } else { "read" }))
+                    .into_response();
             }
             if !is_api(&path) {
                 return AppError::Forbidden("API-токен действует только для /api".into()).into_response();
@@ -570,7 +588,8 @@ pub async fn require_user(State(auth): State<AuthState>, req: Request, next: Nex
         via_token,
     };
     // Управление проектами, профиль и выход проверяют права сами (роль — в том проекте, которым управляют).
-    let own_rules = ["/projects", "/api/projects", "/profile", "/api/profile", "/auth"].iter().any(|p| path.starts_with(p));
+    let own_rules =
+        ["/projects", "/api/projects", "/profile", "/api/profile", "/auth"].iter().any(|p| path.starts_with(p));
     let writes = !own_rules && !safe_method(req.method());
     if writes && !session.scope().can_write() {
         return AppError::Forbidden("роль VIEWER: только просмотр".into()).into_response();
@@ -684,7 +703,9 @@ mod tests {
     impl Authenticator for FakeAuth {
         async fn authenticate(&self, credential: &Credential) -> AppResult<Option<Identity>> {
             let via = match credential {
-                Credential::ApiToken(t) if t == "fbt_ok" => Via::Token { token_id: Uuid::nil(), project_id: Uuid::nil(), scopes: vec!["write".into()] },
+                Credential::ApiToken(t) if t == "fbt_ok" => {
+                    Via::Token { token_id: Uuid::nil(), project_id: Uuid::nil(), scopes: vec!["write".into()] }
+                }
                 Credential::Session(s) if s == "ok" => Via::Session { id_hash: "h".into() },
                 _ => return Ok(None),
             };
@@ -702,7 +723,12 @@ mod tests {
     }
 
     fn auth_state() -> AuthState {
-        AuthState { config: Arc::new(Config::test()), authenticator: Arc::new(FakeAuth), memberships: Arc::new(NoProjects), limiter: Arc::new(RateLimiter::new()) }
+        AuthState {
+            config: Arc::new(Config::test()),
+            authenticator: Arc::new(FakeAuth),
+            memberships: Arc::new(NoProjects),
+            limiter: Arc::new(RateLimiter::new()),
+        }
     }
 
     /// Б5: онбординг и «Принять приглашение» — только из браузера; API-токен действует лишь в `/api`.
@@ -715,7 +741,14 @@ mod tests {
             .layer(axum::middleware::from_fn_with_state(auth_state(), require_identity));
         let call = |header: (&'static str, &'static str)| {
             let app = app.clone();
-            async move { app.oneshot(Request::builder().uri("/onboarding").header(header.0, header.1).body(Body::empty()).unwrap()).await.unwrap().status() }
+            async move {
+                app.oneshot(
+                    Request::builder().uri("/onboarding").header(header.0, header.1).body(Body::empty()).unwrap(),
+                )
+                .await
+                .unwrap()
+                .status()
+            }
         };
         assert_eq!(call(("authorization", "Bearer fbt_ok")).await, StatusCode::FORBIDDEN);
         assert_eq!(call(("cookie", "fb_session=ok")).await, StatusCode::OK, "сессия браузера проходит");

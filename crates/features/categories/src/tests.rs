@@ -10,7 +10,6 @@ use crate::adapters::memory::InMemoryCategoryRepository;
 use crate::dto::{CreateCategoryDto, ListQuery, UpdateCategoryDto};
 use crate::service::CategoryService;
 
-
 /// Категория `PINPAN` уже в операциях, остальные — нет.
 struct FakeUsage;
 
@@ -186,7 +185,9 @@ async fn tree_rules() {
     svc.archive(p, "CAFE").await.unwrap();
     svc.archive(p, "FOOD").await.unwrap();
     // вернуть подкатегорию можно только после родителя
-    let th = kernel::i18n::scope(kernel::i18n::Lang::Th, async { svc.restore(p, "CAFE").await.unwrap_err().to_string() }).await;
+    let th =
+        kernel::i18n::scope(kernel::i18n::Lang::Th, async { svc.restore(p, "CAFE").await.unwrap_err().to_string() })
+            .await;
     assert_eq!(th, "หากต้องการกู้คืน “Пример” ให้กู้คืน “Пример” ก่อน");
     svc.restore(p, "FOOD").await.unwrap();
     svc.restore(p, "CAFE").await.unwrap();
@@ -202,7 +203,10 @@ async fn tree_depth_limit() {
     }
     assert!(matches!(svc.create(p, child("L6", "L5", "EXPENSE")).await.unwrap_err(), AppError::Validation(_)));
     let tree = svc.tree(p, false).await.unwrap();
-    assert_eq!(tree.iter().map(|(d, c)| (*d, c.code.as_str())).collect::<Vec<_>>(), vec![(0, "L1"), (1, "L2"), (2, "L3"), (3, "L4"), (4, "L5")]);
+    assert_eq!(
+        tree.iter().map(|(d, c)| (*d, c.code.as_str())).collect::<Vec<_>>(),
+        vec![(0, "L1"), (1, "L2"), (2, "L3"), (3, "L4"), (4, "L5")]
+    );
 }
 
 /// ТЗ, раздел 13: каждый запрос фильтруется по проекту — чужой проект видит 404, а не данные.
@@ -237,7 +241,8 @@ async fn archive_can_be_undone_and_project_purged() {
 #[test]
 fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
 
@@ -251,7 +256,14 @@ async fn kind_change_with_postings_is_rejected() {
     svc.create(p, create_dto("GIFTS")).await.unwrap();
     let income = |name: &str| UpdateCategoryDto { category_kind: "INCOME".into(), ..update_dto(name) };
     let err = svc.update(p, "PINPAN", income("Pinpan")).await.unwrap_err();
-    assert!(matches!(err, AppError::Validation(m) if m.starts_with("category_kind")), "тип категории с операциями сменился");
-    assert_eq!(svc.update(p, "PINPAN", update_dto("Pinpan")).await.unwrap().name, "Pinpan", "без смены типа правка проходит");
+    assert!(
+        matches!(err, AppError::Validation(m) if m.starts_with("category_kind")),
+        "тип категории с операциями сменился"
+    );
+    assert_eq!(
+        svc.update(p, "PINPAN", update_dto("Pinpan")).await.unwrap().name,
+        "Pinpan",
+        "без смены типа правка проходит"
+    );
     assert_eq!(svc.update(p, "GIFTS", income("Подарки")).await.unwrap().category_kind, "INCOME");
 }

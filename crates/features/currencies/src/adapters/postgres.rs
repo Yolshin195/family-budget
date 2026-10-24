@@ -7,7 +7,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 #[allow(unused_imports)]
-use crate::domain::{CurrencyNameLang, Currency};
+use crate::domain::{Currency, CurrencyNameLang};
 use crate::ports::CurrencyRepository;
 
 const COLUMNS: &str = "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, symbol, minor_units";
@@ -115,7 +115,13 @@ impl CurrencyRepository for PostgresCurrencyRepository {
         row.map(Currency::try_from).transpose()
     }
 
-    async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Currency>> {
+    async fn list(
+        &self,
+        project_id: Uuid,
+        include_archived: bool,
+        limit: i64,
+        offset: i64,
+    ) -> AppResult<Vec<Currency>> {
         let sql = format!(
             "SELECT {COLUMNS} FROM fb_currencies WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY code LIMIT $3 OFFSET $4"
         );
@@ -130,16 +136,18 @@ impl CurrencyRepository for PostgresCurrencyRepository {
     }
 
     async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64> {
-        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fb_currencies WHERE project_id = $1 AND ($2 OR NOT archived)")
-            .bind(project_id)
-            .bind(include_archived)
-            .fetch_one(&self.pool)
-            .await?;
+        let (n,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM fb_currencies WHERE project_id = $1 AND ($2 OR NOT archived)")
+                .bind(project_id)
+                .bind(include_archived)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(n)
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
-        let r = sqlx::query("DELETE FROM fb_currencies WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        let r =
+            sqlx::query("DELETE FROM fb_currencies WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
         Ok(r.rows_affected())
     }
 }

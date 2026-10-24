@@ -94,7 +94,14 @@ pub struct Posting {
 
 impl Posting {
     fn new(ref_kind: RefKind, ref_code: &str, currency: &str, amount: Decimal) -> Self {
-        Self { ref_kind, ref_code: ref_code.to_string(), currency: currency.to_string(), amount, note: None, item_id: None }
+        Self {
+            ref_kind,
+            ref_code: ref_code.to_string(),
+            currency: currency.to_string(),
+            amount,
+            note: None,
+            item_id: None,
+        }
     }
 
     pub fn is_account(&self, code: &str) -> bool {
@@ -154,7 +161,11 @@ pub struct Item {
 impl Item {
     /// Одна штука без названия, цены и скидки — в ленте выглядит как обычная операция.
     pub fn is_simple(&self) -> bool {
-        self.name.is_none() && self.price.is_none() && self.quantity == Decimal::ONE && self.unit == Unit::Pcs && self.discount.is_zero()
+        self.name.is_none()
+            && self.price.is_none()
+            && self.quantity == Decimal::ONE
+            && self.unit == Unit::Pcs
+            && self.discount.is_zero()
     }
 
     /// Есть что показать в строке «× цена»: цена, количество не 1, единица не «шт» или скидка.
@@ -188,7 +199,11 @@ impl ItemDraft {
     }
 
     fn money_given(&self) -> bool {
-        self.quantity.is_some() || self.unit.is_some() || self.price.is_some() || self.discount.is_some() || self.amount.is_some()
+        self.quantity.is_some()
+            || self.unit.is_some()
+            || self.price.is_some()
+            || self.discount.is_some()
+            || self.amount.is_some()
     }
 }
 
@@ -377,9 +392,19 @@ fn round_money(v: Decimal, cur: &AccountCurrency) -> Decimal {
     v.round_dp_with_strategy(cur.minor_units.min(MAX_SCALE), RoundingStrategy::MidpointAwayFromZero)
 }
 
-fn account<'a>(field: &str, code: &str, accounts: &'a [AccountCurrency]) -> Result<(String, &'a AccountCurrency), Problem> {
+fn account<'a>(
+    field: &str,
+    code: &str,
+    accounts: &'a [AccountCurrency],
+) -> Result<(String, &'a AccountCurrency), Problem> {
     let code = kernel::code::code(field, code)?;
-    let cur = accounts.iter().find(|a| a.code == code).ok_or_else(|| Problem::new(codes::NOT_FOUND, field, kernel::i18n::tr(Some(crate::i18n::dict), "err.account_not_found", &[("code", &code)])))?;
+    let cur = accounts.iter().find(|a| a.code == code).ok_or_else(|| {
+        Problem::new(
+            codes::NOT_FOUND,
+            field,
+            kernel::i18n::tr(Some(crate::i18n::dict), "err.account_not_found", &[("code", &code)]),
+        )
+    })?;
     Ok((code, cur))
 }
 
@@ -394,7 +419,12 @@ fn sum(field: &str, values: impl Iterator<Item = Decimal>) -> Result<Decimal, Pr
 /// Количество, единица, цена, скидка и сумма позиции по правилам раздела 5.1. `old` — записанная позиция при правке
 /// по `id` через API: пустые поля берутся из неё, а сумма без цены убирает цену («передана только сумма — цена
 /// пустая»). Без `old` пустые поля — значения по умолчанию: 1 шт, без цены и скидки.
-fn money(i: usize, d: &ItemDraft, old: Option<&Item>, cur: &AccountCurrency) -> Result<(Decimal, Unit, Option<Decimal>, Decimal, Decimal), Problem> {
+fn money(
+    i: usize,
+    d: &ItemDraft,
+    old: Option<&Item>,
+    cur: &AccountCurrency,
+) -> Result<(Decimal, Unit, Option<Decimal>, Decimal, Decimal), Problem> {
     let f = |name: &str| format!("items[{i}].{name}");
     let quantity = d.quantity.or(old.map(|o| o.quantity)).unwrap_or(Decimal::ONE);
     if quantity <= Decimal::ZERO {
@@ -426,7 +456,11 @@ fn money(i: usize, d: &ItemDraft, old: Option<&Item>, cur: &AccountCurrency) -> 
             let gross = round_money(quantity.checked_mul(price).ok_or_else(|| too_big(&f("price")))?, cur);
             let computed = gross - discount;
             if computed <= Decimal::ZERO {
-                return Err(err(&f(if discount.is_zero() { "price" } else { "discount" }), "err.discount_too_big", &[]));
+                return Err(err(
+                    &f(if discount.is_zero() { "price" } else { "discount" }),
+                    "err.discount_too_big",
+                    &[],
+                ));
             }
             check_amount(&f("amount"), computed, cur)?;
             match given {
@@ -435,7 +469,11 @@ fn money(i: usize, d: &ItemDraft, old: Option<&Item>, cur: &AccountCurrency) -> 
                     positive(&f("amount"), a, cur)?;
                     // Допуск — единица младшего разряда валюты: в пределах хранится присланная сумма.
                     if (a - computed).abs() > Decimal::new(1, cur.minor_units.min(MAX_SCALE)) {
-                        let message = kernel::i18n::tr(Some(crate::i18n::dict), "err.amount_mismatch", &[("amount", &a.normalize()), ("computed", &computed.normalize())]);
+                        let message = kernel::i18n::tr(
+                            Some(crate::i18n::dict),
+                            "err.amount_mismatch",
+                            &[("amount", &a.normalize()), ("computed", &computed.normalize())],
+                        );
                         return Err(Problem::new(codes::AMOUNT_MISMATCH, &f("amount"), message));
                     }
                     a
@@ -519,7 +557,8 @@ fn split_discount(items: &mut [Item], total_discount: Decimal, cur: &AccountCurr
         shares.push(share.round_dp_with_strategy(n, RoundingStrategy::ToZero));
     }
     let rest = total_discount - shares.iter().copied().sum::<Decimal>();
-    let largest = (0..items.len()).max_by(|a, b| items[*a].amount.cmp(&items[*b].amount).then(b.cmp(a))).unwrap_or_default();
+    let largest =
+        (0..items.len()).max_by(|a, b| items[*a].amount.cmp(&items[*b].amount).then(b.cmp(a))).unwrap_or_default();
     shares[largest] += rest;
     for (i, (x, share)) in items.iter_mut().zip(shares).enumerate() {
         x.discount += share;
@@ -547,9 +586,14 @@ fn resolve_items(d: ItemsDraft, existing: &[Item], cur: &AccountCurrency) -> Res
     let old_default = common_recipient(&staying);
     let header = d.for_default.map(|v| recipient("for_person_code", v)).transpose()?;
     let new_default = header.clone().unwrap_or_else(|| old_default.clone());
-    let follow = |cur: &Option<String>| if header.is_some() && *cur == old_default { new_default.clone() } else { cur.clone() };
+    let follow =
+        |cur: &Option<String>| if header.is_some() && *cur == old_default { new_default.clone() } else { cur.clone() };
     let mut out: Vec<Item> = if patch {
-        existing.iter().filter(|x| !d.remove.contains(&x.id)).map(|x| Item { for_person: follow(&x.for_person), ..x.clone() }).collect()
+        existing
+            .iter()
+            .filter(|x| !d.remove.contains(&x.id))
+            .map(|x| Item { for_person: follow(&x.for_person), ..x.clone() })
+            .collect()
     } else {
         Vec::new()
     };
@@ -563,11 +607,16 @@ fn resolve_items(d: ItemsDraft, existing: &[Item], cur: &AccountCurrency) -> Res
                     return Err(err(&field, "err.item_twice", &[("id", &id)]));
                 }
                 seen.push(id);
-                Some(existing.iter().find(|x| x.id == id).ok_or_else(|| err(&field, "err.item_unknown", &[("id", &id)]))?)
+                Some(
+                    existing
+                        .iter()
+                        .find(|x| x.id == id)
+                        .ok_or_else(|| err(&field, "err.item_unknown", &[("id", &id)]))?,
+                )
             }
         };
         let slot = if patch { old.and_then(|o| out.iter().position(|x| x.id == o.id)) } else { None };
-        let n = slot.map_or(out.len(), |s| s) + 1;
+        let n = slot.unwrap_or(out.len()) + 1;
         let for_person = match draft.for_person.clone() {
             Some(v) => recipient(&format!("items[{n}].for_person_code"), v)?,
             None => old.map_or_else(|| new_default.clone(), |o| follow(&o.for_person)),
@@ -626,7 +675,10 @@ fn build(draft: Draft, existing: &[Item], accounts: &[AccountCurrency]) -> Resul
                     if f.amount >= amount {
                         return Err(err("fee_amount", "err.fee_too_big", &[]));
                     }
-                    Some(Fee { category_code: kernel::code::code("fee_category_code", &f.category_code)?, amount: f.amount })
+                    Some(Fee {
+                        category_code: kernel::code::code("fee_category_code", &f.category_code)?,
+                        amount: f.amount,
+                    })
                 }
             };
             let sent = amount - fee.as_ref().map(|f| f.amount).unwrap_or_default();
@@ -654,7 +706,10 @@ fn build(draft: Draft, existing: &[Item], accounts: &[AccountCurrency]) -> Resul
                 return Err(err("amount", "err.opening_zero", &[]));
             }
             check_amount("amount", amount, cur)?;
-            let postings = vec![Posting::new(RefKind::Account, &acc, &cur.currency, amount), Posting::new(RefKind::System, system::OPENING, &cur.currency, -amount)];
+            let postings = vec![
+                Posting::new(RefKind::Account, &acc, &cur.currency, amount),
+                Posting::new(RefKind::System, system::OPENING, &cur.currency, -amount),
+            ];
             Ok((Vec::new(), postings))
         }
     }
@@ -696,13 +751,20 @@ pub fn check_items(kind: TxKind, items: &[Item], postings: &[Posting]) -> Result
             }
             Ok(())
         }
-        TxKind::Transfer | TxKind::Opening if items.is_empty() && postings.iter().all(|p| p.item_id.is_none()) => Ok(()),
+        TxKind::Transfer | TxKind::Opening if items.is_empty() && postings.iter().all(|p| p.item_id.is_none()) => {
+            Ok(())
+        }
         _ => Err("items: only expenses and income have items".into()),
     }
 }
 
 impl Transaction {
-    pub fn create(project_id: Uuid, created_by: Uuid, data: TransactionData, accounts: &[AccountCurrency]) -> Result<Self, Problem> {
+    pub fn create(
+        project_id: Uuid,
+        created_by: Uuid,
+        data: TransactionData,
+        accounts: &[AccountCurrency],
+    ) -> Result<Self, Problem> {
         let mut t = Self {
             id: Uuid::new_v4(),
             project_id,
@@ -727,11 +789,19 @@ impl Transaction {
             return Err(err("plan_id", "err.opening_plan", &[]));
         }
         let place_code = match kind {
-            TxKind::Expense | TxKind::Income => data.place_code.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(|v| kernel::code::code("place_code", v)).transpose()?,
+            TxKind::Expense | TxKind::Income => data
+                .place_code
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(|v| kernel::code::code("place_code", v))
+                .transpose()?,
             TxKind::Transfer | TxKind::Opening => None,
         };
         let (items, postings) = build(data.body, &self.items, accounts)?;
-        check_balanced(&postings).and_then(|_| check_items(kind, &items, &postings)).map_err(|m| Problem::validation("postings", m))?;
+        check_balanced(&postings)
+            .and_then(|_| check_items(kind, &items, &postings))
+            .map_err(|m| Problem::validation("postings", m))?;
         self.occurred_on = data.occurred_on;
         self.tx_kind = kind;
         self.description = data.description.cleaned();
@@ -780,22 +850,38 @@ impl Transaction {
     pub fn total(&self) -> Decimal {
         match self.tx_kind {
             TxKind::Expense | TxKind::Income => self.items.iter().map(|x| x.amount).sum(),
-            TxKind::Transfer => -self.postings.iter().filter(|p| p.ref_kind == RefKind::Account && p.amount < Decimal::ZERO).map(|p| p.amount).next().unwrap_or_default(),
-            TxKind::Opening => self.postings.iter().find(|p| p.ref_kind == RefKind::Account).map(|p| p.amount).unwrap_or_default(),
+            TxKind::Transfer => -self
+                .postings
+                .iter()
+                .filter(|p| p.ref_kind == RefKind::Account && p.amount < Decimal::ZERO)
+                .map(|p| p.amount)
+                .next()
+                .unwrap_or_default(),
+            TxKind::Opening => {
+                self.postings.iter().find(|p| p.ref_kind == RefKind::Account).map(|p| p.amount).unwrap_or_default()
+            }
         }
     }
 
     /// Счёт операции: у перевода — счёт списания.
     pub fn account_code(&self) -> &str {
         let mut accounts = self.postings.iter().filter(|p| p.ref_kind == RefKind::Account);
-        let main = if self.tx_kind == TxKind::Transfer { accounts.find(|p| p.amount < Decimal::ZERO) } else { accounts.next() };
+        let main = if self.tx_kind == TxKind::Transfer {
+            accounts.find(|p| p.amount < Decimal::ZERO)
+        } else {
+            accounts.next()
+        };
         main.map_or("", |p| p.ref_code.as_str())
     }
 
     /// Валюта суммы `total`: валюта счёта операции, у перевода — счёта списания.
     pub fn currency(&self) -> &str {
         let mut accounts = self.postings.iter().filter(|p| p.ref_kind == RefKind::Account);
-        let main = if self.tx_kind == TxKind::Transfer { accounts.find(|p| p.amount < Decimal::ZERO) } else { accounts.next() };
+        let main = if self.tx_kind == TxKind::Transfer {
+            accounts.find(|p| p.amount < Decimal::ZERO)
+        } else {
+            accounts.next()
+        };
         main.map_or("", |p| p.currency.as_str())
     }
 
@@ -888,9 +974,15 @@ const MAX_PROVIDER: usize = 40;
 impl RefDraft {
     /// Источник — после `trim` и нижнего регистра `^[a-z0-9_]{1,40}$`, id — после `trim` от 1 до 200 символов.
     /// `prefix` — начало поля в ошибке: `external_ref.` в теле операции, пусто — в теле прикрепления.
-    pub fn new(prefix: &str, provider: &str, external_id: &str, received_at: Option<DateTime<Utc>>) -> Result<Self, Problem> {
+    pub fn new(
+        prefix: &str,
+        provider: &str,
+        external_id: &str,
+        received_at: Option<DateTime<Utc>>,
+    ) -> Result<Self, Problem> {
         let provider = provider.trim().to_lowercase();
-        let ok = (1..=MAX_PROVIDER).contains(&provider.len()) && provider.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_');
+        let ok = (1..=MAX_PROVIDER).contains(&provider.len())
+            && provider.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_');
         if !ok {
             return Err(err(&format!("{prefix}provider"), "err.external_provider", &[]));
         }
@@ -939,7 +1031,13 @@ mod tests {
     fn data(body: Draft) -> TransactionData {
         TransactionData {
             occurred_on: NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
-            description: Description { text: Some(" Чек ".into()), lang: Lang::Ru, ru: Some("Чек".into()), en: Some("Receipt".into()), th: Some(" ".into()) },
+            description: Description {
+                text: Some(" Чек ".into()),
+                lang: Lang::Ru,
+                ru: Some("Чек".into()),
+                en: Some("Receipt".into()),
+                th: Some(" ".into()),
+            },
             plan: None,
             place_code: None,
             body,
@@ -983,7 +1081,15 @@ mod tests {
     fn receipt_is_balanced_and_description_is_cleaned() {
         let t = create(receipt(vec![("food", "900"), ("home", "250"), ("cafe", "100")])).unwrap();
         assert_eq!(t.total(), dec("1250"));
-        assert_eq!(amounts(&t), vec![("CARD", "THB", dec("-1250")), ("FOOD", "THB", dec("900")), ("HOME", "THB", dec("250")), ("CAFE", "THB", dec("100"))]);
+        assert_eq!(
+            amounts(&t),
+            vec![
+                ("CARD", "THB", dec("-1250")),
+                ("FOOD", "THB", dec("900")),
+                ("HOME", "THB", dec("250")),
+                ("CAFE", "THB", dec("100"))
+            ]
+        );
         assert_eq!(t.description.text.as_deref(), Some("Чек"));
         assert_eq!(t.description.ru, None, "перевод на язык оригинала не хранится");
         assert_eq!(t.description.th, None);
@@ -1010,9 +1116,15 @@ mod tests {
         assert!(create(receipt(vec![("food", "1.001")])).is_err(), "у THB два знака после запятой");
         assert_eq!(create(flow(false, false, "nope", vec![("food", "1")])).unwrap_err().code, codes::NOT_FOUND);
         assert!(create(receipt(vec![("food", "100000000000000")])).is_err(), "10¹⁴ не помещается в NUMERIC(18,4)");
-        let no_category = flow_items(false, false, "card", vec![ItemDraft { amount: Some(dec("5")), ..Default::default() }]);
+        let no_category =
+            flow_items(false, false, "card", vec![ItemDraft { amount: Some(dec("5")), ..Default::default() }]);
         assert_eq!(create(no_category).unwrap_err().field, "items[1].category_code");
-        let nothing = flow_items(false, false, "card", vec![ItemDraft { category_code: Some("food".into()), ..Default::default() }]);
+        let nothing = flow_items(
+            false,
+            false,
+            "card",
+            vec![ItemDraft { category_code: Some("food".into()), ..Default::default() }],
+        );
         assert_eq!(create(nothing).unwrap_err().field, "items[1].amount", "нет ни суммы, ни цены");
     }
 
@@ -1036,7 +1148,8 @@ mod tests {
         assert_eq!(t.total(), dec("79.03"));
         assert!(t.items.iter().all(|x| !x.is_simple() && x.has_details()));
         // Донг — без копеек: 3 × 33 333,5 = 100 000,5 → 100 001.
-        let vnd = create(flow_items(false, false, "vcb", vec![priced("food", "Phở", "3", "pcs", "33333.5", "0")])).unwrap();
+        let vnd =
+            create(flow_items(false, false, "vcb", vec![priced("food", "Phở", "3", "pcs", "33333.5", "0")])).unwrap();
         assert_eq!(vnd.total(), dec("100001"));
     }
 
@@ -1044,21 +1157,33 @@ mod tests {
     /// `AMOUNT_MISMATCH`; в пределах допуска хранится присланная сумма.
     #[test]
     fn amount_must_match_price() {
-        let with = |amount: &str| ItemDraft { amount: Some(dec(amount)), ..priced("snacks", "Круассан", "2", "pcs", "25", "3") };
+        let with = |amount: &str| ItemDraft {
+            amount: Some(dec(amount)),
+            ..priced("snacks", "Круассан", "2", "pcs", "25", "3")
+        };
         let e = create(flow_items(false, false, "card", vec![with("50")])).unwrap_err();
         assert_eq!((e.code, e.field.as_str()), (codes::AMOUNT_MISMATCH, "items[1].amount"));
         assert!(e.message.contains("47"), "{e}");
         let t = create(flow_items(false, false, "card", vec![with("47.01")])).unwrap();
         assert_eq!(t.total(), dec("47.01"), "в пределах допуска — присланная сумма");
-        let eaten = create(flow_items(false, false, "card", vec![priced("snacks", "Круассан", "1", "pcs", "25", "25")])).unwrap_err();
+        let eaten =
+            create(flow_items(false, false, "card", vec![priced("snacks", "Круассан", "1", "pcs", "25", "25")]))
+                .unwrap_err();
         assert_eq!(eaten.field, "items[1].discount", "скидка съела позицию целиком");
         let e = create(flow_items(false, false, "card", vec![priced("food", "x", "0", "pcs", "1", "0")])).unwrap_err();
         assert_eq!(e.field, "items[1].quantity");
         let e = create(flow_items(false, false, "card", vec![priced("food", "x", "1", "box", "1", "0")])).unwrap_err();
         assert_eq!(e.field, "items[1].unit");
-        let e = create(flow_items(false, false, "card", vec![priced("food", "x", "0.0000001", "kg", "1", "0")])).unwrap_err();
+        let e = create(flow_items(false, false, "card", vec![priced("food", "x", "0.0000001", "kg", "1", "0")]))
+            .unwrap_err();
         assert_eq!(e.field, "items[1].quantity", "не больше 6 знаков");
-        let e = create(flow_items(false, false, "card", vec![priced("food", "x", "999999999999", "pcs", "999999999999", "0")])).unwrap_err();
+        let e = create(flow_items(
+            false,
+            false,
+            "card",
+            vec![priced("food", "x", "999999999999", "pcs", "999999999999", "0")],
+        ))
+        .unwrap_err();
         assert_eq!(e.field, "items[1].amount", "переполнение — ошибка поля, а не паника");
     }
 
@@ -1071,7 +1196,10 @@ mod tests {
         }
         let t = create(body).unwrap();
         // 10,01 × 100/200 = 5,005 → 5,00; 2,5025 → 2,50 дважды; остаток 0,01 — самой крупной.
-        assert_eq!(t.items.iter().map(|x| (x.discount, x.amount)).collect::<Vec<_>>(), vec![(dec("5.01"), dec("94.99")), (dec("2.50"), dec("47.50")), (dec("2.50"), dec("47.50"))]);
+        assert_eq!(
+            t.items.iter().map(|x| (x.discount, x.amount)).collect::<Vec<_>>(),
+            vec![(dec("5.01"), dec("94.99")), (dec("2.50"), dec("47.50")), (dec("2.50"), dec("47.50"))]
+        );
         assert_eq!(t.total(), dec("189.99"));
         let mut too_much = receipt(vec![("food", "100")]);
         if let Draft::Flow { items, .. } = &mut too_much {
@@ -1086,28 +1214,63 @@ mod tests {
     fn items_are_edited_by_id() {
         let mut t = create(receipt(vec![("food", "100"), ("cafe", "50")])).unwrap();
         let (food, cafe) = (t.items[0].id, t.items[1].id);
-        let edit = |items: ItemsDraft| data(Draft::Flow { income: false, account: "card".into(), items, refund: false });
+        let edit =
+            |items: ItemsDraft| data(Draft::Flow { income: false, account: "card".into(), items, refund: false });
         // Только сумма кофе: категория и название остаются, новая позиция добавляется в конец.
-        let draft = ItemsDraft { items: vec![ItemDraft { id: Some(cafe), amount: Some(dec("60")), ..Default::default() }, ItemDraft::simple("home", dec("7"))], ..Default::default() };
+        let draft = ItemsDraft {
+            items: vec![
+                ItemDraft { id: Some(cafe), amount: Some(dec("60")), ..Default::default() },
+                ItemDraft::simple("home", dec("7")),
+            ],
+            ..Default::default()
+        };
         t.change(edit(draft), &accounts()).unwrap();
-        assert_eq!(t.items.iter().map(|x| (x.category_code.as_str(), x.amount)).collect::<Vec<_>>(), vec![("FOOD", dec("100")), ("CAFE", dec("60")), ("HOME", dec("7"))]);
+        assert_eq!(
+            t.items.iter().map(|x| (x.category_code.as_str(), x.amount)).collect::<Vec<_>>(),
+            vec![("FOOD", dec("100")), ("CAFE", dec("60")), ("HOME", dec("7"))]
+        );
         assert_eq!((t.items[0].id, t.items[1].id), (food, cafe));
         // Только название — денежные поля прежние.
-        let draft = ItemsDraft { items: vec![ItemDraft { id: Some(food), name: Some("Овощи".into()), ..Default::default() }], remove: vec![cafe], ..Default::default() };
+        let draft = ItemsDraft {
+            items: vec![ItemDraft { id: Some(food), name: Some("Овощи".into()), ..Default::default() }],
+            remove: vec![cafe],
+            ..Default::default()
+        };
         t.change(edit(draft), &accounts()).unwrap();
-        assert_eq!(t.items.iter().map(|x| (x.name.as_deref(), x.amount)).collect::<Vec<_>>(), vec![(Some("Овощи"), dec("100")), (None, dec("7"))]);
+        assert_eq!(
+            t.items.iter().map(|x| (x.name.as_deref(), x.amount)).collect::<Vec<_>>(),
+            vec![(Some("Овощи"), dec("100")), (None, dec("7"))]
+        );
         assert!(check_items(t.tx_kind, &t.items, &t.postings).is_ok());
         // Чужой id и дважды один id — ошибки.
-        let foreign = ItemsDraft { items: vec![ItemDraft { id: Some(Uuid::new_v4()), ..Default::default() }], ..Default::default() };
+        let foreign = ItemsDraft {
+            items: vec![ItemDraft { id: Some(Uuid::new_v4()), ..Default::default() }],
+            ..Default::default()
+        };
         assert_eq!(t.clone().change(edit(foreign), &accounts()).unwrap_err().field, "items[1].id");
-        let twice = ItemsDraft { items: vec![ItemDraft { id: Some(food), ..Default::default() }, ItemDraft { id: Some(food), ..Default::default() }], ..Default::default() };
+        let twice = ItemsDraft {
+            items: vec![
+                ItemDraft { id: Some(food), ..Default::default() },
+                ItemDraft { id: Some(food), ..Default::default() },
+            ],
+            ..Default::default()
+        };
         assert_eq!(t.clone().change(edit(twice), &accounts()).unwrap_err().field, "items[2].id");
         // Форма — весь чек: не названная позиция удаляется, пустое название — без названия.
-        let form = ItemsDraft::replace(vec![ItemDraft { id: Some(food), name: Some(String::new()), ..ItemDraft::simple("food", dec("100")) }]);
+        let form = ItemsDraft::replace(vec![ItemDraft {
+            id: Some(food),
+            name: Some(String::new()),
+            ..ItemDraft::simple("food", dec("100"))
+        }]);
         t.change(edit(form), &accounts()).unwrap();
         assert_eq!((t.items.len(), t.items[0].id, t.total(), t.items[0].name.as_deref()), (1, food, dec("100"), None));
-        let no_category = ItemsDraft::replace(vec![ItemDraft { id: Some(food), amount: Some(dec("1")), ..Default::default() }]);
-        assert_eq!(t.clone().change(edit(no_category), &accounts()).unwrap_err().field, "items[1].category_code", "в форме категория обязательна");
+        let no_category =
+            ItemsDraft::replace(vec![ItemDraft { id: Some(food), amount: Some(dec("1")), ..Default::default() }]);
+        assert_eq!(
+            t.clone().change(edit(no_category), &accounts()).unwrap_err().field,
+            "items[1].category_code",
+            "в форме категория обязательна"
+        );
         let none_left = ItemsDraft { remove: vec![food], ..Default::default() };
         assert_eq!(t.clone().change(edit(none_left), &accounts()).unwrap_err().field, "items");
     }
@@ -1116,14 +1279,37 @@ mod tests {
     /// сумма без цены убирает цену; номер позиции в ошибке — номер в чеке после правки.
     #[test]
     fn item_patch_keeps_omitted_fields() {
-        let mut t = create(flow_items(false, false, "card", vec![ItemDraft::simple("food", dec("10")), priced("snacks", "Круассан", "2", "pcs", "25", "3")])).unwrap();
+        let mut t = create(flow_items(
+            false,
+            false,
+            "card",
+            vec![ItemDraft::simple("food", dec("10")), priced("snacks", "Круассан", "2", "pcs", "25", "3")],
+        ))
+        .unwrap();
         let id = t.items[1].id;
-        let patch = |x: ItemDraft| data(Draft::Flow { income: false, account: "card".into(), items: ItemsDraft { items: vec![ItemDraft { id: Some(id), ..x }], ..Default::default() }, refund: false });
+        let patch = |x: ItemDraft| {
+            data(Draft::Flow {
+                income: false,
+                account: "card".into(),
+                items: ItemsDraft { items: vec![ItemDraft { id: Some(id), ..x }], ..Default::default() },
+                refund: false,
+            })
+        };
         t.change(patch(ItemDraft { quantity: Some(dec("3")), ..Default::default() }), &accounts()).unwrap();
-        assert_eq!((t.items[1].amount, t.items[1].price, t.items[1].discount, t.items[1].name.as_deref()), (dec("72"), Some(dec("25")), dec("3"), Some("Круассан")));
+        assert_eq!(
+            (t.items[1].amount, t.items[1].price, t.items[1].discount, t.items[1].name.as_deref()),
+            (dec("72"), Some(dec("25")), dec("3"), Some("Круассан"))
+        );
         t.change(patch(ItemDraft { amount: Some(dec("60")), ..Default::default() }), &accounts()).unwrap();
-        assert_eq!((t.items[1].amount, t.items[1].price, t.items[1].quantity), (dec("60"), None, dec("3")), "сумма без цены — цена пустая");
-        let e = t.clone().change(patch(ItemDraft { amount: Some(dec("0")), ..Default::default() }), &accounts()).unwrap_err();
+        assert_eq!(
+            (t.items[1].amount, t.items[1].price, t.items[1].quantity),
+            (dec("60"), None, dec("3")),
+            "сумма без цены — цена пустая"
+        );
+        let e = t
+            .clone()
+            .change(patch(ItemDraft { amount: Some(dec("0")), ..Default::default() }), &accounts())
+            .unwrap_err();
         assert_eq!(e.field, "items[2].amount", "номер — в чеке, а не в запросе");
         t.change(patch(ItemDraft { name: Some(String::new()), ..Default::default() }), &accounts()).unwrap();
         assert_eq!(t.items[1].name, None, "пустая строка стирает название");
@@ -1133,7 +1319,8 @@ mod tests {
     #[test]
     fn kept_items_follow_account_currency() {
         let mut t = create(receipt(vec![("food", "45.50")])).unwrap();
-        let to_vnd = data(Draft::Flow { income: false, account: "vcb".into(), items: ItemsDraft::default(), refund: false });
+        let to_vnd =
+            data(Draft::Flow { income: false, account: "vcb".into(), items: ItemsDraft::default(), refund: false });
         assert_eq!(t.change(to_vnd, &accounts()).unwrap_err().field, "items[1].amount");
     }
 
@@ -1167,25 +1354,54 @@ mod tests {
                 ("CARD", "THB", dec("3912.40")),
             ]
         );
-        assert_eq!((t.amount_on("TINKOFF"), t.amount_on("CARD"), t.total()), (dec("-10050"), dec("3912.40"), dec("10050")));
+        assert_eq!(
+            (t.amount_on("TINKOFF"), t.amount_on("CARD"), t.total()),
+            (dec("-10050"), dec("3912.40"), dec("10050"))
+        );
         assert!(matches!(t.body(), Body::Transfer { to_amount: Some(_), fee: Some(_), .. }));
-        assert!(t.items.is_empty() && t.postings.iter().all(|p| p.item_id.is_none()), "комиссия — проводка без позиции");
+        assert!(
+            t.items.is_empty() && t.postings.iter().all(|p| p.item_id.is_none()),
+            "комиссия — проводка без позиции"
+        );
         assert_eq!(t.account_code(), "TINKOFF");
     }
 
     #[test]
     fn transfer_in_one_currency() {
-        let body = Draft::Transfer { from: "card".into(), to: "cash".into(), amount: dec("5000"), to_amount: None, fee: None };
+        let body =
+            Draft::Transfer { from: "card".into(), to: "cash".into(), amount: dec("5000"), to_amount: None, fee: None };
         let t = create(body).unwrap();
         assert_eq!(amounts(&t), vec![("CARD", "THB", dec("-5000")), ("CASH", "THB", dec("5000"))]);
-        assert_eq!(t.body(), Body::Transfer { from: "CARD".into(), to: "CASH".into(), amount: dec("5000"), to_amount: None, fee: None });
-        let same = Draft::Transfer { from: "card".into(), to: "card".into(), amount: dec("1"), to_amount: None, fee: None };
+        assert_eq!(
+            t.body(),
+            Body::Transfer { from: "CARD".into(), to: "CASH".into(), amount: dec("5000"), to_amount: None, fee: None }
+        );
+        let same =
+            Draft::Transfer { from: "card".into(), to: "card".into(), amount: dec("1"), to_amount: None, fee: None };
         assert!(create(same).is_err(), "перевод на тот же счёт");
-        let wrong = Draft::Transfer { from: "card".into(), to: "cash".into(), amount: dec("10"), to_amount: Some(dec("9")), fee: None };
+        let wrong = Draft::Transfer {
+            from: "card".into(),
+            to: "cash".into(),
+            amount: dec("10"),
+            to_amount: Some(dec("9")),
+            fee: None,
+        };
         assert!(create(wrong).is_err(), "в одной валюте зачисляется столько же");
-        let no_to = Draft::Transfer { from: "tinkoff".into(), to: "card".into(), amount: dec("10"), to_amount: None, fee: None };
+        let no_to = Draft::Transfer {
+            from: "tinkoff".into(),
+            to: "card".into(),
+            amount: dec("10"),
+            to_amount: None,
+            fee: None,
+        };
         assert!(create(no_to).is_err(), "при обмене нужна сумма зачисления");
-        let big_fee = Draft::Transfer { from: "card".into(), to: "cash".into(), amount: dec("10"), to_amount: None, fee: Some(Fee { category_code: "fees".into(), amount: dec("10") }) };
+        let big_fee = Draft::Transfer {
+            from: "card".into(),
+            to: "cash".into(),
+            amount: dec("10"),
+            to_amount: None,
+            fee: Some(Fee { category_code: "fees".into(), amount: dec("10") }),
+        };
         assert!(create(big_fee).is_err(), "комиссия меньше суммы");
     }
 
@@ -1227,9 +1443,16 @@ mod tests {
         let mut t = create(receipt(vec![("food", "100")])).unwrap();
         t.items[0].note = Some("от Claude".into());
         let id = t.items[0].id;
-        let form = ItemsDraft::replace(vec![ItemDraft { id: Some(id), ..ItemDraft::simple("food", dec("120")) }, ItemDraft::simple("cafe", dec("5"))]);
-        t.change(data(Draft::Flow { income: false, account: "card".into(), items: form, refund: false }), &accounts()).unwrap();
-        assert_eq!(t.items.iter().map(|x| (x.amount, x.note.as_deref())).collect::<Vec<_>>(), vec![(dec("120"), Some("от Claude")), (dec("5"), None)]);
+        let form = ItemsDraft::replace(vec![
+            ItemDraft { id: Some(id), ..ItemDraft::simple("food", dec("120")) },
+            ItemDraft::simple("cafe", dec("5")),
+        ]);
+        t.change(data(Draft::Flow { income: false, account: "card".into(), items: form, refund: false }), &accounts())
+            .unwrap();
+        assert_eq!(
+            t.items.iter().map(|x| (x.amount, x.note.as_deref())).collect::<Vec<_>>(),
+            vec![(dec("120"), Some("от Claude")), (dec("5"), None)]
+        );
     }
 
     /// Внешняя запись: источник приводится к нижнему регистру, id — без пробелов по краям; ошибки — на своих полях.
@@ -1244,9 +1467,16 @@ mod tests {
             ("imessage", "  ", "external_ref.external_id"),
             ("imessage", &"я".repeat(201), "external_ref.external_id"),
         ] {
-            assert_eq!(RefDraft::new("external_ref.", provider, id, None).unwrap_err().field, field, "{provider:?} {id:?}");
+            assert_eq!(
+                RefDraft::new("external_ref.", provider, id, None).unwrap_err().field,
+                field,
+                "{provider:?} {id:?}"
+            );
         }
-        assert!(RefDraft::new("", &"a".repeat(40), &"я".repeat(200), None).is_ok(), "границы включительно, длина — в символах");
+        assert!(
+            RefDraft::new("", &"a".repeat(40), &"я".repeat(200), None).is_ok(),
+            "границы включительно, длина — в символах"
+        );
         assert_eq!(RefDraft::new("", "Bad!", "x", None).unwrap_err().field, "provider");
         assert_eq!(RefLink::parse(RefLink::Matched.as_str()), Some(RefLink::Matched));
     }

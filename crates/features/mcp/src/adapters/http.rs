@@ -27,7 +27,15 @@ type Svc = State<Arc<McpService>>;
 /// `/mcp` и `/.well-known/oauth-protected-resource[/mcp]`.
 pub fn router(svc: Arc<McpService>, dev: bool) -> Router {
     let settings = svc.settings().clone();
-    let authority = settings.base_url.split("://").nth(1).unwrap_or("localhost").split('/').next().unwrap_or("localhost").to_string();
+    let authority = settings
+        .base_url
+        .split("://")
+        .nth(1)
+        .unwrap_or("localhost")
+        .split('/')
+        .next()
+        .unwrap_or("localhost")
+        .to_string();
     let host = authority.split(':').next().unwrap_or("localhost").to_string();
     let origin = kernel::config::origin_of(&settings.base_url);
     // rmcp: запись без порта скоро будет значить только порт по умолчанию — указываем его явно.
@@ -54,7 +62,11 @@ pub fn router(svc: Arc<McpService>, dev: bool) -> Router {
         .with_allowed_hosts(hosts)
         .with_allowed_origins(origins);
     let server_svc = svc.clone();
-    let mcp = StreamableHttpService::new(move || Ok(BudgetServer::new(server_svc.clone())), Arc::new(NeverSessionManager::default()), config);
+    let mcp = StreamableHttpService::new(
+        move || Ok(BudgetServer::new(server_svc.clone())),
+        Arc::new(NeverSessionManager::default()),
+        config,
+    );
     Router::new()
         .route("/.well-known/oauth-protected-resource", get(resource_metadata))
         .route("/.well-known/oauth-protected-resource/mcp", get(resource_metadata))
@@ -80,11 +92,16 @@ async fn resource_metadata(State(svc): Svc) -> Response {
 
 fn unauthorized(svc: &McpService, invalid: bool) -> Response {
     let s = svc.settings();
-    let mut challenge = format!("Bearer resource_metadata=\"{}\", scope=\"{}\"", s.resource_metadata_url(), s.oauth_scope);
+    let mut challenge =
+        format!("Bearer resource_metadata=\"{}\", scope=\"{}\"", s.resource_metadata_url(), s.oauth_scope);
     if invalid {
         challenge.push_str(", error=\"invalid_token\"");
     }
-    let mut resp = (StatusCode::UNAUTHORIZED, Json(json!({"error": "unauthorized", "message": "требуется токен: Authorization: Bearer <токен>"}))).into_response();
+    let mut resp = (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({"error": "unauthorized", "message": "требуется токен: Authorization: Bearer <токен>"})),
+    )
+        .into_response();
     if let Ok(v) = HeaderValue::from_str(&challenge) {
         resp.headers_mut().insert(WWW_AUTHENTICATE, v);
     }
@@ -93,7 +110,12 @@ fn unauthorized(svc: &McpService, invalid: bool) -> Response {
 
 /// Вход на `/mcp`: токен → вызывающий (пользователь, проект, права) в расширения запроса.
 async fn authenticate(State(svc): Svc, mut req: Request<Body>, next: Next) -> Response {
-    let bearer = req.headers().get(AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::to_string);
+    let bearer = req
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::to_string);
     let meta = req.extensions().get::<RequestMeta>().cloned().unwrap_or_default();
     match svc.authenticate(bearer.as_deref(), meta).await {
         Ok(Auth::Ok(caller)) => {
@@ -102,7 +124,11 @@ async fn authenticate(State(svc): Svc, mut req: Request<Body>, next: Next) -> Re
         }
         Ok(Auth::Missing) => unauthorized(&svc, false),
         Ok(Auth::Invalid) => unauthorized(&svc, true),
-        Ok(Auth::Throttled) => (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error": "too_many_requests", "message": "слишком много запросов, повторите через минуту"}))).into_response(),
+        Ok(Auth::Throttled) => (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": "too_many_requests", "message": "слишком много запросов, повторите через минуту"})),
+        )
+            .into_response(),
         Err(e) => e.into_response(),
     }
 }

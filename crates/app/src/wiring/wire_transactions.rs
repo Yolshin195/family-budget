@@ -20,7 +20,8 @@ impl ::transactions::AccountsLookup for AccountsLookupAdapter {
         self.0.exists(project_id, code).await
     }
     async fn currencies(&self, project_id: Uuid) -> AppResult<Vec<AccountCurrency>> {
-        let minor: Vec<(String, i32)> = self.1.all(project_id, true).await?.into_iter().map(|c| (c.code, c.minor_units)).collect();
+        let minor: Vec<(String, i32)> =
+            self.1.all(project_id, true).await?.into_iter().map(|c| (c.code, c.minor_units)).collect();
         Ok(self
             .0
             .all(project_id, true)
@@ -37,11 +38,19 @@ impl ::transactions::AccountsLookup for AccountsLookupAdapter {
         self.0.choices(project_id, lang).await
     }
     async fn titles(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<(String, String)>> {
-        Ok(self.0.all(project_id, true).await?.into_iter().map(|a| (a.title(lang).to_string(), a.code)).map(|(t, c)| (c, t)).collect())
+        Ok(self
+            .0
+            .all(project_id, true)
+            .await?
+            .into_iter()
+            .map(|a| (a.title(lang).to_string(), a.code))
+            .map(|(t, c)| (c, t))
+            .collect())
     }
     async fn infos(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<AccountInfo>> {
         // Как на страницах: символ, общий для нескольких валют проекта, заменяется кодом.
-        let symbols = kernel::auth::currency_marks(self.1.all(project_id, true).await?.into_iter().map(|c| (c.code, c.symbol)));
+        let symbols =
+            kernel::auth::currency_marks(self.1.all(project_id, true).await?.into_iter().map(|c| (c.code, c.symbol)));
         Ok(self
             .0
             .all(project_id, false)
@@ -81,8 +90,25 @@ impl ::transactions::CategoriesLookup for CategoriesLookupAdapter {
             .await?
             .into_iter()
             .map(|(depth, c)| {
-                let names = kernel::search::join([Some(c.name.as_str()), c.name_ru.as_deref(), c.name_en.as_deref(), c.name_th.as_deref(), Some(c.code.as_str())].into_iter().flatten());
-                CategoryInfo { title: c.title(lang).to_string(), code: c.code, parent_code: c.parent_code, kind: c.category_kind, depth, names }
+                let names = kernel::search::join(
+                    [
+                        Some(c.name.as_str()),
+                        c.name_ru.as_deref(),
+                        c.name_en.as_deref(),
+                        c.name_th.as_deref(),
+                        Some(c.code.as_str()),
+                    ]
+                    .into_iter()
+                    .flatten(),
+                );
+                CategoryInfo {
+                    title: c.title(lang).to_string(),
+                    code: c.code,
+                    parent_code: c.parent_code,
+                    kind: c.category_kind,
+                    depth,
+                    names,
+                }
             })
             .collect())
     }
@@ -145,7 +171,10 @@ pub trait PlansSource: Send + Sync {
 #[async_trait]
 impl PlansSource for ::planning::Service {
     async fn occurrence(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<PlanOccurrence>> {
-        Ok(self.occurrence_kind(project_id, plan_id, date).await?.map(|(kind, skipped)| PlanOccurrence { kind, skipped }))
+        Ok(self
+            .occurrence_kind(project_id, plan_id, date)
+            .await?
+            .map(|(kind, skipped)| PlanOccurrence { kind, skipped }))
     }
 }
 
@@ -207,7 +236,13 @@ impl ::transactions::PeopleLookup for PeopleLookupAdapter {
                 .all(project_id, true)
                 .await?
                 .into_iter()
-                .map(|p| ::transactions::PersonInfo { title: p.title(lang), search: p.search(lang), code: p.code, user_id: p.user_id, archived: p.archived })
+                .map(|p| ::transactions::PersonInfo {
+                    title: p.title(lang),
+                    search: p.search(lang),
+                    code: p.code,
+                    user_id: p.user_id,
+                    archived: p.archived,
+                })
                 .collect());
         }
         let _ = (project_id, lang);

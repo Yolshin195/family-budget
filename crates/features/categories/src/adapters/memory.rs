@@ -37,7 +37,13 @@ impl CategoryRepository for InMemoryCategoryRepository {
         Ok(rows.iter().find(|r| r.project_id == project_id && r.code == code).cloned())
     }
 
-    async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Category>> {
+    async fn list(
+        &self,
+        project_id: Uuid,
+        include_archived: bool,
+        limit: i64,
+        offset: i64,
+    ) -> AppResult<Vec<Category>> {
         let rows = self.rows.lock().unwrap();
         let mut items: Vec<_> =
             rows.iter().filter(|r| r.project_id == project_id && (include_archived || !r.archived)).cloned().collect();

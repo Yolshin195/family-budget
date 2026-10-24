@@ -7,7 +7,7 @@ use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use kernel::error::AppError;
-use kernel::web::{Flash, see_other_flash, PageCtx, PageError, PageResult, render, see_other};
+use kernel::web::{Flash, PageCtx, PageError, PageResult, render, see_other, see_other_flash};
 use serde::Deserialize;
 
 use crate::dto::{CreateCurrencyDto, CurrencyDto, UpdateCurrencyDto};
@@ -120,7 +120,9 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): F
     .await;
     match result {
         Ok(_) => Ok(see_other("/currencies")),
-        Err(AppError::Validation(m) | AppError::Conflict(m)) => render(&FormPage { page: form_ctx(page), is_new: true, f, error: Some(m) }),
+        Err(AppError::Validation(m) | AppError::Conflict(m)) => {
+            render(&FormPage { page: form_ctx(page), is_new: true, f, error: Some(m) })
+        }
         Err(e) => Err(PageError(e)),
     }
 }
@@ -130,7 +132,12 @@ async fn edit_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(co
     render(&FormPage { page: form_ctx(page), is_new: false, f: CurrencyForm::from_dto(c), error: None })
 }
 
-async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>, Form(mut f): Form<CurrencyForm>) -> PageResult {
+async fn update(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Path(code): Path<String>,
+    Form(mut f): Form<CurrencyForm>,
+) -> PageResult {
     f.code = code.clone();
     let result = async {
         let archived = svc.get(page.session.project_id, &code).await?.archived;
@@ -149,7 +156,9 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
     .await;
     match result {
         Ok(_) => Ok(see_other("/currencies")),
-        Err(AppError::Validation(m) | AppError::Conflict(m)) => render(&FormPage { page: form_ctx(page), is_new: false, f, error: Some(m) }),
+        Err(AppError::Validation(m) | AppError::Conflict(m)) => {
+            render(&FormPage { page: form_ctx(page), is_new: false, f, error: Some(m) })
+        }
         Err(e) => Err(PageError(e)),
     }
 }
@@ -161,11 +170,18 @@ async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code
         Ok(()) => {}
         Err(AppError::Conflict(m)) => {
             let text = m.split_once(": ").map(|x| x.1.to_string()).unwrap_or(m);
-            return Ok(see_other_flash(&page.config, &format!("/currencies/{}/edit", kernel::web::url_segment(&code)), Flash::error(text)));
+            return Ok(see_other_flash(
+                &page.config,
+                &format!("/currencies/{}/edit", kernel::web::url_segment(&code)),
+                Flash::error(text),
+            ));
         }
         Err(e) => return Err(PageError(e)),
     }
-    let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/currencies/{}/restore", kernel::web::url_segment(&code)));
+    let flash = Flash::with_undo(
+        format!("{} · {code}", page.t("toast.archived")),
+        format!("/currencies/{}/restore", kernel::web::url_segment(&code)),
+    );
     Ok(see_other_flash(&page.config, "/currencies", flash))
 }
 

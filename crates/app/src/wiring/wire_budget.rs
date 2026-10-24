@@ -20,7 +20,14 @@ impl ::budget::CategoriesSource for CategoriesAdapter {
             .nodes(project_id, lang)
             .await?
             .into_iter()
-            .map(|n| Node { code: n.code, parent_code: n.parent_code, kind: n.kind, title: n.title, depth: n.depth, archived: n.archived })
+            .map(|n| Node {
+                code: n.code,
+                parent_code: n.parent_code,
+                kind: n.kind,
+                title: n.title,
+                depth: n.depth,
+                archived: n.archived,
+            })
             .collect())
     }
 }
@@ -35,7 +42,14 @@ impl ::budget::FactsSource for FactsAdapter {
             .lines(project_id, from, to)
             .await?
             .into_iter()
-            .map(|l| FactRec { date: l.occurred_on, currency: l.currency, kind: l.kind, category_code: l.category_code, amount: l.amount, created_by: l.created_by })
+            .map(|l| FactRec {
+                date: l.occurred_on,
+                currency: l.currency,
+                kind: l.kind,
+                category_code: l.category_code,
+                amount: l.amount,
+                created_by: l.created_by,
+            })
             .collect())
     }
     async fn balances(&self, project_id: Uuid, to: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
@@ -47,7 +61,13 @@ impl ::budget::FactsSource for FactsAdapter {
             .exchange(project_id, from, to)
             .await?
             .into_iter()
-            .map(|x| ExchangeRec { transaction_id: x.transaction_id, date: x.occurred_on, currency: x.currency, amount: x.amount, created_by: x.created_by })
+            .map(|x| ExchangeRec {
+                transaction_id: x.transaction_id,
+                date: x.occurred_on,
+                currency: x.currency,
+                amount: x.amount,
+                created_by: x.created_by,
+            })
             .collect())
     }
 }
@@ -56,7 +76,14 @@ pub struct PlansAdapter(pub Arc<::planning::Service>);
 
 #[async_trait]
 impl ::budget::PlansSource for PlansAdapter {
-    async fn open(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate, today: NaiveDate, lang: Lang) -> AppResult<Vec<PlannedRec>> {
+    async fn open(
+        &self,
+        project_id: Uuid,
+        from: NaiveDate,
+        to: NaiveDate,
+        today: NaiveDate,
+        lang: Lang,
+    ) -> AppResult<Vec<PlannedRec>> {
         Ok(self
             .0
             .occurrences(project_id, from, to, today)
@@ -89,7 +116,12 @@ impl ::budget::LimitsSource for LimitsAdapter {
             .all(project_id)
             .await?
             .into_iter()
-            .map(|l| LimitRule { period: View::parse(&l.limit_period), category_code: l.category_code, amount: l.amount, valid_from: l.valid_from })
+            .map(|l| LimitRule {
+                period: View::parse(&l.limit_period),
+                category_code: l.category_code,
+                amount: l.amount,
+                valid_from: l.valid_from,
+            })
             .collect())
     }
 }
@@ -104,7 +136,12 @@ impl ::budget::AccountsSource for AccountsAdapter {
             .all(project_id, true)
             .await?
             .into_iter()
-            .map(|a| AccountRec { title: a.title(lang).to_string(), code: a.code, currency: a.currency_code, archived: a.archived })
+            .map(|a| AccountRec {
+                title: a.title(lang).to_string(),
+                code: a.code,
+                currency: a.currency_code,
+                archived: a.archived,
+            })
             .collect())
     }
 }

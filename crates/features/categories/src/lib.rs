@@ -21,9 +21,9 @@ use kernel::web::{NavGroup, NavItem, Web};
 use utoipa::OpenApi;
 
 pub use ports::{CategoryUsage, Deps};
+pub use service::CategoryNode;
 /// Use cases фичи. Другие фичи получают к ним доступ только через свои порты и адаптеры в app/wiring.
 pub use service::CategoryService as Service;
-pub use service::CategoryNode;
 
 pub const NAME: &str = "categories";
 pub const MOUNT: &str = "/categories";
@@ -45,7 +45,15 @@ pub fn feature(api: Arc<Service>) -> Feature {
         web: Some(Web {
             pages: adapters::web::router(api),
             public: None,
-            nav: Some(NavItem { feature: NAME, href: MOUNT, label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)), icon: "folder-tree", group: NavGroup::Directory, order: 10, mobile: false }),
+            nav: Some(NavItem {
+                feature: NAME,
+                href: MOUNT,
+                label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)),
+                icon: "folder-tree",
+                group: NavGroup::Directory,
+                order: 10,
+                mobile: false,
+            }),
             root: None,
             account: None,
         }),

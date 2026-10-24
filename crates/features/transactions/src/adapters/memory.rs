@@ -43,7 +43,9 @@ fn matches(r: &Transaction, project_id: Uuid, f: &Filter, refs: &[ExternalRef]) 
         && f.untranslated.is_none_or(|l| r.description.localized().is_some_and(|d| d.missing(l)))
         && f.place_code.as_deref().is_none_or(|p| r.place_code.as_deref() == Some(p))
         && f.for_person.as_ref().is_none_or(|who| r.items.iter().any(|x| x.for_person == *who))
-        && f.external_provider.as_deref().is_none_or(|p| refs.iter().any(|x| x.project_id == r.project_id && x.transaction_id == r.id && x.provider == p))
+        && f.external_provider.as_deref().is_none_or(|p| {
+            refs.iter().any(|x| x.project_id == r.project_id && x.transaction_id == r.id && x.provider == p)
+        })
 }
 
 /// Проводка относится к позиции получателя из фильтра (без фильтра — любая).
@@ -99,11 +101,15 @@ impl TransactionRepository for InMemoryTransactionRepository {
     }
 
     async fn find_ref(&self, project_id: Uuid, provider: &str, external_id: &str) -> AppResult<Option<ExternalRef>> {
-        Ok(self.refs().into_iter().find(|x| x.project_id == project_id && x.provider == provider && x.external_id == external_id))
+        Ok(self
+            .refs()
+            .into_iter()
+            .find(|x| x.project_id == project_id && x.provider == provider && x.external_id == external_id))
     }
 
     async fn refs_of(&self, project_id: Uuid, ids: &[Uuid]) -> AppResult<Vec<ExternalRef>> {
-        let mut out: Vec<ExternalRef> = self.refs().into_iter().filter(|x| x.project_id == project_id && ids.contains(&x.transaction_id)).collect();
+        let mut out: Vec<ExternalRef> =
+            self.refs().into_iter().filter(|x| x.project_id == project_id && ids.contains(&x.transaction_id)).collect();
         out.sort_by_key(|x| x.created_at);
         Ok(out)
     }
@@ -125,7 +131,8 @@ impl TransactionRepository for InMemoryTransactionRepository {
         let refs = self.refs();
         let rows = self.rows.lock().unwrap();
         // Новые сначала: при одной дате — позже добавленные.
-        let mut items: Vec<_> = rows.iter().enumerate().filter(|(_, r)| matches(r, project_id, filter, &refs)).collect();
+        let mut items: Vec<_> =
+            rows.iter().enumerate().filter(|(_, r)| matches(r, project_id, filter, &refs)).collect();
         items.sort_by(|a, b| b.1.occurred_on.cmp(&a.1.occurred_on).then(b.0.cmp(&a.0)));
         Ok(items.into_iter().skip(offset as usize).take(limit as usize).map(|(_, r)| r.clone()).collect())
     }
@@ -161,7 +168,8 @@ impl TransactionRepository for InMemoryTransactionRepository {
         let refs = self.refs();
         let rows = self.rows.lock().unwrap();
         let amounts = rows.iter().filter(|r| matches(r, project_id, filter, &refs)).map(|r| r.amount_on(account));
-        Ok(amounts.fold((Decimal::ZERO, Decimal::ZERO), |(i, o), v| if v > Decimal::ZERO { (i + v, o) } else { (i, o + v) }))
+        Ok(amounts
+            .fold((Decimal::ZERO, Decimal::ZERO), |(i, o), v| if v > Decimal::ZERO { (i + v, o) } else { (i, o + v) }))
     }
 
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool> {
@@ -177,10 +185,17 @@ impl TransactionRepository for InMemoryTransactionRepository {
             .iter()
             .filter(|r| r.project_id == project_id && r.occurred_on >= from && r.occurred_on <= to)
             .flat_map(|r| {
-                r.postings
-                    .iter()
-                    .filter(|p| p.ref_kind == RefKind::Category)
-                    .map(move |p| fact(r.id, r.occurred_on, p.currency.clone(), r.tx_kind.as_str(), p.ref_code.clone(), p.amount, r.created_by))
+                r.postings.iter().filter(|p| p.ref_kind == RefKind::Category).map(move |p| {
+                    fact(
+                        r.id,
+                        r.occurred_on,
+                        p.currency.clone(),
+                        r.tx_kind.as_str(),
+                        p.ref_code.clone(),
+                        p.amount,
+                        r.created_by,
+                    )
+                })
             })
             .collect())
     }
@@ -191,10 +206,15 @@ impl TransactionRepository for InMemoryTransactionRepository {
             .iter()
             .filter(|r| r.project_id == project_id && r.occurred_on >= from && r.occurred_on <= to)
             .flat_map(|r| {
-                r.postings
-                    .iter()
-                    .filter(|p| p.ref_kind == RefKind::System && p.ref_code == system::EXCHANGE)
-                    .map(move |p| ExchangeLine { transaction_id: r.id, occurred_on: r.occurred_on, currency: p.currency.clone(), amount: p.amount, created_by: r.created_by })
+                r.postings.iter().filter(|p| p.ref_kind == RefKind::System && p.ref_code == system::EXCHANGE).map(
+                    move |p| ExchangeLine {
+                        transaction_id: r.id,
+                        occurred_on: r.occurred_on,
+                        currency: p.currency.clone(),
+                        amount: p.amount,
+                        created_by: r.created_by,
+                    },
+                )
             })
             .collect())
     }
@@ -235,12 +255,21 @@ impl TransactionRepository for InMemoryTransactionRepository {
     }
 
     async fn has_postings(&self, project_id: Uuid, account_code: &str) -> AppResult<bool> {
-        Ok(self.rows.lock().unwrap().iter().any(|r| r.project_id == project_id && r.accounts().any(|a| a == account_code)))
+        Ok(self
+            .rows
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|r| r.project_id == project_id && r.accounts().any(|a| a == account_code)))
     }
 
     async fn uses_category(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
         let rows = self.rows.lock().unwrap();
-        Ok(rows.iter().filter(|r| r.project_id == project_id).flat_map(|r| &r.postings).any(|p| p.ref_kind == RefKind::Category && p.ref_code == code))
+        Ok(rows
+            .iter()
+            .filter(|r| r.project_id == project_id)
+            .flat_map(|r| &r.postings)
+            .any(|p| p.ref_kind == RefKind::Category && p.ref_code == code))
     }
 
     async fn uses_currency(&self, project_id: Uuid, currency: &str) -> AppResult<bool> {
@@ -250,12 +279,24 @@ impl TransactionRepository for InMemoryTransactionRepository {
 
     async fn find_opening(&self, project_id: Uuid, account_code: &str) -> AppResult<Option<Transaction>> {
         let rows = self.rows.lock().unwrap();
-        Ok(rows.iter().find(|r| r.project_id == project_id && r.tx_kind == TxKind::Opening && r.accounts().any(|a| a == account_code)).cloned())
+        Ok(rows
+            .iter()
+            .find(|r| {
+                r.project_id == project_id && r.tx_kind == TxKind::Opening && r.accounts().any(|a| a == account_code)
+            })
+            .cloned())
     }
 
-    async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate) -> AppResult<QuickStats> {
+    async fn quick_stats(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        kind: &str,
+        since: NaiveDate,
+    ) -> AppResult<QuickStats> {
         let rows = self.rows.lock().unwrap();
-        let mine: Vec<&Transaction> = rows.iter().filter(|r| r.project_id == project_id && r.created_by == user_id).collect();
+        let mine: Vec<&Transaction> =
+            rows.iter().filter(|r| r.project_id == project_id && r.created_by == user_id).collect();
         let mut counts: Vec<(String, usize)> = Vec::new();
         for t in mine.iter().filter(|t| t.tx_kind.as_str() == kind && t.occurred_on >= since) {
             for p in t.postings.iter().filter(|p| p.ref_kind == RefKind::Category) {
@@ -267,7 +308,11 @@ impl TransactionRepository for InMemoryTransactionRepository {
         }
         counts.sort_by_key(|c| std::cmp::Reverse(c.1));
         let mut places: Vec<(String, usize)> = Vec::new();
-        for code in mine.iter().filter(|t| t.tx_kind.as_str() == kind && t.occurred_on >= since).filter_map(|t| t.place_code.as_ref()) {
+        for code in mine
+            .iter()
+            .filter(|t| t.tx_kind.as_str() == kind && t.occurred_on >= since)
+            .filter_map(|t| t.place_code.as_ref())
+        {
             match places.iter_mut().find(|c| &c.0 == code) {
                 Some(c) => c.1 += 1,
                 None => places.push((code.clone(), 1)),
@@ -279,7 +324,11 @@ impl TransactionRepository for InMemoryTransactionRepository {
             .rev()
             .find(|t| matches!(t.tx_kind, TxKind::Expense | TxKind::Income))
             .and_then(|t| t.accounts().next().map(str::to_string));
-        Ok(QuickStats { last_account, frequent: counts.into_iter().map(|c| c.0).collect(), places: places.into_iter().map(|c| c.0).collect() })
+        Ok(QuickStats {
+            last_account,
+            frequent: counts.into_iter().map(|c| c.0).collect(),
+            places: places.into_iter().map(|c| c.0).collect(),
+        })
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
@@ -290,7 +339,11 @@ impl TransactionRepository for InMemoryTransactionRepository {
         Ok((n - rows.len()) as u64)
     }
 
-    async fn count_first(&self, _from: chrono::DateTime<chrono::Utc>, _to: chrono::DateTime<chrono::Utc>) -> AppResult<i64> {
+    async fn count_first(
+        &self,
+        _from: chrono::DateTime<chrono::Utc>,
+        _to: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<i64> {
         let rows = self.rows.lock().unwrap();
         let mut users: Vec<Uuid> = rows.iter().filter(|r| r.tx_kind != TxKind::Opening).map(|r| r.created_by).collect();
         users.sort();

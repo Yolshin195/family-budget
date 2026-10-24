@@ -6,7 +6,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 #[allow(unused_imports)]
-use crate::domain::{Rate};
+use crate::domain::Rate;
 use crate::ports::{Period, RateRepository};
 
 const COLUMNS: &str = "id, project_id, rate_date, currency_code, rate, entered, inverted";
@@ -102,9 +102,8 @@ impl RateRepository for PostgresRateRepository {
     }
 
     async fn list(&self, project_id: Uuid, period: Period, limit: i64, offset: i64) -> AppResult<Vec<Rate>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_rates WHERE {FILTER} ORDER BY rate_date DESC, id LIMIT $4 OFFSET $5"
-        );
+        let sql =
+            format!("SELECT {COLUMNS} FROM fb_rates WHERE {FILTER} ORDER BY rate_date DESC, id LIMIT $4 OFFSET $5");
         let rows: Vec<Row> = sqlx::query_as(&sql)
             .bind(project_id)
             .bind(period.from)
@@ -118,12 +117,8 @@ impl RateRepository for PostgresRateRepository {
 
     async fn count(&self, project_id: Uuid, period: Period) -> AppResult<i64> {
         let sql = format!("SELECT COUNT(*) FROM fb_rates WHERE {FILTER}");
-        let (n,): (i64,) = sqlx::query_as(&sql)
-            .bind(project_id)
-            .bind(period.from)
-            .bind(period.to)
-            .fetch_one(&self.pool)
-            .await?;
+        let (n,): (i64,) =
+            sqlx::query_as(&sql).bind(project_id).bind(period.from).bind(period.to).fetch_one(&self.pool).await?;
         Ok(n)
     }
 

@@ -62,7 +62,9 @@ sudo bash deploy-vds.sh install vds.conf
 
 - обновляет систему, настраивает часовой пояс, автообновления безопасности, swap (при RAM до 2,5 ГБ) и ufw (SSH, 80, 443);
 - создаёт пользователя `deploy` с sudo и вашим SSH-ключом и спрашивает для него пароль;
-- ставит Docker (с ротацией логов) и Caddy, клонирует репозиторий в `/srv/family-budget`;
+- ставит Docker и Caddy, клонирует репозиторий в `/srv/family-budget`;
+- ограничивает логи, чтобы они не заняли диск: контейнеры — 5 файлов по 20 МБ (готовый `/etc/docker/daemon.json`
+  дополняется, контейнеры пересоздаются), журнал systemd — 500 МБ, `backups/backup.log` — logrotate (шаги 3.8, 4.2, 13.3);
 - генерирует `.env` со всеми секретами, `compose.override.yaml` (образ из GHCR) и клиента Rauthy с адресами продакшена;
 - пишет `/etc/caddy/Caddyfile`, предупреждает, если DNS ещё не указывает на сервер;
 - запускает PostgreSQL и Rauthy, сам забирает секрет клиента (`make rauthy-secrets`) в `.env` и запускает приложение;
@@ -92,6 +94,7 @@ sudo bash deploy-vds.sh install vds.conf
 /srv/family-budget/scripts/deploy-vds.sh rollback        # вернуть образ, работавший до последнего update (шаг 14.2)
 /srv/family-budget/scripts/deploy-vds.sh rollback sha-1a2b3c4
 /srv/family-budget/scripts/deploy-vds.sh check           # проверки шага 12
+sudo /srv/family-budget/scripts/deploy-vds.sh logs       # ограничить логи на сервере, установленном до этой версии
 /srv/family-budget/scripts/deploy-vds.sh auto-update status   # автообновление: таймер и последние запуски (шаг 14.3)
 /srv/family-budget/scripts/deploy-vds.sh auto-update test     # пробное уведомление в Telegram / на почту
 ```
@@ -220,10 +223,23 @@ free -h
 ### 3.7. Утилиты
 
 ```bash
-sudo apt install -y git make age jq curl ca-certificates gnupg
+sudo apt install -y git make age jq curl ca-certificates gnupg logrotate
 ```
 
-`age` — шифрование резервных копий, `make` — команды проекта, `jq` — проверки на шаге 12.
+`age` — шифрование резервных копий, `make` — команды проекта, `jq` — проверки на шаге 12, `logrotate` — ротация
+`backup.log` (шаг 13.3; в Ubuntu уже стоит).
+
+### 3.8. Размер журнала systemd
+
+В журнал systemd пишут Caddy, таймер автообновления (раз в 5 минут) и cron. По умолчанию он занимает до 10% диска —
+на маленьком VDS это гигабайты. 500 МБ хватает на месяцы:
+
+```bash
+sudo mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=500M\n' | sudo tee /etc/systemd/journald.conf.d/50-family-budget.conf
+sudo systemctl restart systemd-journald
+journalctl --disk-usage
+```
 
 ## 4. Docker
 
@@ -248,9 +264,11 @@ sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin d
 
 ### 4.2. Ротация логов контейнеров
 
-Иначе логи со временем займут весь диск:
+По умолчанию Docker пишет логи контейнеров (`json-file`) без ограничений, и со временем они займут весь диск. Каждому
+контейнеру — не больше 5 файлов по 20 МБ:
 
 ```bash
+cat /etc/docker/daemon.json             # файла нет — создайте его командой ниже
 sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
 {
   "log-driver": "json-file",
@@ -260,6 +278,14 @@ EOF
 sudo systemctl restart docker
 sudo systemctl enable docker containerd
 ```
+
+Если `daemon.json` уже есть (его кладут некоторые хостеры), не заменяйте его, а добавьте в него эти два ключа.
+Настройка действует на новые контейнеры: если приложение уже запущено, пересоздайте их —
+`docker compose up -d --force-recreate` в `/srv/family-budget`. Проверка — `deploy-vds.sh check` или шаг 12.
+
+Сервер установлен раньше? `sudo /srv/family-budget/scripts/deploy-vds.sh logs` (после `git pull`) делает всё сразу:
+ограничивает журнал systemd (шаг 3.8) и логи контейнеров, дописывает ротацию в готовый `daemon.json`, пересоздаёт
+контейнеры, если нужно, и настраивает ротацию `backup.log` (шаг 13.3).
 
 ### 4.3. Доступ к Docker без sudo и `ENGINE=docker` по умолчанию
 
@@ -638,6 +664,9 @@ docker compose ps
 
 # Снаружи открыты только 22, 80, 443; 8080, 8443 и 5432 — только на 127.0.0.1
 sudo ss -tlnp | grep -E ':(22|80|443|8080|8443|5432)\b'
+
+# Логи контейнеров с ротацией (шаг 4.2): у каждого json-file и max-size:20m
+docker inspect -f '{{.Name}} {{.HostConfig.LogConfig.Type}} {{.HostConfig.LogConfig.Config}}' $(docker compose ps -q)
 ```
 
 Проверка в браузере:
@@ -697,6 +726,22 @@ crontab -e
 
 ```
 15 3 * * * cd /srv/family-budget && ENGINE=docker make backup >> backups/backup.log 2>&1
+```
+
+Чтобы `backup.log` не рос годами, раз в месяц он уходит в архив, архивы хранятся год:
+
+```bash
+sudo tee /etc/logrotate.d/family-budget >/dev/null <<'EOF'
+/srv/family-budget/backups/backup.log {
+	monthly
+	rotate 12
+	compress
+	missingok
+	notifempty
+	su deploy deploy
+}
+EOF
+sudo logrotate -d /etc/logrotate.d/family-budget    # проверка без изменений
 ```
 
 ### 13.4. Копии — не только на этом сервере
@@ -841,7 +886,7 @@ docker compose logs -f app
 | Не приходят письма | Настройки `SMTP_*`, `docker compose logs rauthy`. Многие хостеры блокируют порт 25 — используйте 587 (`SMTP_TLS_MODE=tls`) или 465. Добавьте SPF/DKIM для домена отправителя, иначе письма уйдут в спам |
 | Passkey в админке Rauthy не работает | `RAUTHY_RP_ID` = домен Rauthy без схемы, `RAUTHY_RP_ORIGIN` = `https://<домен Rauthy>:443`. Меняйте `RP_ID` только до регистрации ключей |
 | `make backup`: синтаксическая ошибка | Значение с пробелами в `.env` без кавычек (обычно `SMTP_FROM`) |
-| Диск заполнен | `docker system df`, `docker image prune -f`, размер `backups/`, `journalctl --vacuum-size=200M` |
+| Диск заполнен | `docker system df`, `docker image prune -f`, размер `backups/`; логи контейнеров — `sudo du -sh /var/lib/docker/containers` (больше ~300 МБ — нет ротации, шаг 4.2); журнал — `journalctl --disk-usage`, `sudo journalctl --vacuum-size=200M` и лимит из шага 3.8 |
 
 Полезные команды (все — из `/srv/family-budget`):
 
@@ -865,5 +910,6 @@ docker compose exec db psql -U budget -d family_budget    # консоль БД 
 - [ ] SMTP работает: регистрация и код 2FA приходят на почту
 - [ ] `make backup` в cron, приватный ключ age вне сервера, копии уходят с сервера, `make restore-check` проходит
 - [ ] Автообновление включено, `deploy-vds.sh auto-update test` доходит до Telegram или почты
+- [ ] Логи ограничены: контейнеры — `max-size` в `daemon.json` (шаг 4.2), журнал — 500 МБ (шаг 3.8), `backup.log` — logrotate
 - [ ] После `sudo reboot` всё поднимается само
 - [ ] Внешний мониторинг `https://budget.example.com/health` (UptimeRobot, Uptime Kuma и т. п.)

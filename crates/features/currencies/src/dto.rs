@@ -5,7 +5,7 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 #[allow(unused_imports)]
-use crate::domain::{CurrencyNameLang, NewCurrency, Currency, CurrencyChanges};
+use crate::domain::{Currency, CurrencyChanges, CurrencyNameLang, NewCurrency};
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateCurrencyDto {
@@ -130,8 +130,9 @@ impl UpdateCurrencyDto {
 }
 
 fn parse_name_lang(value: &str) -> Result<CurrencyNameLang, String> {
-    CurrencyNameLang::parse(value)
-        .ok_or_else(|| format!("name_lang: недопустимое значение '{value}', ожидается одно из {:?}", CurrencyNameLang::VALUES))
+    CurrencyNameLang::parse(value).ok_or_else(|| {
+        format!("name_lang: недопустимое значение '{value}', ожидается одно из {:?}", CurrencyNameLang::VALUES)
+    })
 }
 
 impl CurrencyDto {

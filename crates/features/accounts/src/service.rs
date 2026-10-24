@@ -4,18 +4,18 @@
 use std::sync::Arc;
 
 use chrono::NaiveDate;
-use rust_decimal::Decimal;
 #[allow(unused_imports)]
 use kernel::code::{ensure_ref, normalize};
 use kernel::error::{AppError, AppResult};
-use kernel::pagination::{PagedResponse, Pagination};
 use kernel::i18n::Lang;
+use kernel::pagination::{PagedResponse, Pagination};
 use kernel::web::Choice;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::domain::Account;
-use crate::dto::{CreateAccountDto, ListQuery, UpdateAccountDto, AccountDto};
-use crate::ports::{Deps, AccountRepository};
+use crate::dto::{AccountDto, CreateAccountDto, ListQuery, UpdateAccountDto};
+use crate::ports::{AccountRepository, Deps};
 
 pub struct AccountService {
     repo: Arc<dyn AccountRepository>,
@@ -47,7 +47,12 @@ impl AccountService {
         Ok(self.load(project_id, code).await?.into())
     }
 
-    pub async fn list(&self, project_id: Uuid, query: ListQuery, pagination: Pagination) -> AppResult<PagedResponse<AccountDto>> {
+    pub async fn list(
+        &self,
+        project_id: Uuid,
+        query: ListQuery,
+        pagination: Pagination,
+    ) -> AppResult<PagedResponse<AccountDto>> {
         let all = query.include_archived;
         let items = self.repo.list(project_id, all, pagination.limit(), pagination.offset()).await?;
         let total = self.repo.count(project_id, all).await?;
@@ -60,7 +65,9 @@ impl AccountService {
         item.change(dto.into_domain().map_err(AppError::Validation)?).map_err(AppError::Validation)?;
         // Проводки хранят валюту: смена валюты переписала бы историю счёта.
         if item.currency_code != currency && self.deps.ledger.has_postings(project_id, &item.code).await? {
-            return Err(AppError::Validation(format!("currency_code: по счёту есть операции — валюта остаётся {currency}")));
+            return Err(AppError::Validation(format!(
+                "currency_code: по счёту есть операции — валюта остаётся {currency}"
+            )));
         }
         if item.archived {
             self.ensure_zero(project_id, &item.code).await?;
@@ -80,11 +87,20 @@ impl AccountService {
     }
 
     async fn ensure_zero(&self, project_id: Uuid, code: &str) -> AppResult<()> {
-        let balance = self.balances(project_id, end_of_time()).await?.into_iter().find(|b| b.0 == code).map(|b| b.1).unwrap_or_default();
+        let balance = self
+            .balances(project_id, end_of_time())
+            .await?
+            .into_iter()
+            .find(|b| b.0 == code)
+            .map(|b| b.1)
+            .unwrap_or_default();
         if balance.is_zero() {
             Ok(())
         } else {
-            Err(AppError::Conflict(format!("archived: на счёте {code} остаток {} — переведите его или сверьте остаток", balance.normalize())))
+            Err(AppError::Conflict(format!(
+                "archived: на счёте {code} остаток {} — переведите его или сверьте остаток",
+                balance.normalize()
+            )))
         }
     }
 
@@ -102,7 +118,14 @@ impl AccountService {
     }
 
     /// Задать начальный остаток из формы счёта.
-    pub async fn set_opening(&self, project_id: Uuid, user_id: Uuid, code: &str, amount: Decimal, date: NaiveDate) -> AppResult<()> {
+    pub async fn set_opening(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        code: &str,
+        amount: Decimal,
+        date: NaiveDate,
+    ) -> AppResult<()> {
         let item = self.load(project_id, code).await?;
         self.deps.ledger.set_opening(project_id, user_id, &item.code, amount, date).await
     }
@@ -162,7 +185,11 @@ impl AccountService {
 
     #[allow(unused_variables)]
     async fn check_refs(&self, project_id: Uuid, item: &Account) -> AppResult<()> {
-        ensure_ref(self.deps.currencies.exists(project_id, &item.currency_code).await?, "currency_code", &item.currency_code)?;
+        ensure_ref(
+            self.deps.currencies.exists(project_id, &item.currency_code).await?,
+            "currency_code",
+            &item.currency_code,
+        )?;
         Ok(())
     }
 }

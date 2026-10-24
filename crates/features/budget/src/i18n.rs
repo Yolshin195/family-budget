@@ -15,11 +15,17 @@ pub fn dict(key: &str) -> Option<Tr> {
         "net" => ("Итог периода (прогноз)", "Period net (forecast)", "สุทธิ (คาดการณ์)"),
         "net_fact" => ("Итог периода (факт)", "Period net (actual)", "สุทธิ (จริง)"),
         "accounts" => ("Остатки на конец периода", "Balances at period end", "ยอดคงเหลือสิ้นงวด"),
-        "accounts_forecast" => ("Остатки на конец периода (прогноз)", "Balances at period end (forecast)", "ยอดคงเหลือสิ้นงวด (คาดการณ์)"),
+        "accounts_forecast" => {
+            ("Остатки на конец периода (прогноз)", "Balances at period end (forecast)", "ยอดคงเหลือสิ้นงวด (คาดการณ์)")
+        }
         "mode" => ("Режим сводки", "Summary mode", "โหมดสรุป"),
         "expected" => ("Ожидается", "Expected", "คาดไว้"),
         "upcoming" => ("Ещё предстоит по планам", "Still planned", "ยังรอตามแผน"),
-        "nothing_planned" => ("Все плановые операции периода решены", "All planned items of the period are settled", "รายการตามแผนของงวดนี้ครบแล้ว"),
+        "nothing_planned" => (
+            "Все плановые операции периода решены",
+            "All planned items of the period are settled",
+            "รายการตามแผนของงวดนี้ครบแล้ว",
+        ),
         "missing_rates" => (
             "Нет курса к базовой валюте — эти суммы не вошли в итоги:",
             "No rate to the base currency — these amounts are left out of the totals:",
@@ -31,11 +37,19 @@ pub fn dict(key: &str) -> Option<Tr> {
             "Amount in a currency without a rate: left out of actuals and totals — add a rate",
             "ยอดในสกุลที่ไม่มีอัตราแลกเปลี่ยน ไม่รวมในยอดจริงและยอดรวม — เพิ่มอัตรา",
         ),
-        "children_over" => ("Сумма лимитов подкатегорий больше лимита категории", "Subcategory limits exceed this category's limit", "วงเงินหมวดย่อยรวมเกินวงเงินหมวดนี้"),
+        "children_over" => (
+            "Сумма лимитов подкатегорий больше лимита категории",
+            "Subcategory limits exceed this category's limit",
+            "วงเงินหมวดย่อยรวมเกินวงเงินหมวดนี้",
+        ),
         "inherited" => ("ограничено лимитом родителя", "limited by parent's limit", "จำกัดโดยวงเงินหมวดหลัก"),
         "all_members" => ("Все участники", "All members", "สมาชิกทั้งหมด"),
         "base_currency" => ("Суммы в базовой валюте", "Amounts in base currency", "จำนวนเงินในสกุลหลัก"),
-        "sort_hint" => ("Нажмите заголовок колонки, чтобы отсортировать", "Select a column header to sort", "แตะหัวคอลัมน์เพื่อเรียงลำดับ"),
+        "sort_hint" => (
+            "Нажмите заголовок колонки, чтобы отсортировать",
+            "Select a column header to sort",
+            "แตะหัวคอลัมน์เพื่อเรียงลำดับ",
+        ),
         "percent" => ("% лимита", "% of limit", "% ของวงเงิน"),
         "expand" => ("Развернуть всё", "Expand all", "ขยายทั้งหมด"),
         "set_limits" => ("Настроить лимиты", "Set limits", "ตั้งวงเงิน"),
@@ -48,15 +62,21 @@ pub fn dict(key: &str) -> Option<Tr> {
         "member" => ("Участник", "Member", "สมาชิก"),
         "income_total" => ("Итого", "Total", "รวม"),
         "empty_title" => ("Категорий пока нет", "No categories yet", "ยังไม่มีหมวดหมู่"),
-        "empty_text" => ("Бюджет строится по дереву категорий. Добавьте категории и лимиты — и расходы разойдутся по веткам.", "The budget follows the category tree. Add categories and limits, and expenses will spread across branches.", "งบสร้างตามโครงสร้างหมวดหมู่ เพิ่มหมวดหมู่และวงเงินก่อน"),
+        "empty_text" => (
+            "Бюджет строится по дереву категорий. Добавьте категории и лимиты — и расходы разойдутся по веткам.",
+            "The budget follows the category tree. Add categories and limits, and expenses will spread across branches.",
+            "งบสร้างตามโครงสร้างหมวดหมู่ เพิ่มหมวดหมู่และวงเงินก่อน",
+        ),
         "to_categories" => ("К категориям", "Go to categories", "ไปที่หมวดหมู่"),
         "fact_hint" => ("Факт — проведённые операции", "Actual — recorded transactions", "จริง — รายการที่บันทึกแล้ว"),
         "apply" => ("Показать", "Apply", "แสดง"),
         "nav_rates" => ("Курсы валют", "Exchange rates", "อัตราแลกเปลี่ยน"),
         "fx_result" => ("Курсовая разница", "Exchange result", "ผลต่างอัตราแลกเปลี่ยน"),
-        "fx_hint" => ("Обмены валют за период по курсу справочника: «−» — потеряно на обмене. В расходы не входит.",
-                      "Currency exchanges in the period at reference rates: “−” means lost on exchange. Not counted as an expense.",
-                      "การแลกเงินในช่วงนี้ตามอัตราอ้างอิง: “−” คือขาดทุนจากการแลก ไม่นับเป็นรายจ่าย"),
+        "fx_hint" => (
+            "Обмены валют за период по курсу справочника: «−» — потеряно на обмене. В расходы не входит.",
+            "Currency exchanges in the period at reference rates: “−” means lost on exchange. Not counted as an expense.",
+            "การแลกเงินในช่วงนี้ตามอัตราอ้างอิง: “−” คือขาดทุนจากการแลก ไม่นับเป็นรายจ่าย",
+        ),
         _ => return None,
     })
 }

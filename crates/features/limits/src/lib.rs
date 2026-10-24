@@ -20,8 +20,8 @@ use kernel::feature::Feature;
 use kernel::web::{NavGroup, NavItem, Web};
 use utoipa::OpenApi;
 
-pub use ports::Deps;
 pub use ports::CategoriesLookup;
+pub use ports::Deps;
 /// Use cases фичи. Другие фичи получают к ним доступ только через свои порты и адаптеры в app/wiring.
 pub use service::LimitService as Service;
 
@@ -45,7 +45,15 @@ pub fn feature(api: Arc<Service>) -> Feature {
         web: Some(Web {
             pages: adapters::web::router(api),
             public: None,
-            nav: Some(NavItem { feature: NAME, href: MOUNT, label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)), icon: "gauge", group: NavGroup::Main, order: 40, mobile: false }),
+            nav: Some(NavItem {
+                feature: NAME,
+                href: MOUNT,
+                label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)),
+                icon: "gauge",
+                group: NavGroup::Main,
+                order: 40,
+                mobile: false,
+            }),
             root: None,
             account: None,
         }),

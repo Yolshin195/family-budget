@@ -131,7 +131,8 @@ fn opt_money(lang: Lang, v: Option<Decimal>) -> String {
 
 fn row_view(lang: Lang, cur: &dyn Fn(&str) -> String, r: Row) -> RowView {
     let money = |v: Decimal| money_in(lang, v);
-    let no_rate = r.no_rate.iter().map(|(c, v)| format!("{}\u{a0}{}", money(*v), cur(c))).collect::<Vec<_>>().join(", ");
+    let no_rate =
+        r.no_rate.iter().map(|(c, v)| format!("{}\u{a0}{}", money(*v), cur(c))).collect::<Vec<_>>().join(", ");
     let inherited = match (r.remaining, r.available) {
         (None, Some(_)) => true,
         (Some(rem), Some(av)) => av < rem,
@@ -161,7 +162,9 @@ fn row_view(lang: Lang, cur: &dyn Fn(&str) -> String, r: Row) -> RowView {
 
 fn period_title(p: &Period, page: &PageCtx) -> String {
     match p.view {
-        View::Week => format!("{:02}.{:02} — {:02}.{:02}.{}", p.from.day(), p.from.month(), p.to.day(), p.to.month(), p.to.year()),
+        View::Week => {
+            format!("{:02}.{:02} — {:02}.{:02}.{}", p.from.day(), p.from.month(), p.to.day(), p.to.month(), p.to.year())
+        }
         View::Month => format!("{} {}", month_name(page.lang, p.from.month()), p.from.year()),
         View::Year => p.from.year().to_string(),
     }
@@ -181,7 +184,8 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
     let forecast = q.mode == "forecast";
     let mode = if forecast { "forecast" } else { "fact" };
     let sort = SortKey::parse(&q.sort).map(|k| (k, Dir::parse(&q.dir).unwrap_or(k.default_dir())));
-    let sort_q = |s: Option<(SortKey, Dir)>| s.map(|(k, d)| format!("&sort={}&dir={}", k.code(), d.code())).unwrap_or_default();
+    let sort_q =
+        |s: Option<(SortKey, Dir)>| s.map(|(k, d)| format!("&sort={}&dir={}", k.code(), d.code())).unwrap_or_default();
     let base_q = format!("?view={}&date={}&member={}&mode={mode}", view.code(), period.from, url_encode(&q.member));
     let exp_total = r.expense_fact + r.expense_planned;
     let inc_total = r.income_fact + r.income_planned;
@@ -190,7 +194,13 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
         .upcoming
         .iter()
         .map(|u| UpcomingView {
-            href: format!("/planning/occurrence/{}/{}?back=/planning?month={}-{:02}", u.plan_id, u.date, u.date.year(), u.date.month()),
+            href: format!(
+                "/planning/occurrence/{}/{}?back=/planning?month={}-{:02}",
+                u.plan_id,
+                u.date,
+                u.date.year(),
+                u.date.month()
+            ),
             date: format!("{:02}.{:02}", u.date.day(), u.date.month()),
             title: u.title.clone(),
             amount: money(u.amount),
@@ -207,7 +217,11 @@ async fn page(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Qu
             let active = sort.filter(|(s, _)| *s == k).map(|(_, d)| d);
             SortHead {
                 key: k.code(),
-                label: if k == SortKey::Percent { "%".into() } else { page.t(if k == SortKey::Category { "category" } else { k.code() }) },
+                label: if k == SortKey::Percent {
+                    "%".into()
+                } else {
+                    page.t(if k == SortKey::Category { "category" } else { k.code() })
+                },
                 sr: if k == SortKey::Percent { page.t("percent") } else { String::new() },
                 href: format!("{base_q}{}", sort_q(next_sort(sort, k))),
                 aria_sort: match active {

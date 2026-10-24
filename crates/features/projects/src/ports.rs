@@ -9,14 +9,22 @@ use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use uuid::Uuid;
 
-use crate::domain::{AccessToken, ApiToken, AuditEvent, Invite, Member, Project, ProjectKind, SessionRecord, User, VerifiedLogin};
+use crate::domain::{
+    AccessToken, ApiToken, AuditEvent, Invite, Member, Project, ProjectKind, SessionRecord, User, VerifiedLogin,
+};
 
 /// Пользователи, проекты, участники.
 #[async_trait]
 pub trait ProjectRepository: Send + Sync {
     async fn insert_user(&self, user: &User) -> AppResult<()>;
     /// Email, имя и аватар — из ID-токена при каждом входе.
-    async fn update_user_identity(&self, user_id: Uuid, email: &str, name: &str, avatar_url: Option<&str>) -> AppResult<()>;
+    async fn update_user_identity(
+        &self,
+        user_id: Uuid,
+        email: &str,
+        name: &str,
+        avatar_url: Option<&str>,
+    ) -> AppResult<()>;
     async fn update_user_profile(&self, user_id: Uuid, name: &str, lang: Lang, theme: Theme) -> AppResult<()>;
     async fn update_user_lang(&self, user_id: Uuid, lang: Lang) -> AppResult<()>;
     async fn user_by_sub(&self, sub: &str) -> AppResult<Option<User>>;

@@ -88,7 +88,9 @@ pub fn views(all: &[Place]) -> Vec<PlaceDto> {
 fn view(all: &[Place], x: &Place, depth: usize) -> PlaceDto {
     let up = ancestors(all, x);
     // Ближайший родитель с заданным значением.
-    let inherit = |own: &Option<String>, get: fn(&Place) -> &Option<String>| own.clone().or_else(|| up.iter().rev().find_map(|p| get(p).clone()));
+    let inherit = |own: &Option<String>, get: fn(&Place) -> &Option<String>| {
+        own.clone().or_else(|| up.iter().rev().find_map(|p| get(p).clone()))
+    };
     // Путь от корня; название, повторяющее родителя («7-Eleven» внутри «7-Eleven»), не дублируется.
     let mut path: Vec<&str> = Vec::new();
     for name in up.iter().map(|p| p.name.as_str()).chain([x.name.as_str()]) {
@@ -101,7 +103,9 @@ fn view(all: &[Place], x: &Place, depth: usize) -> PlaceDto {
         Some(l) => format!("{path} · {l}"),
         None => path,
     };
-    let names = std::iter::once(x).chain(up.iter().rev().copied()).flat_map(|p| std::iter::once(p.name.as_str()).chain(p.aliases.iter().map(String::as_str)));
+    let names = std::iter::once(x)
+        .chain(up.iter().rev().copied())
+        .flat_map(|p| std::iter::once(p.name.as_str()).chain(p.aliases.iter().map(String::as_str)));
     let search = kernel::search::join(names.chain(x.location.as_deref()).chain([x.code.as_str()]));
     PlaceDto {
         id: x.id,
@@ -125,7 +129,10 @@ fn view(all: &[Place], x: &Place, depth: usize) -> PlaceDto {
 impl PlaceFields {
     pub fn into_domain(self) -> Result<PlaceData, Problem> {
         let kind = PlaceKind::parse(&self.place_kind).ok_or_else(|| {
-            Problem::validation("place_kind", tr(Some(crate::i18n::dict), "err.kind", &[("values", &PlaceKind::VALUES.join(", "))]))
+            Problem::validation(
+                "place_kind",
+                tr(Some(crate::i18n::dict), "err.kind", &[("values", &PlaceKind::VALUES.join(", "))]),
+            )
         })?;
         Ok(PlaceData {
             name: self.name,

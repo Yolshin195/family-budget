@@ -12,10 +12,18 @@ pub fn dict(key: &str) -> Option<Tr> {
             "Shops, cafés and markets where you pay. A place fills in the category and account: pick it in the quick entry search. Put a specific shop inside its chain, and it takes the chain's category and account.",
             "ร้านค้า คาเฟ่ และตลาดที่คุณจ่ายเงิน สถานที่จะใส่หมวดหมู่และบัญชีให้ เลือกได้ในช่องค้นหาของการบันทึกด่วน ใส่สาขาไว้ในเครือร้านได้ แล้วสาขาจะใช้หมวดหมู่และบัญชีของเครือ",
         ),
-        "code_hint" => ("Латиница, цифры и _: SEVEN_ELEVEN", "Latin letters, digits and _: SEVEN_ELEVEN", "อักษรละติน ตัวเลข และ _: SEVEN_ELEVEN"),
+        "code_hint" => (
+            "Латиница, цифры и _: SEVEN_ELEVEN",
+            "Latin letters, digits and _: SEVEN_ELEVEN",
+            "อักษรละติน ตัวเลข และ _: SEVEN_ELEVEN",
+        ),
         "name_hint" => ("Как на вывеске; не переводится", "As on the sign; not translated", "ตามป้ายร้าน ไม่ต้องแปล"),
         "aliases" => ("Варианты написания", "Other spellings", "ชื่อเรียกอื่น"),
-        "aliases_hint" => ("Через запятую — для поиска: 7-11, เซเว่น", "Comma-separated, for search: 7-11, เซเว่น", "คั่นด้วยจุลภาค ใช้สำหรับค้นหา: 7-11, เซเว่น"),
+        "aliases_hint" => (
+            "Через запятую — для поиска: 7-11, เซเว่น",
+            "Comma-separated, for search: 7-11, เซเว่น",
+            "คั่นด้วยจุลภาค ใช้สำหรับค้นหา: 7-11, เซเว่น",
+        ),
         "parent" => ("Входит в", "Part of", "อยู่ใน"),
         "parent_hint" => (
             "Сеть или торговый центр: магазин берёт у неё категорию и счёт, если свои не выбраны",
@@ -27,7 +35,9 @@ pub fn dict(key: &str) -> Option<Tr> {
         "inherit" => ("— как у «{name}» —", "— same as “{name}” —", "— เหมือน “{name}” —"),
         "inherited" => ("от сети", "from the chain", "จากเครือ"),
         "location" => ("Филиал или адрес", "Branch or address", "สาขาหรือที่อยู่"),
-        "location_hint" => ("Чтобы различать филиалы: Сукхумвит 24", "To tell branches apart: Sukhumvit 24", "เพื่อแยกสาขา: สุขุมวิท 24"),
+        "location_hint" => {
+            ("Чтобы различать филиалы: Сукхумвит 24", "To tell branches apart: Sukhumvit 24", "เพื่อแยกสาขา: สุขุมวิท 24")
+        }
         "place_kind" => ("Тип", "Type", "ประเภท"),
         "kind.SHOP" => ("Магазин", "Shop", "ร้านค้า"),
         "kind.CAFE" => ("Кафе", "Café", "คาเฟ่"),
@@ -55,14 +65,18 @@ pub fn dict(key: &str) -> Option<Tr> {
         "err.not_found" => ("место «{code}» не найдено", "place “{code}” not found", "ไม่พบสถานที่ “{code}”"),
         "err.too_long" => ("не длиннее {max} знаков", "{max} characters at most", "ไม่เกิน {max} ตัวอักษร"),
         "err.too_many_aliases" => ("не больше {max} вариантов", "{max} spellings at most", "ไม่เกิน {max} ชื่อ"),
-        "err.parent_self" => ("место не может входить само в себя", "a place cannot be part of itself", "สถานที่อยู่ในตัวเองไม่ได้"),
+        "err.parent_self" => {
+            ("место не может входить само в себя", "a place cannot be part of itself", "สถานที่อยู่ในตัวเองไม่ได้")
+        }
         "err.parent_cycle" => (
             "нельзя перенести место внутрь его собственного магазина",
             "a place cannot be moved inside its own branch",
             "ย้ายสถานที่เข้าไปในสาขาของตัวเองไม่ได้",
         ),
         "err.parent_archived" => ("«{name}» в архиве", "“{name}” is archived", "“{name}” ถูกเก็บถาวรแล้ว"),
-        "err.depth" => ("не больше {max} уровней вложенности", "{max} levels of nesting at most", "ซ้อนได้ไม่เกิน {max} ระดับ"),
+        "err.depth" => {
+            ("не больше {max} уровней вложенности", "{max} levels of nesting at most", "ซ้อนได้ไม่เกิน {max} ระดับ")
+        }
         "err.archive_children" => (
             "В «{name}» есть активные магазины — сначала архивируйте или перенесите их",
             "“{name}” has active branches — archive or move them first",

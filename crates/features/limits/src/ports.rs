@@ -44,4 +44,3 @@ pub trait CategoriesLookup: Send + Sync {
         Ok(Vec::new())
     }
 }
-

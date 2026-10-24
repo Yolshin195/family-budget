@@ -42,7 +42,11 @@ pub struct ApiDoc;
     ),
     security(("bearer_auth" = []))
 )]
-pub async fn create(State(svc): Svc, Extension(scope): Extension<Scope>, Json(body): Json<CreatePersonDto>) -> AppResult<(StatusCode, Json<PersonDto>)> {
+pub async fn create(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Json(body): Json<CreatePersonDto>,
+) -> AppResult<(StatusCode, Json<PersonDto>)> {
     Ok((StatusCode::CREATED, Json(svc.create(scope.project_id, body).await?)))
 }
 
@@ -67,7 +71,11 @@ pub async fn list(
     responses((status = 200, description = "Человек", body = PersonDto), (status = 404, description = "Не найдено")),
     security(("bearer_auth" = []))
 )]
-pub async fn get_one(State(svc): Svc, Extension(scope): Extension<Scope>, Path(code): Path<String>) -> AppResult<Json<PersonDto>> {
+pub async fn get_one(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Path(code): Path<String>,
+) -> AppResult<Json<PersonDto>> {
     Ok(Json(svc.get(scope.project_id, &code).await?))
 }
 
@@ -97,7 +105,11 @@ pub async fn update(
     responses((status = 204, description = "В архиве"), (status = 404, description = "Не найдено"), (status = 422, description = "Запись участника проекта архивируется сама")),
     security(("bearer_auth" = []))
 )]
-pub async fn archive(State(svc): Svc, Extension(scope): Extension<Scope>, Path(code): Path<String>) -> AppResult<StatusCode> {
+pub async fn archive(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Path(code): Path<String>,
+) -> AppResult<StatusCode> {
     svc.archive(scope.project_id, &code).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -108,7 +120,11 @@ pub async fn archive(State(svc): Svc, Extension(scope): Extension<Scope>, Path(c
     responses((status = 204, description = "Возвращено из архива"), (status = 404, description = "Не найдено"), (status = 422, description = "Запись участника проекта архивируется сама")),
     security(("bearer_auth" = []))
 )]
-pub async fn restore(State(svc): Svc, Extension(scope): Extension<Scope>, Path(code): Path<String>) -> AppResult<StatusCode> {
+pub async fn restore(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Path(code): Path<String>,
+) -> AppResult<StatusCode> {
     svc.restore(scope.project_id, &code).await?;
     Ok(StatusCode::NO_CONTENT)
 }

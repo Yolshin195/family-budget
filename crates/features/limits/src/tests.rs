@@ -7,9 +7,8 @@ use kernel::pagination::Pagination;
 use uuid::Uuid;
 
 use crate::adapters::memory::InMemoryLimitRepository;
-use crate::dto::{PeriodQuery, LimitInput};
+use crate::dto::{LimitInput, PeriodQuery};
 use crate::service::LimitService;
-
 
 /// Фейковый справочник для тестов: знает любой код, кроме UNKNOWN.
 struct FakeLookup;
@@ -22,9 +21,7 @@ impl super::ports::CategoriesLookup for FakeLookup {
 }
 
 fn deps() -> super::ports::Deps {
-    super::ports::Deps {
-        categories: Arc::new(FakeLookup),
-    }
+    super::ports::Deps { categories: Arc::new(FakeLookup) }
 }
 
 fn service() -> LimitService {
@@ -107,7 +104,8 @@ async fn update_then_delete() {
 #[test]
 fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
 
@@ -124,7 +122,10 @@ async fn foreign_project_undo_and_purge() {
 
     let token = svc.delete_with_undo(mine, created.id).await.unwrap();
     assert!(svc.get(mine, created.id).await.is_err());
-    assert!(matches!(svc.undo_delete(other, token).await.unwrap_err(), AppError::NotFound(_)), "чужой проект не может отменить");
+    assert!(
+        matches!(svc.undo_delete(other, token).await.unwrap_err(), AppError::NotFound(_)),
+        "чужой проект не может отменить"
+    );
     svc.undo_delete(mine, token).await.unwrap();
     assert_eq!(svc.get(mine, created.id).await.unwrap().id, created.id, "тот же id");
     assert!(svc.undo_delete(mine, token).await.is_err(), "второй раз не отменить");
@@ -141,11 +142,19 @@ async fn removed_limit_has_no_amount() {
     let p = Uuid::new_v4();
     let removed = svc.create(p, LimitInput { amount: None, removed: true, ..input(2) }).await.unwrap();
     assert!(removed.removed && removed.amount.is_none());
-    assert_eq!(removed.effective_from, chrono::NaiveDate::from_ymd_opt(2025, 12, 29).unwrap(), "неделя 02.01.2026 — с понедельника 29.12");
+    assert_eq!(
+        removed.effective_from,
+        chrono::NaiveDate::from_ymd_opt(2025, 12, 29).unwrap(),
+        "неделя 02.01.2026 — с понедельника 29.12"
+    );
     let both = svc.create(p, LimitInput { removed: true, ..input(3) }).await.unwrap_err();
     assert!(matches!(both, AppError::Validation(m) if m.starts_with("amount:")));
     let none = svc.create(p, LimitInput { amount: None, ..input(4) }).await.unwrap_err();
     assert!(matches!(none, AppError::Validation(m) if m.starts_with("amount:")));
     let zero = svc.create(p, LimitInput { amount: Some(rust_decimal::Decimal::ZERO), ..input(5) }).await.unwrap();
-    assert_eq!((zero.amount, zero.removed), (Some(rust_decimal::Decimal::ZERO), false), "0 — нулевой лимит, а не снятие");
+    assert_eq!(
+        (zero.amount, zero.removed),
+        (Some(rust_decimal::Decimal::ZERO), false),
+        "0 — нулевой лимит, а не снятие"
+    );
 }

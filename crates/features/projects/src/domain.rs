@@ -64,14 +64,20 @@ pub struct Member {
 /// Email: непустой, с одной `@` и точкой в домене; хранится в нижнем регистре.
 pub fn normalize_email(value: &str) -> Result<String, String> {
     let e = value.trim().to_lowercase();
-    let ok = e.split_once('@').is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.') && !domain.contains('@'));
+    let ok = e
+        .split_once('@')
+        .is_some_and(|(local, domain)| !local.is_empty() && domain.contains('.') && !domain.contains('@'));
     if ok { Ok(e) } else { Err(format!("email: '{value}' — неверный адрес")) }
 }
 
 /// Код базовой валюты: три латинские буквы (ISO 4217).
 pub fn normalize_currency(value: &str) -> Result<String, String> {
     let c = value.trim().to_uppercase();
-    if c.len() == 3 && c.chars().all(|ch| ch.is_ascii_alphabetic()) { Ok(c) } else { Err(format!("base_currency: '{value}' — нужен код ISO 4217, например THB")) }
+    if c.len() == 3 && c.chars().all(|ch| ch.is_ascii_alphabetic()) {
+        Ok(c)
+    } else {
+        Err(format!("base_currency: '{value}' — нужен код ISO 4217, например THB"))
+    }
 }
 
 /// Имя пользователя: непустое, до 100 символов.
@@ -174,9 +180,22 @@ impl Invite {
     /// Новое приглашение. Владельцем по ссылке не стать — только редактор или наблюдатель.
     pub fn new(project_id: Uuid, role: Role, created_by: Uuid, now: DateTime<Utc>) -> Result<Self, String> {
         if role == Role::Owner {
-            return Err("role: по приглашению можно стать редактором или наблюдателем; владельца назначают в «Участниках»".into());
+            return Err(
+                "role: по приглашению можно стать редактором или наблюдателем; владельца назначают в «Участниках»"
+                    .into(),
+            );
         }
-        Ok(Self { id: Uuid::new_v4(), project_id, role, created_by, created_at: now, expires_at: now + INVITE_TTL, used_by: None, used_at: None, revoked_at: None })
+        Ok(Self {
+            id: Uuid::new_v4(),
+            project_id,
+            role,
+            created_by,
+            created_at: now,
+            expires_at: now + INVITE_TTL,
+            used_by: None,
+            used_at: None,
+            revoked_at: None,
+        })
     }
 
     pub fn state(&self, now: DateTime<Utc>) -> InviteState {
@@ -293,8 +312,25 @@ pub struct SessionRecord {
 }
 
 impl SessionRecord {
-    pub fn new(id_hash: String, user_id: Uuid, mfa: bool, ip: Option<String>, user_agent: Option<String>, now: DateTime<Utc>) -> Self {
-        Self { id_hash, user_id, created_at: now, last_seen_at: now, expires_at: now + SESSION_MAX, mfa, ip, user_agent, revoked_at: None }
+    pub fn new(
+        id_hash: String,
+        user_id: Uuid,
+        mfa: bool,
+        ip: Option<String>,
+        user_agent: Option<String>,
+        now: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            id_hash,
+            user_id,
+            created_at: now,
+            last_seen_at: now,
+            expires_at: now + SESSION_MAX,
+            mfa,
+            ip,
+            user_agent,
+            revoked_at: None,
+        }
     }
 
     /// Абсолютный срок жизни короче обычного (гость демо).
@@ -346,7 +382,9 @@ pub fn normalize_scopes(scopes: &[String]) -> Result<Vec<String>, String> {
     for s in scopes.iter().map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()) {
         let ok = match s.split_once(':') {
             None => s == "read" || s == "write",
-            Some((f, a)) => !f.is_empty() && f.chars().all(|c| c.is_ascii_lowercase() || c == '_') && (a == "read" || a == "write"),
+            Some((f, a)) => {
+                !f.is_empty() && f.chars().all(|c| c.is_ascii_lowercase() || c == '_') && (a == "read" || a == "write")
+            }
         };
         if !ok {
             return Err(format!("scopes: '{s}' — ожидается read, write или <фича>:read|write"));
@@ -442,7 +480,13 @@ mod tests {
 
     #[test]
     fn second_factor_from_amr() {
-        let l = |amr: &[&str]| VerifiedLogin { sub: "s".into(), email: "a@b.c".into(), name: None, picture: None, amr: amr.iter().map(|s| s.to_string()).collect() };
+        let l = |amr: &[&str]| VerifiedLogin {
+            sub: "s".into(),
+            email: "a@b.c".into(),
+            name: None,
+            picture: None,
+            amr: amr.iter().map(|s| s.to_string()).collect(),
+        };
         assert!(!l(&["pwd"]).mfa());
         assert!(l(&["pwd", "otp"]).mfa());
         assert!(l(&["hwk"]).mfa(), "passkey");
@@ -466,14 +510,23 @@ mod tests {
 
     #[test]
     fn token_scopes_and_redirects() {
-        assert_eq!(normalize_scopes(&["Transactions:Write".into(), "read".into(), "read".into()]).unwrap(), vec!["transactions:write", "read"]);
+        assert_eq!(
+            normalize_scopes(&["Transactions:Write".into(), "read".into(), "read".into()]).unwrap(),
+            vec!["transactions:write", "read"]
+        );
         assert!(normalize_scopes(&["admin".into()]).is_err());
         assert!(normalize_scopes(&[]).is_err());
         assert_eq!(safe_next("/transactions?month=2026-10"), "/transactions?month=2026-10");
         assert_eq!(safe_next("//evil.example"), "/budget");
         assert_eq!(safe_next("https://evil.example"), "/budget");
         assert_eq!(safe_next("/auth/callback"), "/budget");
-        let p = PendingLogin { state: "s".into(), nonce: "n".into(), pkce_verifier: "v".into(), next: "/".into(), started: Utc::now().timestamp() };
+        let p = PendingLogin {
+            state: "s".into(),
+            nonce: "n".into(),
+            pkce_verifier: "v".into(),
+            next: "/".into(),
+            started: Utc::now().timestamp(),
+        };
         assert!(!p.expired(Utc::now()));
         assert!(p.expired(Utc::now() + Duration::minutes(11)));
     }

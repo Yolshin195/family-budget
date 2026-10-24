@@ -16,11 +16,11 @@ use kernel::testing::TestDb;
 
 use crate::adapters::memory::InMemoryTransactionRepository;
 use crate::adapters::postgres::PostgresTransactionRepository;
-use crate::dto::{ExternalRefInput, ItemInput, LineDto, ListQuery, TransactionInput, TranslationInput};
 use crate::domain::{AccountCurrency, Description, Draft, ItemDraft, ItemsDraft, Transaction, TransactionData};
+use crate::dto::{ExternalRefInput, ItemInput, LineDto, ListQuery, TransactionInput, TranslationInput};
 use crate::ports::{
-    AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, Deps, PeopleLookup, PersonInfo, PlaceInfo, PlacesLookup, PlanOccurrence,
-    PlansLookup,
+    AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, Deps,
+    PeopleLookup, PersonInfo, PlaceInfo, PlacesLookup, PlanOccurrence, PlansLookup,
 };
 use crate::service::TransactionService;
 
@@ -33,7 +33,11 @@ impl AccountsLookup for FakeAccounts {
         Ok(matches!(code, "CARD" | "WISE" | "CASH" | "TINKOFF"))
     }
     async fn currencies(&self, _p: Uuid) -> AppResult<Vec<AccountCurrency>> {
-        let a = |code: &str, currency: &str| AccountCurrency { code: code.into(), currency: currency.into(), minor_units: 2 };
+        let a = |code: &str, currency: &str| AccountCurrency {
+            code: code.into(),
+            currency: currency.into(),
+            minor_units: 2,
+        };
         Ok(vec![a("CARD", "THB"), a("CASH", "THB"), a("WISE", "USD"), a("TINKOFF", "RUB"), a("OLD", "THB")])
     }
     async fn choices(&self, _p: Uuid, _l: Lang) -> AppResult<Vec<Choice>> {
@@ -44,9 +48,16 @@ impl AccountsLookup for FakeAccounts {
     }
     async fn infos(&self, _p: Uuid, _l: Lang) -> AppResult<Vec<AccountInfo>> {
         Ok(vec![
-            AccountInfo { code: "CARD".into(), title: "Карта".into(), currency: "THB".into(), symbol: "฿".into() },
+            AccountInfo {
+                code: "CARD".into(), title: "Карта".into(), currency: "THB".into(), symbol: "฿".into()
+            },
             AccountInfo { code: "WISE".into(), title: "Wise".into(), currency: "USD".into(), symbol: "$".into() },
-            AccountInfo { code: "TINKOFF".into(), title: "Тинькофф".into(), currency: "RUB".into(), symbol: "₽".into() },
+            AccountInfo {
+                code: "TINKOFF".into(),
+                title: "Тинькофф".into(),
+                currency: "RUB".into(),
+                symbol: "₽".into(),
+            },
         ])
     }
 }
@@ -94,7 +105,12 @@ struct FakeBudget;
 impl BudgetView for FakeBudget {
     async fn limits(&self, _p: Uuid, _base: &str, _date: NaiveDate, _l: Lang) -> AppResult<Vec<CategoryLimit>> {
         Ok(vec![
-            CategoryLimit { code: "FOOD".into(), limit: Some(d("10000")), forecast: d("9500"), available: Some(d("500")) },
+            CategoryLimit {
+                code: "FOOD".into(),
+                limit: Some(d("10000")),
+                forecast: d("9500"),
+                available: Some(d("500")),
+            },
             CategoryLimit { code: "CAFE".into(), limit: None, forecast: d("1000"), available: Some(d("500")) },
         ])
     }
@@ -134,7 +150,11 @@ impl PlacesLookup for FakePlaces {
             default_account_code: acc.map(Into::into),
             archived,
         };
-        Ok(vec![p("SEVEN_ELEVEN", Some("FOOD"), Some("CASH"), false), p("OLD", None, None, true), p("PAYDAY", Some("SALARY"), Some("NOPE"), false)])
+        Ok(vec![
+            p("SEVEN_ELEVEN", Some("FOOD"), Some("CASH"), false),
+            p("OLD", None, None, true),
+            p("PAYDAY", Some("SALARY"), Some("NOPE"), false),
+        ])
     }
 }
 
@@ -144,7 +164,13 @@ struct FakePeople;
 #[async_trait::async_trait]
 impl PeopleLookup for FakePeople {
     async fn all(&self, _p: Uuid, _lang: Lang) -> AppResult<Vec<PersonInfo>> {
-        let x = |code: &str, user: Option<Uuid>, archived: bool| PersonInfo { code: code.into(), title: code.to_lowercase(), search: code.into(), user_id: user, archived };
+        let x = |code: &str, user: Option<Uuid>, archived: bool| PersonInfo {
+            code: code.into(),
+            title: code.to_lowercase(),
+            search: code.into(),
+            user_id: user,
+            archived,
+        };
         Ok(vec![x("PINPAN", None, false), x("ANNA", Some(Uuid::nil()), false), x("OLD", None, true)])
     }
 }
@@ -225,10 +251,19 @@ fn input(kind: &str, account: &str) -> TransactionInput {
 }
 
 fn receipt(lines: &[(&str, &str)]) -> TransactionInput {
-    TransactionInput { lines: lines.iter().map(|(c, a)| LineDto { category_code: c.to_string(), amount: d(a), note: None }).collect(), ..input("EXPENSE", "card") }
+    TransactionInput {
+        lines: lines.iter().map(|(c, a)| LineDto { category_code: c.to_string(), amount: d(a), note: None }).collect(),
+        ..input("EXPENSE", "card")
+    }
 }
 
-fn transfer(from: &str, to: &str, amount: &str, to_amount: Option<&str>, fee: Option<(&str, &str)>) -> TransactionInput {
+fn transfer(
+    from: &str,
+    to: &str,
+    amount: &str,
+    to_amount: Option<&str>,
+    fee: Option<(&str, &str)>,
+) -> TransactionInput {
     TransactionInput {
         to_account_code: Some(to.into()),
         amount: Some(d(amount)),
@@ -510,13 +545,35 @@ impl TransactionInput {
 #[test]
 fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
     // Ключи, которые код собирает не через `.t("…")`.
     let dynamic = [
-        "balance_start", "balance_end", "inflow", "outflow", "income_total", "expense_total", "net", "transfer", "opening", "refund", "rate",
-        "fee_short", "kinds.EXPENSE", "kinds.INCOME", "kinds.TRANSFER", "kinds.OPENING", "sys.EXCHANGE", "sys.OPENING", "reconcile_done",
-        "reconcile_same", "reconcile_desc", "nav_accounts", "tx.sms_created", "tx.sms_matched",
+        "balance_start",
+        "balance_end",
+        "inflow",
+        "outflow",
+        "income_total",
+        "expense_total",
+        "net",
+        "transfer",
+        "opening",
+        "refund",
+        "rate",
+        "fee_short",
+        "kinds.EXPENSE",
+        "kinds.INCOME",
+        "kinds.TRANSFER",
+        "kinds.OPENING",
+        "sys.EXCHANGE",
+        "sys.OPENING",
+        "reconcile_done",
+        "reconcile_same",
+        "reconcile_desc",
+        "nav_accounts",
+        "tx.sms_created",
+        "tx.sms_matched",
     ];
     let absent: Vec<&str> = dynamic.into_iter().filter(|k| crate::i18n::dict(k).is_none()).collect();
     assert!(absent.is_empty(), "нет перевода для ключей: {absent:?}");
@@ -560,7 +617,13 @@ async fn second_opening_is_rejected_by_db() {
     let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
     // Оба запроса прошли проверку «остатка ещё нет» до того, как другой записал свой.
     let opening = || {
-        let data = TransactionData { occurred_on: day(15), description: Description::default(), plan: None, place_code: None, body: Draft::Opening { account: "card".into(), amount: d("1961.31") } };
+        let data = TransactionData {
+            occurred_on: day(15),
+            description: Description::default(),
+            plan: None,
+            place_code: None,
+            body: Draft::Opening { account: "card".into(), amount: d("1961.31") },
+        };
         Transaction::create(p, u, data, &accounts).unwrap()
     };
     repo.insert(&opening()).await.unwrap();
@@ -568,9 +631,16 @@ async fn second_opening_is_rejected_by_db() {
     // Два одновременных сохранения из формы счёта: оба успешны, остаток один — последний.
     let svc = TransactionService::new(repo, deps());
     let q = Uuid::new_v4();
-    let (a, b) = tokio::join!(svc.set_opening(q, u, "card", d("500"), day(15)), svc.set_opening(q, u, "card", d("500"), day(15)));
+    let (a, b) = tokio::join!(
+        svc.set_opening(q, u, "card", d("500"), day(15)),
+        svc.set_opening(q, u, "card", d("500"), day(15))
+    );
     let count = |project: Uuid| {
-        sqlx::query_as::<_, (i64,)>("SELECT count(*) FROM fb_transactions WHERE tx_kind = 'OPENING' AND project_id = $1").bind(project).fetch_one(&pool)
+        sqlx::query_as::<_, (i64,)>(
+            "SELECT count(*) FROM fb_transactions WHERE tx_kind = 'OPENING' AND project_id = $1",
+        )
+        .bind(project)
+        .fetch_one(&pool)
     };
     let (n, m) = (count(p).await.unwrap().0, count(q).await.unwrap().0);
     let balance = svc.balance(q, "CARD", day(31)).await;
@@ -709,7 +779,8 @@ async fn receipt_items_migration_on_old_data() {
     before.set_locking(false);
     before.run(&db.pool).await.unwrap();
     let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
-    let (receipt_id, refund_id, salary_id, transfer_id, opening_id) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let (receipt_id, refund_id, salary_id, transfer_id, opening_id) =
+        (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
     let header = |id: Uuid, kind: &str, n: i64| {
         sqlx::query("INSERT INTO fb_transactions (id, project_id, occurred_on, tx_kind, description_lang, created_by, opening_account) VALUES ($1, $2, $3, $4, 'RU', $5, $6)")
             .bind(id)
@@ -730,7 +801,13 @@ async fn receipt_items_migration_on_old_data() {
             .bind(note.map(str::to_string))
     };
     let mut tx = db.pool.begin().await.unwrap();
-    for (id, kind, n) in [(opening_id, "OPENING", 1), (receipt_id, "EXPENSE", 2), (refund_id, "EXPENSE", 3), (salary_id, "INCOME", 4), (transfer_id, "TRANSFER", 5)] {
+    for (id, kind, n) in [
+        (opening_id, "OPENING", 1),
+        (receipt_id, "EXPENSE", 2),
+        (refund_id, "EXPENSE", 3),
+        (salary_id, "INCOME", 4),
+        (transfer_id, "TRANSFER", 5),
+    ] {
         header(id, kind, n).execute(&mut *tx).await.unwrap();
     }
     for q in [
@@ -769,15 +846,39 @@ async fn receipt_items_migration_on_old_data() {
     let load = |id: Uuid| repo.find(p, id);
     let receipt = load(receipt_id).await.unwrap().unwrap();
     assert_eq!(
-        receipt.items.iter().map(|x| (x.category_code.as_str(), x.name.as_deref(), x.amount, x.quantity, x.price)).collect::<Vec<_>>(),
-        vec![("FOOD", Some("овощи, мясо"), d("900"), d("1"), None), ("HOME", None, d("250"), d("1"), None), ("FOOD", Some("кофе"), d("100"), d("1"), None)]
+        receipt
+            .items
+            .iter()
+            .map(|x| (x.category_code.as_str(), x.name.as_deref(), x.amount, x.quantity, x.price))
+            .collect::<Vec<_>>(),
+        vec![
+            ("FOOD", Some("овощи, мясо"), d("900"), d("1"), None),
+            ("HOME", None, d("250"), d("1"), None),
+            ("FOOD", Some("кофе"), d("100"), d("1"), None)
+        ]
     );
-    for t in [&receipt, &load(refund_id).await.unwrap().unwrap(), &load(salary_id).await.unwrap().unwrap(), &load(transfer_id).await.unwrap().unwrap(), &load(opening_id).await.unwrap().unwrap()] {
+    for t in [
+        &receipt,
+        &load(refund_id).await.unwrap().unwrap(),
+        &load(salary_id).await.unwrap().unwrap(),
+        &load(transfer_id).await.unwrap().unwrap(),
+        &load(opening_id).await.unwrap().unwrap(),
+    ] {
         crate::domain::check_items(t.tx_kind, &t.items, &t.postings).unwrap_or_else(|e| panic!("{:?}: {e}", t.tx_kind));
     }
     let heads: Vec<(Uuid, Option<String>, Option<Decimal>, bool)> =
-        sqlx::query_as("SELECT id, account_code, total, refund FROM fb_transactions WHERE project_id = $1").bind(p).fetch_all(&db.pool).await.unwrap();
-    let head = |id: Uuid| heads.iter().find(|h| h.0 == id).map(|h| (h.1.clone().unwrap_or_default(), h.2.unwrap_or_default().normalize(), h.3)).unwrap();
+        sqlx::query_as("SELECT id, account_code, total, refund FROM fb_transactions WHERE project_id = $1")
+            .bind(p)
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+    let head = |id: Uuid| {
+        heads
+            .iter()
+            .find(|h| h.0 == id)
+            .map(|h| (h.1.clone().unwrap_or_default(), h.2.unwrap_or_default().normalize(), h.3))
+            .unwrap()
+    };
     assert_eq!(head(receipt_id), ("CARD".into(), d("1250"), false));
     assert_eq!(head(refund_id), ("CARD".into(), d("300"), true));
     assert_eq!(head(salary_id), ("CARD".into(), d("5000"), false));
@@ -786,13 +887,28 @@ async fn receipt_items_migration_on_old_data() {
     let refund = load(refund_id).await.unwrap().unwrap();
     assert!(refund.refund() && refund.items[0].amount == d("300"));
     // Число позиций = числу проводок на категории расходов и доходов (сверка из раздела 7).
-    let (n_items,): (i64,) = sqlx::query_as("SELECT count(*) FROM fb_transaction_items").fetch_one(&db.pool).await.unwrap();
+    let (n_items,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM fb_transaction_items").fetch_one(&db.pool).await.unwrap();
     assert_eq!(n_items, 5);
     // Шапка после записи приложением — та же, что после миграции.
     let svc = TransactionService::new(Arc::new(repo), deps());
-    let edited = svc.update(p, receipt_id, TransactionInput { items: vec![ItemInput { id: Some(receipt.items[1].id), amount: Some(d("260")), ..Default::default() }], ..input("EXPENSE", "card") }).await.unwrap();
+    let edited = svc
+        .update(
+            p,
+            receipt_id,
+            TransactionInput {
+                items: vec![ItemInput { id: Some(receipt.items[1].id), amount: Some(d("260")), ..Default::default() }],
+                ..input("EXPENSE", "card")
+            },
+        )
+        .await
+        .unwrap();
     assert_eq!((edited.total, edited.items[1].id), (d("1260"), receipt.items[1].id));
-    let (total,): (Decimal,) = sqlx::query_as("SELECT total FROM fb_transactions WHERE id = $1").bind(receipt_id).fetch_one(&db.pool).await.unwrap();
+    let (total,): (Decimal,) = sqlx::query_as("SELECT total FROM fb_transactions WHERE id = $1")
+        .bind(receipt_id)
+        .fetch_one(&db.pool)
+        .await
+        .unwrap();
     assert_eq!(total, d("1260"));
     db.close().await;
 }
@@ -831,7 +947,12 @@ on_each_repo! {
 }
 
 fn item(cat: &str, amount: &str, who: Option<&str>) -> ItemInput {
-    ItemInput { category_code: Some(cat.into()), amount: Some(d(amount)), for_person_code: who.map(Into::into), ..Default::default() }
+    ItemInput {
+        category_code: Some(cat.into()),
+        amount: Some(d(amount)),
+        for_person_code: who.map(Into::into),
+        ..Default::default()
+    }
 }
 
 on_each_repo! {
@@ -889,10 +1010,25 @@ on_each_repo! {
 /// Получатель в архиве остаётся у операции, у которой он уже был; новой операции его не дать.
 #[test]
 fn archived_recipient_is_kept() {
-    let people = vec![PersonInfo { code: "OLD".into(), title: "old".into(), search: "OLD".into(), user_id: None, archived: true }];
+    let people = vec![PersonInfo {
+        code: "OLD".into(),
+        title: "old".into(),
+        search: "OLD".into(),
+        user_id: None,
+        archived: true,
+    }];
     let accounts = vec![AccountCurrency { code: "CARD".into(), currency: "THB".into(), minor_units: 2 }];
-    let items = ItemsDraft { for_default: Some(Some("OLD".into())), ..ItemsDraft::replace(vec![ItemDraft::simple("FOOD", d("3"))]) };
-    let data = TransactionData { occurred_on: day(3), description: Description::default(), plan: None, place_code: None, body: Draft::Flow { income: false, account: "CARD".into(), items, refund: false } };
+    let items = ItemsDraft {
+        for_default: Some(Some("OLD".into())),
+        ..ItemsDraft::replace(vec![ItemDraft::simple("FOOD", d("3"))])
+    };
+    let data = TransactionData {
+        occurred_on: day(3),
+        description: Description::default(),
+        plan: None,
+        place_code: None,
+        body: Draft::Flow { income: false, account: "CARD".into(), items, refund: false },
+    };
     let t = Transaction::create(Uuid::new_v4(), Uuid::new_v4(), data, &accounts).unwrap();
     assert!(crate::service::check_people(&people, &t, None).is_err(), "новый получатель — только активный");
     assert!(crate::service::check_people(&people, &t, Some(&t)).is_ok(), "прежний остаётся");
@@ -938,8 +1074,15 @@ fn no_russian_literals_in_code() {
             // Строковые литералы строки (комментарий после кода отрезан: в литералах фичи нет «//»).
             let code_part = line.split(" //").next().unwrap_or_default();
             let literals: Vec<&str> = code_part.split('"').skip(1).step_by(2).collect();
-            let russian = literals.iter().find(|l| l.chars().any(|c| ('а'..='я').contains(&c.to_ascii_lowercase()) || ('А'..='Я').contains(&c) || c == 'ё'));
-            assert!(russian.is_none(), "{file}:{}: строка на русском в коде — перенесите в i18n.rs: {:?}", n + 1, russian);
+            let russian = literals.iter().find(|l| {
+                l.chars().any(|c| ('а'..='я').contains(&c.to_ascii_lowercase()) || ('А'..='Я').contains(&c) || c == 'ё')
+            });
+            assert!(
+                russian.is_none(),
+                "{file}:{}: строка на русском в коде — перенесите в i18n.rs: {:?}",
+                n + 1,
+                russian
+            );
         }
     }
 }
@@ -974,7 +1117,11 @@ on_each_repo! {
 
 /// SMS банка с id `guid`, пришло 03.10 в 10:51 по Бангкоку.
 fn sms(guid: &str) -> ExternalRefInput {
-    ExternalRefInput { provider: "imessage".into(), external_id: guid.into(), received_at: Some("2026-10-03T10:51:07+07:00".into()) }
+    ExternalRefInput {
+        provider: "imessage".into(),
+        external_id: guid.into(),
+        received_at: Some("2026-10-03T10:51:07+07:00".into()),
+    }
 }
 
 /// Расход из SMS: сумма на «Еду» — заглушка категории до уточнения.
@@ -1200,7 +1347,8 @@ async fn external_refs_over_http() {
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
-    let scope = kernel::auth::Scope { user_id: Uuid::new_v4(), project_id: Uuid::new_v4(), role: kernel::auth::Role::Editor };
+    let scope =
+        kernel::auth::Scope { user_id: Uuid::new_v4(), project_id: Uuid::new_v4(), role: kernel::auth::Role::Editor };
     let app = crate::adapters::http::router(Arc::new(service())).layer(axum::Extension(scope));
     let call = |method: &str, uri: String, body: Option<Value>| {
         let app = app.clone();
@@ -1229,8 +1377,14 @@ async fn external_refs_over_http() {
     let id = first["id"].as_str().unwrap().to_string();
 
     let (status, found) = call("GET", "/external-refs?provider=imessage&external_id=h1".into(), None).await;
-    assert_eq!((status, &found["transaction_id"], &found["transaction_exists"]), (StatusCode::OK, &first["id"], &json!(true)));
-    assert_eq!(call("GET", "/external-refs?provider=imessage&external_id=none".into(), None).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        (status, &found["transaction_id"], &found["transaction_exists"]),
+        (StatusCode::OK, &first["id"], &json!(true))
+    );
+    assert_eq!(
+        call("GET", "/external-refs?provider=imessage&external_id=none".into(), None).await.0,
+        StatusCode::NOT_FOUND
+    );
     let (status, e) = call("GET", "/external-refs?provider=imessage".into(), None).await;
     assert_eq!((status, &e["field"]), (StatusCode::UNPROCESSABLE_ENTITY, &json!("external_id")));
 
@@ -1248,14 +1402,31 @@ async fn external_refs_over_http() {
     let (status, e) = call("POST", format!("/{id}/external-refs"), Some(body)).await;
     assert_eq!((status, &e["error"]), (StatusCode::CONFLICT, &json!("EXTERNAL_REF_TAKEN")));
     assert!(e["message"].as_str().is_some_and(|m| !m.is_empty()));
-    assert_eq!(call("POST", format!("/{}/external-refs", Uuid::new_v4()), Some(json!({"provider": "imessage", "external_id": "h3"}))).await.0, StatusCode::NOT_FOUND);
-    let (status, e) = call("POST", format!("/{manual_id}/external-refs"), Some(json!({"provider": "Bad Name", "external_id": "h3"}))).await;
-    assert_eq!((status, &e["error"], &e["field"]), (StatusCode::UNPROCESSABLE_ENTITY, &json!("VALIDATION"), &json!("provider")));
+    assert_eq!(
+        call(
+            "POST",
+            format!("/{}/external-refs", Uuid::new_v4()),
+            Some(json!({"provider": "imessage", "external_id": "h3"}))
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, e) =
+        call("POST", format!("/{manual_id}/external-refs"), Some(json!({"provider": "Bad Name", "external_id": "h3"})))
+            .await;
+    assert_eq!(
+        (status, &e["error"], &e["field"]),
+        (StatusCode::UNPROCESSABLE_ENTITY, &json!("VALIDATION"), &json!("provider"))
+    );
 
     // Удалить → повтор с той же записью 409 с кодом, полем и текстом.
     assert_eq!(call("DELETE", format!("/{id}"), None).await.0, StatusCode::NO_CONTENT);
     let (status, e) = call("POST", "/".into(), Some(expense("h1", "250"))).await;
-    assert_eq!((status, &e["error"], &e["field"]), (StatusCode::CONFLICT, &json!("EXTERNAL_REF_DELETED"), &json!("external_ref")));
+    assert_eq!(
+        (status, &e["error"], &e["field"]),
+        (StatusCode::CONFLICT, &json!("EXTERNAL_REF_DELETED"), &json!("external_ref"))
+    );
     assert_eq!(e["message"], crate::i18n::dict("err.external_ref_deleted").unwrap().0);
     let (_, found) = call("GET", "/external-refs?provider=imessage&external_id=h1".into(), None).await;
     assert_eq!(found["transaction_exists"], json!(false));

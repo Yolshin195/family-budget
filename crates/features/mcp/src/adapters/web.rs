@@ -120,25 +120,47 @@ fn pick<'a>(svc: &'a McpService, key: &str) -> &'a Assistant {
 async fn render_page(svc: &McpService, page: PageCtx, assistant: &Assistant, error: Option<String>) -> PageResult {
     let s = svc.settings();
     let grants = svc.grants(page.session.user_id).await?;
-    let tabs = s.assistants.iter().map(|a| Tab { key: a.key, name: a.name, granted: grants.iter().any(|g| g.client_id == a.client_id) }).collect();
+    let tabs = s
+        .assistants
+        .iter()
+        .map(|a| Tab { key: a.key, name: a.name, granted: grants.iter().any(|g| g.client_id == a.client_id) })
+        .collect();
     let grant: Option<Grant> = grants.into_iter().find(|g| g.client_id == assistant.client_id);
     let page = ctx(page);
-    let name_of = |id: Uuid| page.session.projects.iter().find(|p| p.id == id).map(|p| p.name.clone()).unwrap_or_else(|| page.t("project_gone"));
+    let name_of = |id: Uuid| {
+        page.session
+            .projects
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| page.t("project_gone"))
+    };
     let projects: Vec<ProjectOption> = page
         .session
         .projects
         .iter()
-        .map(|p| ProjectOption { id: p.id, name: p.name.clone(), role: p.role.as_str(), can_write: p.role >= Role::Editor })
+        .map(|p| ProjectOption {
+            id: p.id,
+            name: p.name.clone(),
+            role: p.role.as_str(),
+            can_write: p.role >= Role::Editor,
+        })
         .collect();
     let has_viewer = projects.iter().any(|p| !p.can_write);
     let view = grant.as_ref().map(|g| GrantView {
         project: name_of(g.project_id),
         scopes: g.scopes.iter().map(|x| page.t(&format!("scope.{x}"))).collect(),
         created: page.date(&g.created_at.with_timezone(&chrono::Local).date_naive()),
-        last_used: g.last_used_at.map(|t| page.date(&t.with_timezone(&chrono::Local).date_naive())).unwrap_or_else(|| page.t("never")),
+        last_used: g
+            .last_used_at
+            .map(|t| page.date(&t.with_timezone(&chrono::Local).date_naive()))
+            .unwrap_or_else(|| page.t("never")),
     });
     let selected_project = grant.as_ref().map(|g| g.project_id).unwrap_or(page.session.project_id);
-    let selected = grant.as_ref().map(|g| g.scopes.clone()).unwrap_or_else(|| DEFAULT_GRANT_SCOPES.iter().map(|x| x.to_string()).collect());
+    let selected = grant
+        .as_ref()
+        .map(|g| g.scopes.clone())
+        .unwrap_or_else(|| DEFAULT_GRANT_SCOPES.iter().map(|x| x.to_string()).collect());
     let guest = svc.is_guest(page.session.user_id).await?;
     render(&AssistantsPage {
         mcp_url: s.resource.clone(),
@@ -198,13 +220,31 @@ async fn save(
 ) -> PageResult {
     browser_only(&identity)?;
     let assistant = pick(&svc, &f.assistant).clone();
-    let Some(project) = Uuid::parse_str(&f.project).ok().and_then(|id| page.session.projects.iter().find(|p| p.id == id)).cloned() else {
+    let Some(project) =
+        Uuid::parse_str(&f.project).ok().and_then(|id| page.session.projects.iter().find(|p| p.id == id)).cloned()
+    else {
         let msg = page.t("no_such_project");
         return render_page(&svc, page, &assistant, Some(msg)).await;
     };
     // «Требовать 2FA» — свойство проекта; у активного проекта оно в сессии, у другого — уточняем у сервиса.
-    let require_2fa = if project.id == page.session.project_id { page.session.require_2fa } else { svc.require_2fa(page.session.user_id, project.id).await? };
-    match svc.save_grant(page.session.user_id, &assistant.client_id, project.id, project.role, require_2fa, identity.mfa, &f.scope, &meta).await {
+    let require_2fa = if project.id == page.session.project_id {
+        page.session.require_2fa
+    } else {
+        svc.require_2fa(page.session.user_id, project.id).await?
+    };
+    match svc
+        .save_grant(
+            page.session.user_id,
+            &assistant.client_id,
+            project.id,
+            project.role,
+            require_2fa,
+            identity.mfa,
+            &f.scope,
+            &meta,
+        )
+        .await
+    {
         Ok(_) => {
             let msg = page.t("saved");
             Ok(see_other_flash(&page.config, &back(&assistant), Flash::ok(msg)))

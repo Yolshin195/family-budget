@@ -41,8 +41,9 @@ impl TryFrom<Row> for Place {
 
     fn try_from(r: Row) -> Result<Self, Self::Error> {
         Ok(Self {
-            kind: PlaceKind::parse(&r.place_kind)
-                .ok_or_else(|| AppError::Internal(anyhow::anyhow!("fb_places.place_kind: unknown value '{}'", r.place_kind)))?,
+            kind: PlaceKind::parse(&r.place_kind).ok_or_else(|| {
+                AppError::Internal(anyhow::anyhow!("fb_places.place_kind: unknown value '{}'", r.place_kind))
+            })?,
             id: r.id,
             project_id: r.project_id,
             code: r.code,
@@ -60,20 +61,22 @@ impl TryFrom<Row> for Place {
 #[async_trait]
 impl PlaceRepository for PostgresPlaceRepository {
     async fn insert(&self, item: &Place) -> AppResult<()> {
-        sqlx::query(&format!("INSERT INTO fb_places ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"))
-            .bind(item.id)
-            .bind(item.project_id)
-            .bind(&item.code)
-            .bind(&item.name)
-            .bind(&item.parent_code)
-            .bind(&item.aliases)
-            .bind(&item.default_category_code)
-            .bind(&item.default_account_code)
-            .bind(item.kind.as_str())
-            .bind(&item.location)
-            .bind(item.archived)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(&format!(
+            "INSERT INTO fb_places ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+        ))
+        .bind(item.id)
+        .bind(item.project_id)
+        .bind(&item.code)
+        .bind(&item.name)
+        .bind(&item.parent_code)
+        .bind(&item.aliases)
+        .bind(&item.default_category_code)
+        .bind(&item.default_account_code)
+        .bind(item.kind.as_str())
+        .bind(&item.location)
+        .bind(item.archived)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

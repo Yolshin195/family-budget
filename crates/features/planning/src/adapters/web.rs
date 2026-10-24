@@ -10,7 +10,9 @@ use axum::{Extension, Form, Router};
 use chrono::{Datelike, Days, Months, NaiveDate};
 use kernel::error::AppError;
 use kernel::i18n::{Lang, month_name, weekdays};
-use kernel::web::{Choice, Flash, PageCtx, PageError, PageResult, money_in, parse_money, render, see_other_flash, url_encode};
+use kernel::web::{
+    Choice, Flash, PageCtx, PageError, PageResult, money_in, parse_money, render, see_other_flash, url_encode,
+};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -288,7 +290,8 @@ async fn occurrence(
     let p = page.session.project_id;
     let o = svc.occurrence(p, plan, date, today()).await?;
     let titles: HashMap<String, String> = svc.category_titles(p, page.lang).await?.into_iter().collect();
-    let accounts: HashMap<String, String> = svc.account_choices(p, page.lang).await?.into_iter().map(|a| (a.code, a.label)).collect();
+    let accounts: HashMap<String, String> =
+        svc.account_choices(p, page.lang).await?.into_iter().map(|a| (a.code, a.label)).collect();
     let back = safe_back(&q.back);
     render(&OccurrencePage {
         category: target(&o.plan, &titles, &accounts),
@@ -300,7 +303,12 @@ async fn occurrence(
 }
 
 /// «Пропустить»: без транзакции, тост с «Отменить» (снять пропуск).
-async fn skip(State(svc): Svc, Extension(page): Extension<PageCtx>, Path((plan, date)): Path<(Uuid, NaiveDate)>, Form(q): Form<BackQuery>) -> PageResult {
+async fn skip(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Path((plan, date)): Path<(Uuid, NaiveDate)>,
+    Form(q): Form<BackQuery>,
+) -> PageResult {
     let s = page.session.scope();
     svc.skip(s.project_id, s.user_id, plan, date).await?;
     let back = safe_back(&q.back);
@@ -333,7 +341,8 @@ struct PlansPage {
 async fn plans(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
     let p = page.session.project_id;
     let titles: HashMap<String, String> = svc.category_titles(p, page.lang).await?.into_iter().collect();
-    let accounts: HashMap<String, String> = svc.account_choices(p, page.lang).await?.into_iter().map(|a| (a.code, a.label)).collect();
+    let accounts: HashMap<String, String> =
+        svc.account_choices(p, page.lang).await?.into_iter().map(|a| (a.code, a.label)).collect();
     let currencies = svc.account_currencies(p).await?;
     let plans = svc
         .list(p)
@@ -428,11 +437,25 @@ impl PlanForm {
     }
 }
 
-async fn form_page(svc: &PlanningService, page: PageCtx, id: Option<Uuid>, f: PlanForm, error: Option<String>) -> PageResult {
+async fn form_page(
+    svc: &PlanningService,
+    page: PageCtx,
+    id: Option<Uuid>,
+    f: PlanForm,
+    error: Option<String>,
+) -> PageResult {
     let p = page.session.project_id;
     let accounts = svc.account_choices(p, page.lang).await?;
     let categories = svc.category_choices(p, page.lang).await?;
-    render(&PlanFormPage { page: nested(page, true), id, f, recurrences: crate::domain::Recurrence::VALUES, accounts, categories, error })
+    render(&PlanFormPage {
+        page: nested(page, true),
+        id,
+        f,
+        recurrences: crate::domain::Recurrence::VALUES,
+        accounts,
+        categories,
+        error,
+    })
 }
 
 async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
@@ -463,14 +486,23 @@ async fn edit_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id
     form_page(&svc, page, Some(id), PlanForm::from_dto(p), None).await
 }
 
-async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>, Form(f): Form<PlanForm>) -> PageResult {
+async fn update(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Path(id): Path<Uuid>,
+    Form(f): Form<PlanForm>,
+) -> PageResult {
     let p = page.session.project_id;
     let result = async { svc.update(p, id, f.to_input()?).await }.await;
     match result {
         // Сменили правило дат при прошедших вхождениях: план продолжен новым (этап 0, Ц4).
         Ok(next) if next.id != id => {
             let from = page.date(&next.effective_from.unwrap_or(next.start_on));
-            Ok(see_other_flash(&page.config, "/planning/plans", Flash::ok(tr(&page, "series_toast").replace("{date}", &from))))
+            Ok(see_other_flash(
+                &page.config,
+                "/planning/plans",
+                Flash::ok(tr(&page, "series_toast").replace("{date}", &from)),
+            ))
         }
         Ok(_) => Ok(see_other_flash(&page.config, "/planning/plans", Flash::ok(page.t("toast.saved")))),
         Err(AppError::Validation(m) | AppError::Conflict(m)) => form_page(&svc, page, Some(id), f, Some(m)).await,
@@ -481,7 +513,11 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): 
 /// Удаление плана без «Вы уверены?»: тост с «Отменить».
 async fn delete(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>) -> PageResult {
     let token = svc.delete_with_undo(page.session.project_id, id).await?;
-    Ok(see_other_flash(&page.config, "/planning/plans", Flash::with_undo(page.t("toast.deleted"), format!("/planning/plans/undo/{token}"))))
+    Ok(see_other_flash(
+        &page.config,
+        "/planning/plans",
+        Flash::with_undo(page.t("toast.deleted"), format!("/planning/plans/undo/{token}")),
+    ))
 }
 
 async fn undo(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(token): Path<Uuid>) -> PageResult {
@@ -501,7 +537,12 @@ struct ToggleForm {
 }
 
 /// «Остановить» / «Возобновить» план из списка.
-async fn toggle(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>, Form(f): Form<ToggleForm>) -> PageResult {
+async fn toggle(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Path(id): Path<Uuid>,
+    Form(f): Form<ToggleForm>,
+) -> PageResult {
     let active = f.active == "1";
     svc.set_active(page.session.project_id, id, active).await?;
     let msg = tr(&page, if active { "resumed_toast" } else { "stopped_toast" });

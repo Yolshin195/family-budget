@@ -23,7 +23,21 @@ pub const PUBLIC_PATHS: [&str; 4] = ["/", "/privacy", "/terms", "/data-deletion"
 
 /// Страницы приложения закрыты от индексации.
 pub const PRIVATE_PREFIXES: [&str; 15] = [
-    "/budget", "/transactions", "/planning", "/limits", "/categories", "/accounts", "/currencies", "/rates", "/projects", "/profile", "/onboarding", "/auth", "/api", "/docs", "/demo",
+    "/budget",
+    "/transactions",
+    "/planning",
+    "/limits",
+    "/categories",
+    "/accounts",
+    "/currencies",
+    "/rates",
+    "/projects",
+    "/profile",
+    "/onboarding",
+    "/auth",
+    "/api",
+    "/docs",
+    "/demo",
 ];
 
 /// Адрес страницы на языке: `/?lang=th`, `/privacy?lang=en`.
@@ -38,11 +52,20 @@ pub fn sitemap(base: &str, lastmod: NaiveDate) -> String {
     );
     for path in PUBLIC_PATHS {
         for lang in Lang::ALL {
-            out.push_str(&format!("  <url>\n    <loc>{}</loc>\n    <lastmod>{lastmod}</lastmod>\n", localized_url(base, path, lang)));
+            out.push_str(&format!(
+                "  <url>\n    <loc>{}</loc>\n    <lastmod>{lastmod}</lastmod>\n",
+                localized_url(base, path, lang)
+            ));
             for alt in Lang::ALL {
-                out.push_str(&format!("    <xhtml:link rel=\"alternate\" hreflang=\"{}\" href=\"{}\"/>\n", alt.code(), localized_url(base, path, alt)));
+                out.push_str(&format!(
+                    "    <xhtml:link rel=\"alternate\" hreflang=\"{}\" href=\"{}\"/>\n",
+                    alt.code(),
+                    localized_url(base, path, alt)
+                ));
             }
-            out.push_str(&format!("    <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\"{base}{path}\"/>\n  </url>\n"));
+            out.push_str(&format!(
+                "    <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\"{base}{path}\"/>\n  </url>\n"
+            ));
         }
     }
     out.push_str("</urlset>\n");
@@ -51,7 +74,9 @@ pub fn sitemap(base: &str, lastmod: NaiveDate) -> String {
 
 /// robots.txt: лендинг и правовые страницы открыты, приложение закрыто.
 pub fn robots(base: &str) -> String {
-    let mut out = String::from("User-agent: *\nAllow: /$\nAllow: /privacy\nAllow: /terms\nAllow: /data-deletion\nAllow: /static/\n");
+    let mut out = String::from(
+        "User-agent: *\nAllow: /$\nAllow: /privacy\nAllow: /terms\nAllow: /data-deletion\nAllow: /static/\n",
+    );
     for p in PRIVATE_PREFIXES {
         out.push_str(&format!("Disallow: {p}\n"));
     }

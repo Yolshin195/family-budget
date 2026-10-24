@@ -101,7 +101,14 @@ impl<'a> Localized<'a> {
 }
 
 /// Короткая форма [`Localized::show`] для мест, где поля уже под рукой.
-pub fn pick<'a>(lang: Lang, original: &'a str, original_lang: Lang, ru: Option<&'a str>, en: Option<&'a str>, th: Option<&'a str>) -> &'a str {
+pub fn pick<'a>(
+    lang: Lang,
+    original: &'a str,
+    original_lang: Lang,
+    ru: Option<&'a str>,
+    en: Option<&'a str>,
+    th: Option<&'a str>,
+) -> &'a str {
     Localized { original, lang: original_lang, ru, en, th }.show(lang)
 }
 
@@ -215,13 +222,19 @@ pub fn dict(key: &str) -> Option<Tr> {
         "quick.from" => ("Откуда", "From", "จากบัญชี"),
         "quick.to" => ("Куда", "To", "ไปยังบัญชี"),
         "quick.received" => ("Зачислено", "Credited", "เข้าบัญชี"),
-        "quick.choose_to" => ("Выберите другой счёт зачисления", "Choose another account to credit", "เลือกบัญชีปลายทางอื่น"),
+        "quick.choose_to" => {
+            ("Выберите другой счёт зачисления", "Choose another account to credit", "เลือกบัญชีปลายทางอื่น")
+        }
         "quick.no_rate" => (
             "Нет курса {cur} к базовой валюте — сумма не войдёт в бюджет, пока не добавите курс",
             "No {cur} rate to the base currency — the amount won't count in the budget until you add a rate",
             "ไม่มีอัตรา {cur} เทียบสกุลหลัก — ยอดนี้จะไม่รวมในงบประมาณจนกว่าจะเพิ่มอัตรา",
         ),
-        "quick.received_required" => ("Сколько пришло в валюте счёта?", "How much arrived, in the account's currency?", "เข้าบัญชีเท่าไรในสกุลเงินของบัญชี?"),
+        "quick.received_required" => (
+            "Сколько пришло в валюте счёта?",
+            "How much arrived, in the account's currency?",
+            "เข้าบัญชีเท่าไรในสกุลเงินของบัญชี?",
+        ),
         "quick.rate" => ("Курс", "Rate", "อัตรา"),
         "quick.rate_ref" => ("по справочнику", "reference", "ตามข้อมูลอ้างอิง"),
         "quick.details" => ("С комиссией", "Add a fee", "เพิ่มค่าธรรมเนียม"),
@@ -243,11 +256,27 @@ pub fn dict(key: &str) -> Option<Tr> {
         "quick.left" => ("Останется доступно", "Will remain", "จะเหลือ"),
         "quick.over" => ("Превышение лимита", "Over the limit by", "เกินวงเงิน"),
         "quick.warn" => ("Больше 80 % лимита", "Over 80% of the limit", "เกิน 80% ของวงเงิน"),
-        "quick.saved_anyway" => ("Сохранить можно — это только предупреждение.", "You can still save — it's just a warning.", "บันทึกได้ — เป็นเพียงคำเตือน"),
+        "quick.saved_anyway" => (
+            "Сохранить можно — это только предупреждение.",
+            "You can still save — it's just a warning.",
+            "บันทึกได้ — เป็นเพียงคำเตือน",
+        ),
         "quick.choose_category" => ("Выберите категорию", "Choose a category", "เลือกหมวดหมู่"),
-        "quick.no_accounts" => ("Сначала добавьте счёт в «Справочники → Счета».", "Add an account first in Directories → Accounts.", "เพิ่มบัญชีก่อนใน ข้อมูลอ้างอิง → บัญชี"),
-        "quick.failed" => ("Не удалось сохранить. Проверьте поля и повторите.", "Couldn't save. Check the fields and try again.", "บันทึกไม่สำเร็จ ตรวจสอบแล้วลองอีกครั้ง"),
-        "quick.load_failed" => ("Не удалось загрузить форму. Проверьте соединение и повторите.", "Couldn't load the form. Check your connection and retry.", "โหลดฟอร์มไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่"),
+        "quick.no_accounts" => (
+            "Сначала добавьте счёт в «Справочники → Счета».",
+            "Add an account first in Directories → Accounts.",
+            "เพิ่มบัญชีก่อนใน ข้อมูลอ้างอิง → บัญชี",
+        ),
+        "quick.failed" => (
+            "Не удалось сохранить. Проверьте поля и повторите.",
+            "Couldn't save. Check the fields and try again.",
+            "บันทึกไม่สำเร็จ ตรวจสอบแล้วลองอีกครั้ง",
+        ),
+        "quick.load_failed" => (
+            "Не удалось загрузить форму. Проверьте соединение и повторите.",
+            "Couldn't load the form. Check your connection and retry.",
+            "โหลดฟอร์มไม่สำเร็จ ตรวจสอบการเชื่อมต่อแล้วลองใหม่",
+        ),
         "quick.undone" => ("Операция отменена", "Transaction undone", "ยกเลิกรายการแล้ว"),
         // горячие клавиши
         "keys.n" => ("Новый расход", "New expense", "รายจ่ายใหม่"),
@@ -262,28 +291,58 @@ pub fn dict(key: &str) -> Option<Tr> {
         "toast.archived" => ("Перенесено в архив", "Archived", "เก็บถาวรแล้ว"),
         "toast.restored" => ("Восстановлено", "Restored", "กู้คืนแล้ว"),
         "toast.saved" => ("Сохранено", "Saved", "บันทึกแล้ว"),
-        "toast.undo_expired" => ("Отменить уже нельзя — прошло слишком много времени", "Too late to undo", "หมดเวลายกเลิกแล้ว"),
+        "toast.undo_expired" => {
+            ("Отменить уже нельзя — прошло слишком много времени", "Too late to undo", "หมดเวลายกเลิกแล้ว")
+        }
         // состояния списков
         "state.load_failed" => ("Не удалось загрузить данные", "Couldn't load data", "โหลดข้อมูลไม่สำเร็จ"),
-        "state.load_failed_hint" => ("Проверьте соединение и обновите страницу.", "Check your connection and reload the page.", "ตรวจสอบการเชื่อมต่อแล้วโหลดหน้าใหม่"),
+        "state.load_failed_hint" => (
+            "Проверьте соединение и обновите страницу.",
+            "Check your connection and reload the page.",
+            "ตรวจสอบการเชื่อมต่อแล้วโหลดหน้าใหม่",
+        ),
         // страницы ошибок
         "error.404" => ("Страница не найдена", "Page not found", "ไม่พบหน้านี้"),
-        "error.404_hint" => ("Адрес устарел или в нём опечатка. Вернитесь на главную.", "The link is outdated or has a typo. Go back to the start page.", "ลิงก์อาจเก่าหรือพิมพ์ผิด กลับไปหน้าแรก"),
+        "error.404_hint" => (
+            "Адрес устарел или в нём опечатка. Вернитесь на главную.",
+            "The link is outdated or has a typo. Go back to the start page.",
+            "ลิงก์อาจเก่าหรือพิมพ์ผิด กลับไปหน้าแรก",
+        ),
         "error.403" => ("Нет доступа", "Access denied", "ไม่มีสิทธิ์เข้าถึง"),
-        "error.403_hint" => ("У вашей роли нет прав на это действие. Попросите владельца проекта.", "Your role can't do this. Ask the project owner.", "บทบาทของคุณทำสิ่งนี้ไม่ได้ ติดต่อเจ้าของโปรเจกต์"),
+        "error.403_hint" => (
+            "У вашей роли нет прав на это действие. Попросите владельца проекта.",
+            "Your role can't do this. Ask the project owner.",
+            "บทบาทของคุณทำสิ่งนี้ไม่ได้ ติดต่อเจ้าของโปรเจกต์",
+        ),
         "error.429" => ("Слишком много запросов", "Too many requests", "คำขอมากเกินไป"),
         "error.429_hint" => ("Подождите минуту и повторите.", "Wait a minute and try again.", "รอสักครู่แล้วลองอีกครั้ง"),
         "error.500" => ("Что-то пошло не так", "Something went wrong", "เกิดข้อผิดพลาด"),
-        "error.500_hint" => ("Мы уже знаем об ошибке. Обновите страницу через минуту.", "We've logged the error. Reload the page in a minute.", "เราบันทึกข้อผิดพลาดแล้ว โหลดหน้าใหม่อีกครั้งในอีกสักครู่"),
+        "error.500_hint" => (
+            "Мы уже знаем об ошибке. Обновите страницу через минуту.",
+            "We've logged the error. Reload the page in a minute.",
+            "เราบันทึกข้อผิดพลาดแล้ว โหลดหน้าใหม่อีกครั้งในอีกสักครู่",
+        ),
         "error.503" => ("Вход временно недоступен", "Sign-in is temporarily unavailable", "เข้าสู่ระบบไม่ได้ชั่วคราว"),
-        "error.503_hint" => ("Сервис входа не отвечает. Попробуйте позже — обычно это несколько минут.", "The sign-in service isn't responding. Try again later — usually it takes a few minutes.", "บริการเข้าสู่ระบบไม่ตอบสนอง โปรดลองใหม่ภายหลัง โดยปกติใช้เวลาไม่กี่นาที"),
-        "error.check_hint" => ("Проверьте введённые данные и повторите.", "Check what you entered and try again.", "ตรวจสอบข้อมูลแล้วลองอีกครั้ง"),
+        "error.503_hint" => (
+            "Сервис входа не отвечает. Попробуйте позже — обычно это несколько минут.",
+            "The sign-in service isn't responding. Try again later — usually it takes a few minutes.",
+            "บริการเข้าสู่ระบบไม่ตอบสนอง โปรดลองใหม่ภายหลัง โดยปกติใช้เวลาไม่กี่นาที",
+        ),
+        "error.check_hint" => (
+            "Проверьте введённые данные и повторите.",
+            "Check what you entered and try again.",
+            "ตรวจสอบข้อมูลแล้วลองอีกครั้ง",
+        ),
         "error.home" => ("На главную", "Go to start page", "ไปหน้าแรก"),
         // проект требует 2FA (раздел 13)
-        "mfa.title" => ("Проект требует второй фактор", "This project requires two-factor sign-in", "โปรเจกต์นี้ต้องยืนยันตัวตนสองขั้นตอน"),
-        "mfa.text" => ("Владелец проекта включил обязательную 2FA. Включите код по email или passkey в Rauthy и войдите заново — тогда данные проекта откроются.",
-                       "The owner requires 2FA. Turn on email codes or a passkey in Rauthy and sign in again to see the project.",
-                       "เจ้าของโปรเจกต์กำหนดให้ใช้ 2FA เปิดรหัสทางอีเมลหรือ passkey ใน Rauthy แล้วเข้าสู่ระบบอีกครั้ง"),
+        "mfa.title" => {
+            ("Проект требует второй фактор", "This project requires two-factor sign-in", "โปรเจกต์นี้ต้องยืนยันตัวตนสองขั้นตอน")
+        }
+        "mfa.text" => (
+            "Владелец проекта включил обязательную 2FA. Включите код по email или passkey в Rauthy и войдите заново — тогда данные проекта откроются.",
+            "The owner requires 2FA. Turn on email codes or a passkey in Rauthy and sign in again to see the project.",
+            "เจ้าของโปรเจกต์กำหนดให้ใช้ 2FA เปิดรหัสทางอีเมลหรือ passkey ใน Rauthy แล้วเข้าสู่ระบบอีกครั้ง",
+        ),
         "mfa.enable" => ("Включить 2FA", "Turn on 2FA", "เปิด 2FA"),
         "mfa.relogin" => ("Войти заново", "Sign in again", "เข้าสู่ระบบอีกครั้ง"),
         "mfa.other_project" => ("Или перейдите в другой проект", "Or switch to another project", "หรือสลับไปโปรเจกต์อื่น"),
@@ -303,9 +362,15 @@ pub fn dict(key: &str) -> Option<Tr> {
         ),
         "err.ref_not_found" => ("запись '{code}' не найдена", "'{code}' not found", "ไม่พบ '{code}'"),
         "err.not_found" => ("запись не найдена", "record not found", "ไม่พบรายการ"),
-        "err.duplicate" => ("запись с таким ключом уже существует", "a record with this key already exists", "มีรายการที่ใช้คีย์นี้อยู่แล้ว"),
+        "err.duplicate" => {
+            ("запись с таким ключом уже существует", "a record with this key already exists", "มีรายการที่ใช้คีย์นี้อยู่แล้ว")
+        }
         "err.internal" => ("внутренняя ошибка сервера", "internal server error", "เซิร์ฟเวอร์ขัดข้อง"),
-        "err.unavailable" => ("сервис временно недоступен, попробуйте позже", "the service is temporarily unavailable, try again later", "บริการไม่พร้อมใช้งานชั่วคราว ลองใหม่ภายหลัง"),
+        "err.unavailable" => (
+            "сервис временно недоступен, попробуйте позже",
+            "the service is temporarily unavailable, try again later",
+            "บริการไม่พร้อมใช้งานชั่วคราว ลองใหม่ภายหลัง",
+        ),
         "err.too_big" => ("слишком большое число", "the number is too large", "ตัวเลขใหญ่เกินไป"),
         "err.not_a_number" => ("'{value}' — не число", "'{value}' is not a number", "'{value}' ไม่ใช่ตัวเลข"),
         "err.enter_amount" => ("введите сумму", "enter an amount", "กรอกจำนวนเงิน"),
@@ -315,9 +380,48 @@ pub fn dict(key: &str) -> Option<Tr> {
 
 /// Названия месяцев для календаря (1..=12).
 pub fn month_name(lang: Lang, month: u32) -> &'static str {
-    const RU: [&str; 12] = ["Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"];
-    const EN: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-    const TH: [&str; 12] = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+    const RU: [&str; 12] = [
+        "Январь",
+        "Февраль",
+        "Март",
+        "Апрель",
+        "Май",
+        "Июнь",
+        "Июль",
+        "Август",
+        "Сентябрь",
+        "Октябрь",
+        "Ноябрь",
+        "Декабрь",
+    ];
+    const EN: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    const TH: [&str; 12] = [
+        "มกราคม",
+        "กุมภาพันธ์",
+        "มีนาคม",
+        "เมษายน",
+        "พฤษภาคม",
+        "มิถุนายน",
+        "กรกฎาคม",
+        "สิงหาคม",
+        "กันยายน",
+        "ตุลาคม",
+        "พฤศจิกายน",
+        "ธันวาคม",
+    ];
     let i = (month.clamp(1, 12) - 1) as usize;
     match lang {
         Lang::Ru => RU[i],

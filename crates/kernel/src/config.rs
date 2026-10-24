@@ -95,26 +95,35 @@ impl Config {
             _ => Env::Dev,
         };
         let prod = env_kind == Env::Prod;
-        let base_url = env::var("APP_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".into()).trim_end_matches('/').to_string();
+        let base_url = env::var("APP_BASE_URL")
+            .unwrap_or_else(|_| "http://localhost:8080".into())
+            .trim_end_matches('/')
+            .to_string();
         let secret = secret_var("SESSION_SECRET").unwrap_or_else(|| DEV_SECRET.into());
-        let oidc = match (env::var("OIDC_ISSUER").ok().filter(|v| !v.trim().is_empty()), env::var("OIDC_CLIENT_ID").ok()) {
-            (Some(issuer), Some(client_id)) => {
-                // Issuer — ровно как в метаданных провайдера (у Rauthy — со слешем в конце: `…/auth/v1/`).
-                let issuer = issuer.trim().to_string();
-                let base = issuer.trim_end_matches('/').to_string();
-                Some(Oidc {
-                    redirect_url: env::var("OIDC_REDIRECT_URL").unwrap_or_else(|_| format!("{base_url}/auth/callback")),
-                    register_url: env::var("OIDC_REGISTER_URL").unwrap_or_else(|_| format!("{base}/users/register")),
-                    account_url: env::var("OIDC_ACCOUNT_URL").unwrap_or_else(|_| format!("{base}/account")),
-                    client_secret: secret_var("OIDC_CLIENT_SECRET").unwrap_or_default(),
-                    admin_api_key: secret_var("RAUTHY_ADMIN_API_KEY"),
-                    internal_url: env::var("OIDC_INTERNAL_URL").ok().map(|v| v.trim().trim_end_matches('/').to_string()).filter(|v| !v.is_empty()),
-                    issuer,
-                    client_id,
-                })
-            }
-            _ => None,
-        };
+        let oidc =
+            match (env::var("OIDC_ISSUER").ok().filter(|v| !v.trim().is_empty()), env::var("OIDC_CLIENT_ID").ok()) {
+                (Some(issuer), Some(client_id)) => {
+                    // Issuer — ровно как в метаданных провайдера (у Rauthy — со слешем в конце: `…/auth/v1/`).
+                    let issuer = issuer.trim().to_string();
+                    let base = issuer.trim_end_matches('/').to_string();
+                    Some(Oidc {
+                        redirect_url: env::var("OIDC_REDIRECT_URL")
+                            .unwrap_or_else(|_| format!("{base_url}/auth/callback")),
+                        register_url: env::var("OIDC_REGISTER_URL")
+                            .unwrap_or_else(|_| format!("{base}/users/register")),
+                        account_url: env::var("OIDC_ACCOUNT_URL").unwrap_or_else(|_| format!("{base}/account")),
+                        client_secret: secret_var("OIDC_CLIENT_SECRET").unwrap_or_default(),
+                        admin_api_key: secret_var("RAUTHY_ADMIN_API_KEY"),
+                        internal_url: env::var("OIDC_INTERNAL_URL")
+                            .ok()
+                            .map(|v| v.trim().trim_end_matches('/').to_string())
+                            .filter(|v| !v.is_empty()),
+                        issuer,
+                        client_id,
+                    })
+                }
+                _ => None,
+            };
         Config {
             env: env_kind,
             signer: Signer::new(secret.as_bytes()),
@@ -124,7 +133,12 @@ impl Config {
             rate_limit: env::var("RATE_LIMIT_PER_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(600),
             public_rate_limit: env::var("PUBLIC_RATE_LIMIT_PER_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(120),
             trust_proxy: flag("TRUST_PROXY", false),
-            contact_email: env::var("CONTACT_EMAIL").unwrap_or_else(|_| format!("hello@{}", base_url.split("://").nth(1).unwrap_or("localhost").split([':', '/']).next().unwrap_or("localhost"))),
+            contact_email: env::var("CONTACT_EMAIL").unwrap_or_else(|_| {
+                format!(
+                    "hello@{}",
+                    base_url.split("://").nth(1).unwrap_or("localhost").split([':', '/']).next().unwrap_or("localhost")
+                )
+            }),
             oidc,
             base_url,
         }

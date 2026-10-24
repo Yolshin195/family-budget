@@ -1,0 +1,5 @@
+# hadolint (Dockerfile) — в CI (ci.yml, job Lint) и локально (make lint).
+ignored:
+  # Версии пакетов Debian не закрепляются: стадия runtime собирается без кэша и делает apt-get upgrade, чтобы каждая
+  # сборка брала текущие исправления безопасности (Dockerfile, no-cache-filters в CI); образ проверяет Trivy.
+  - DL3008

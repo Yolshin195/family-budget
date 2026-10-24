@@ -36,7 +36,16 @@ struct Row {
 
 impl From<Row> for Person {
     fn from(r: Row) -> Self {
-        Self { id: r.id, project_id: r.project_id, code: r.code, name: r.name, aliases: r.aliases, user_id: r.user_id, former_member: r.former_member, archived: r.archived }
+        Self {
+            id: r.id,
+            project_id: r.project_id,
+            code: r.code,
+            name: r.name,
+            aliases: r.aliases,
+            user_id: r.user_id,
+            former_member: r.former_member,
+            archived: r.archived,
+        }
     }
 }
 
@@ -98,22 +107,31 @@ impl PersonRepository for PostgresPersonRepository {
         let sql = format!(
             "SELECT {COLUMNS} FROM fb_people WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY lower(name), code LIMIT $3 OFFSET $4"
         );
-        let rows: Vec<Row> =
-            sqlx::query_as(&sql).bind(project_id).bind(include_archived).bind(limit).bind(offset).fetch_all(&self.pool).await?;
+        let rows: Vec<Row> = sqlx::query_as(&sql)
+            .bind(project_id)
+            .bind(include_archived)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64> {
-        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fb_people WHERE project_id = $1 AND ($2 OR NOT archived)")
-            .bind(project_id)
-            .bind(include_archived)
-            .fetch_one(&self.pool)
-            .await?;
+        let (n,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM fb_people WHERE project_id = $1 AND ($2 OR NOT archived)")
+                .bind(project_id)
+                .bind(include_archived)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(n)
     }
 
     async fn codes(&self, project_id: Uuid) -> AppResult<Vec<String>> {
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT code FROM fb_people WHERE project_id = $1").bind(project_id).fetch_all(&self.pool).await?;
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT code FROM fb_people WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows.into_iter().map(|r| r.0).collect())
     }
 

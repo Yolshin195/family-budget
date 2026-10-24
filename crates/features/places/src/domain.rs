@@ -124,13 +124,17 @@ impl Place {
 pub fn check_tree(all: &[Place], item: &Place) -> Result<(), Problem> {
     let others: Vec<&Place> = all.iter().filter(|p| p.code != item.code).collect();
     let find = |code: &str| others.iter().copied().find(|p| p.code == code);
-    let problem = |key: &str, args: &[(&str, &dyn std::fmt::Display)]| Problem::validation("parent_code", tr(Some(crate::i18n::dict), key, args));
+    let problem = |key: &str, args: &[(&str, &dyn std::fmt::Display)]| {
+        Problem::validation("parent_code", tr(Some(crate::i18n::dict), key, args))
+    };
     let mut depth = 1;
     if let Some(parent_code) = &item.parent_code {
         if *parent_code == item.code {
             return Err(problem("err.parent_self", &[]));
         }
-        let parent = find(parent_code).ok_or_else(|| Problem::validation("parent_code", tr(None, "err.ref_not_found", &[("code", parent_code)])))?;
+        let parent = find(parent_code).ok_or_else(|| {
+            Problem::validation("parent_code", tr(None, "err.ref_not_found", &[("code", parent_code)]))
+        })?;
         if parent.archived && !item.archived {
             return Err(problem("err.parent_archived", &[("name", &parent.name)]));
         }
@@ -152,7 +156,12 @@ pub fn check_tree(all: &[Place], item: &Place) -> Result<(), Problem> {
         if guard > MAX_DEPTH {
             return guard;
         }
-        others.iter().filter(|p| p.parent_code.as_deref() == Some(code)).map(|p| 1 + height(others, &p.code, guard + 1)).max().unwrap_or(0)
+        others
+            .iter()
+            .filter(|p| p.parent_code.as_deref() == Some(code))
+            .map(|p| 1 + height(others, &p.code, guard + 1))
+            .max()
+            .unwrap_or(0)
     }
     if depth + height(&others, &item.code, 0) > MAX_DEPTH {
         return Err(problem("err.depth", &[("max", &MAX_DEPTH)]));
@@ -171,7 +180,8 @@ pub fn flatten(all: &[Place]) -> Vec<(usize, &Place)> {
         if depth >= MAX_DEPTH {
             return;
         }
-        let mut kids: Vec<&Place> = all.iter().filter(|p| p.parent_code.as_deref() == Some(node.code.as_str())).collect();
+        let mut kids: Vec<&Place> =
+            all.iter().filter(|p| p.parent_code.as_deref() == Some(node.code.as_str())).collect();
         order(&mut kids);
         for k in kids {
             walk(all, k, depth + 1, out);
@@ -226,7 +236,10 @@ fn aliases(name: &str, list: &[String]) -> Result<Vec<String>, Problem> {
         }
     }
     if out.len() > MAX_ALIASES {
-        return Err(Problem::validation("aliases", tr(Some(crate::i18n::dict), "err.too_many_aliases", &[("max", &MAX_ALIASES)])));
+        return Err(Problem::validation(
+            "aliases",
+            tr(Some(crate::i18n::dict), "err.too_many_aliases", &[("max", &MAX_ALIASES)]),
+        ));
     }
     Ok(out)
 }

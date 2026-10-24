@@ -32,7 +32,13 @@ impl ::currencies::CurrencyUsage for UsageAdapter {
         let _ = (project_id, currency);
         #[cfg(feature = "accounts")]
         if let Some(a) = self.accounts.get() {
-            return Ok(a.all(project_id, false).await?.into_iter().filter(|x| x.currency_code == currency).map(|x| x.code).collect());
+            return Ok(a
+                .all(project_id, false)
+                .await?
+                .into_iter()
+                .filter(|x| x.currency_code == currency)
+                .map(|x| x.code)
+                .collect());
         }
         Ok(Vec::new())
     }

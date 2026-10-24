@@ -12,7 +12,7 @@ use kernel::pagination::{PagedResponse, Pagination};
 use utoipa::OpenApi;
 use uuid::Uuid;
 
-use crate::dto::{PeriodQuery, LimitDto, LimitInput};
+use crate::dto::{LimitDto, LimitInput, PeriodQuery};
 use crate::service::LimitService;
 
 type Svc = State<Arc<LimitService>>;
@@ -67,7 +67,11 @@ pub async fn list(
     responses((status = 200, description = "Запись", body = LimitDto), (status = 404, description = "Не найдена")),
     security(("bearer_auth" = []))
 )]
-pub async fn get_one(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>) -> AppResult<Json<LimitDto>> {
+pub async fn get_one(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<LimitDto>> {
     Ok(Json(svc.get(scope.project_id, id).await?))
 }
 
@@ -97,7 +101,11 @@ pub async fn update(
     responses((status = 204, description = "Запись удалена"), (status = 404, description = "Не найдена")),
     security(("bearer_auth" = []))
 )]
-pub async fn remove(State(svc): Svc, Extension(scope): Extension<Scope>, Path(id): Path<Uuid>) -> AppResult<StatusCode> {
+pub async fn remove(
+    State(svc): Svc,
+    Extension(scope): Extension<Scope>,
+    Path(id): Path<Uuid>,
+) -> AppResult<StatusCode> {
     svc.delete(scope.project_id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

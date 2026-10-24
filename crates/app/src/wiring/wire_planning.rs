@@ -20,7 +20,14 @@ impl ::planning::PaymentsLookup for PaymentsAdapter {
             .payments(project_id, from, to)
             .await?
             .into_iter()
-            .map(|p| ::planning::PaidRef { plan_id: p.plan_id, plan_date: p.plan_date, transaction_id: p.transaction_id, amount: p.amount, currency: p.currency, paid_on: p.occurred_on })
+            .map(|p| ::planning::PaidRef {
+                plan_id: p.plan_id,
+                plan_date: p.plan_date,
+                transaction_id: p.transaction_id,
+                amount: p.amount,
+                currency: p.currency,
+                paid_on: p.occurred_on,
+            })
             .collect())
     }
 }

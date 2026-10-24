@@ -18,7 +18,10 @@ use kernel::web::{NavGroup, NavItem, Web};
 use utoipa::OpenApi;
 
 pub use domain::{Level, LimitRule, Node, Period, Row, View};
-pub use ports::{AccountRec, AccountsSource, CategoriesSource, Deps, ExchangeRec, FactRec, FactsSource, LimitsSource, PlannedRec, PlansSource, RatesSource};
+pub use ports::{
+    AccountRec, AccountsSource, CategoriesSource, Deps, ExchangeRec, FactRec, FactsSource, LimitsSource, PlannedRec,
+    PlansSource, RatesSource,
+};
 pub use service::{AccountBalance, BudgetService as Service, CategoryLimit, Report};
 
 pub const NAME: &str = "budget";
@@ -38,7 +41,15 @@ pub fn feature(api: Arc<Service>) -> Feature {
         web: Some(Web {
             pages: adapters::web::router(api),
             public: None,
-            nav: Some(NavItem { feature: NAME, href: MOUNT, label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)), icon: "chart-pie", group: NavGroup::Main, order: 10, mobile: true }),
+            nav: Some(NavItem {
+                feature: NAME,
+                href: MOUNT,
+                label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)),
+                icon: "chart-pie",
+                group: NavGroup::Main,
+                order: 10,
+                mobile: true,
+            }),
             root: None,
             account: None,
         }),

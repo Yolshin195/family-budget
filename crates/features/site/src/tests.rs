@@ -36,7 +36,8 @@ async fn funnel_counts_visits_signups_and_first_expense() {
 #[test]
 fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
 
@@ -54,11 +55,15 @@ fn legal_pages_have_all_sections_in_every_language() {
 /// остальные тексты первого экрана: все на трёх языках и без «бесплатно», пока не решена монетизация (ТЗ, раздел 11).
 #[test]
 fn landing_texts_are_complete_and_promise_nothing_free() {
-    let mut keys: Vec<String> = ["meta.description", "hero.badge", "hero.title", "hero.subtitle", "ai.lead", "demo.text", "final.text"]
-        .map(String::from)
-        .to_vec();
+    let mut keys: Vec<String> =
+        ["meta.description", "hero.badge", "hero.title", "hero.subtitle", "ai.lead", "demo.text", "final.text"]
+            .map(String::from)
+            .to_vec();
     let cards = (1..=9).map(|n| format!("b{n}")).chain((1..=4).map(|n| format!("ai{n}")));
-    let cards = cards.chain((1..=3).map(|n| format!("trust{n}"))).chain((1..=3).map(|n| format!("s{n}"))).chain((1..=4).map(|n| format!("sec{n}")));
+    let cards = cards
+        .chain((1..=3).map(|n| format!("trust{n}")))
+        .chain((1..=3).map(|n| format!("s{n}")))
+        .chain((1..=4).map(|n| format!("sec{n}")));
     for c in cards {
         keys.push(format!("{c}.title"));
         keys.push(format!("{c}.text"));
@@ -68,6 +73,9 @@ fn landing_texts_are_complete_and_promise_nothing_free() {
     for key in &keys {
         let (ru, en, th) = crate::i18n::dict(key).unwrap_or_else(|| panic!("нет ключа {key}"));
         assert!(!ru.is_empty() && !en.is_empty() && !th.is_empty(), "{key}");
-        assert!(!ru.to_lowercase().contains("бесплат") && !en.to_lowercase().contains("free") && !th.contains("ฟรี"), "{key}");
+        assert!(
+            !ru.to_lowercase().contains("бесплат") && !en.to_lowercase().contains("free") && !th.contains("ฟรี"),
+            "{key}"
+        );
     }
 }

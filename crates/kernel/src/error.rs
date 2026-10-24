@@ -104,10 +104,10 @@ impl From<sqlx::Error> for AppError {
         if let sqlx::Error::RowNotFound = e {
             return AppError::NotFound(tr(None, "err.not_found", &[]));
         }
-        if let sqlx::Error::Database(db) = &e {
-            if db.is_unique_violation() {
-                return AppError::Conflict(tr(None, "err.duplicate", &[]));
-            }
+        if let sqlx::Error::Database(db) = &e
+            && db.is_unique_violation()
+        {
+            return AppError::Conflict(tr(None, "err.duplicate", &[]));
         }
         AppError::Internal(e.into())
     }
@@ -172,7 +172,9 @@ impl IntoResponse for AppError {
         let status = self.status();
         let error = self.code();
         let body = match self {
-            AppError::Invalid(p) | AppError::ConflictWith(p) => ErrorBody { error, message: p.message, field: Some(p.field).filter(|f| !f.is_empty()) },
+            AppError::Invalid(p) | AppError::ConflictWith(p) => {
+                ErrorBody { error, message: p.message, field: Some(p.field).filter(|f| !f.is_empty()) }
+            }
             other => ErrorBody { error, message: other.public_message(), field: None },
         };
         (status, Json(body)).into_response()
@@ -189,17 +191,28 @@ mod tests {
         assert_eq!(e.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(e.code(), "UNAVAILABLE");
         let message = e.public_message();
-        assert!(!message.contains("Rauthy") && !message.contains("rauthy:8443"), "подробности не уходят клиенту: {message}");
+        assert!(
+            !message.contains("Rauthy") && !message.contains("rauthy:8443"),
+            "подробности не уходят клиенту: {message}"
+        );
         assert_eq!(e.into_response().status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     /// Техдолг #9: ошибка с кодом — на языке запроса, поле отдельно от текста.
     #[tokio::test]
     async fn problem_is_translated_and_keeps_field() {
-        let p = crate::i18n::scope(crate::i18n::Lang::En, async { crate::code::code("items[2].category_code", " ") }).await.unwrap_err();
-        assert_eq!((p.code, p.field.as_str(), p.message.as_str()), (codes::VALIDATION, "items[2].category_code", "cannot be empty"));
+        let p = crate::i18n::scope(crate::i18n::Lang::En, async { crate::code::code("items[2].category_code", " ") })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (p.code, p.field.as_str(), p.message.as_str()),
+            (codes::VALIDATION, "items[2].category_code", "cannot be empty")
+        );
         assert_eq!(AppError::from(p.clone()).to_string(), "items[2].category_code: cannot be empty");
-        let th = crate::i18n::scope(crate::i18n::Lang::Th, async { AppError::Internal(anyhow::anyhow!("x")).public_message() }).await;
+        let th = crate::i18n::scope(crate::i18n::Lang::Th, async {
+            AppError::Internal(anyhow::anyhow!("x")).public_message()
+        })
+        .await;
         assert_eq!(th, "เซิร์ฟเวอร์ขัดข้อง");
         assert_eq!(AppError::from(p).into_response().status(), StatusCode::UNPROCESSABLE_ENTITY);
     }
@@ -208,7 +221,10 @@ mod tests {
     #[tokio::test]
     async fn conflict_with_code_is_409() {
         let e = AppError::ConflictWith(Problem::new(codes::EXTERNAL_REF_TAKEN, "external_ref", "taken".into()));
-        assert_eq!((e.status(), e.code(), e.to_string().as_str()), (StatusCode::CONFLICT, "EXTERNAL_REF_TAKEN", "external_ref: taken"));
+        assert_eq!(
+            (e.status(), e.code(), e.to_string().as_str()),
+            (StatusCode::CONFLICT, "EXTERNAL_REF_TAKEN", "external_ref: taken")
+        );
         let res = e.into_response();
         assert_eq!(res.status(), StatusCode::CONFLICT);
         let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();

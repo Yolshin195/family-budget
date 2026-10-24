@@ -6,14 +6,14 @@ use std::sync::Arc;
 #[allow(unused_imports)]
 use kernel::code::{ensure_ref, normalize};
 use kernel::error::{AppError, AppResult};
-use kernel::pagination::{PagedResponse, Pagination};
 use kernel::i18n::Lang;
+use kernel::pagination::{PagedResponse, Pagination};
 use kernel::web::Choice;
 use uuid::Uuid;
 
 use crate::domain::Currency;
-use crate::dto::{CreateCurrencyDto, ListQuery, UpdateCurrencyDto, CurrencyDto};
-use crate::ports::{Deps, CurrencyRepository};
+use crate::dto::{CreateCurrencyDto, CurrencyDto, ListQuery, UpdateCurrencyDto};
+use crate::ports::{CurrencyRepository, Deps};
 
 pub struct CurrencyService {
     repo: Arc<dyn CurrencyRepository>,
@@ -40,7 +40,12 @@ impl CurrencyService {
         Ok(self.load(project_id, code).await?.into())
     }
 
-    pub async fn list(&self, project_id: Uuid, query: ListQuery, pagination: Pagination) -> AppResult<PagedResponse<CurrencyDto>> {
+    pub async fn list(
+        &self,
+        project_id: Uuid,
+        query: ListQuery,
+        pagination: Pagination,
+    ) -> AppResult<PagedResponse<CurrencyDto>> {
         let all = query.include_archived;
         let items = self.repo.list(project_id, all, pagination.limit(), pagination.offset()).await?;
         let total = self.repo.count(project_id, all).await?;
@@ -104,7 +109,12 @@ impl CurrencyService {
             .all(project_id, false)
             .await?
             .into_iter()
-            .map(|c| Choice { label: format!("{} · {}", c.code, c.title(lang)), tag: c.symbol.clone(), code: c.code, depth: 0 })
+            .map(|c| Choice {
+                label: format!("{} · {}", c.code, c.title(lang)),
+                tag: c.symbol.clone(),
+                code: c.code,
+                depth: 0,
+            })
             .collect())
     }
 
@@ -112,11 +122,16 @@ impl CurrencyService {
     /// останется в валюте, которой «нет», и его нельзя будет изменить (этап 0, Ц8).
     async fn check_archive(&self, project_id: Uuid, code: &str) -> AppResult<()> {
         if self.deps.usage.base_currency(project_id).await?.as_deref() == Some(code) {
-            return Err(AppError::Conflict(format!("archived: {code} — базовая валюта проекта, её нельзя архивировать")));
+            return Err(AppError::Conflict(format!(
+                "archived: {code} — базовая валюта проекта, её нельзя архивировать"
+            )));
         }
         let accounts = self.deps.usage.active_accounts(project_id, code).await?;
         if !accounts.is_empty() {
-            return Err(AppError::Conflict(format!("archived: в {code} есть активные счета ({}) — сначала архивируйте их", accounts.join(", "))));
+            return Err(AppError::Conflict(format!(
+                "archived: в {code} есть активные счета ({}) — сначала архивируйте их",
+                accounts.join(", ")
+            )));
         }
         Ok(())
     }

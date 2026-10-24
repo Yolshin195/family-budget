@@ -11,8 +11,9 @@ use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use chrono::{DateTime, Utc};
 use kernel::auth::{
-    Csrf, CurrentUser, Identity, LANG_COOKIE, MaybeUser, PROJECT_COOKIE, RequestMeta, Role, Theme, Via, cookie, request_lang, same_origin, same_origin_strict,
-    session_cookie, session_credential, session_csrf, set_cookie, set_cookie_at,
+    Csrf, CurrentUser, Identity, LANG_COOKIE, MaybeUser, PROJECT_COOKIE, RequestMeta, Role, Theme, Via, cookie,
+    request_lang, same_origin, same_origin_strict, session_cookie, session_credential, session_csrf, set_cookie,
+    set_cookie_at,
 };
 use kernel::config::Config;
 use kernel::crypto::ct_eq;
@@ -22,7 +23,9 @@ use kernel::web::{Flash, PageCtx, PageError, PageResult, flash_cookie, render, s
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::domain::{ApiToken, AuditEvent, InviteState, PendingLogin, ProjectKind, SessionRecord, TOKEN_TERMS, split_invite_code};
+use crate::domain::{
+    ApiToken, AuditEvent, InviteState, PendingLogin, ProjectKind, SessionRecord, TOKEN_TERMS, split_invite_code,
+};
 use crate::service::{InvitePreview, ProjectService, ProjectView};
 
 type Svc = State<Arc<ProjectService>>;
@@ -50,7 +53,10 @@ pub fn public(service: Arc<ProjectService>) -> Router {
 
 /// Страницы аккаунта: вход есть, проекта может не быть (онбординг, принять приглашение).
 pub fn account(service: Arc<ProjectService>) -> Router {
-    Router::new().route("/onboarding", get(onboarding_form).post(onboarding)).route("/join/{code}", post(join)).with_state(service)
+    Router::new()
+        .route("/onboarding", get(onboarding_form).post(onboarding))
+        .route("/join/{code}", post(join))
+        .with_state(service)
 }
 
 /// Страницы под авторизацией (монтируются в /projects).
@@ -103,7 +109,13 @@ struct PendingCookie {
 }
 
 fn seal_pending(cfg: &Config, p: &PendingLogin) -> String {
-    let c = PendingCookie { s: p.state.clone(), n: p.nonce.clone(), v: p.pkce_verifier.clone(), x: p.next.clone(), t: p.started };
+    let c = PendingCookie {
+        s: p.state.clone(),
+        n: p.nonce.clone(),
+        v: p.pkce_verifier.clone(),
+        x: p.next.clone(),
+        t: p.started,
+    };
     cfg.signer.seal("oidc", &serde_json::to_string(&c).unwrap_or_default())
 }
 
@@ -180,7 +192,13 @@ async fn login(State(svc): Svc, headers: HeaderMap, Query(q): Query<NextQuery>) 
         return render(&AuthPage { next: crate::domain::safe_next(&q.next), ..AuthPage::new(&svc, lang) });
     }
     let (url, pending) = svc.begin_login(&q.next, lang).await?;
-    let c = set_cookie_at(svc.config(), OIDC_COOKIE, &seal_pending(svc.config(), &pending), crate::domain::LOGIN_TTL_SECS, "/auth");
+    let c = set_cookie_at(
+        svc.config(),
+        OIDC_COOKIE,
+        &seal_pending(svc.config(), &pending),
+        crate::domain::LOGIN_TTL_SECS,
+        "/auth",
+    );
     Ok((AppendHeaders([c]), Redirect::to(&url)).into_response())
 }
 
@@ -209,7 +227,12 @@ struct CallbackQuery {
 }
 
 /// Возврат из Rauthy: обмен кода, проверка ID-токена, новая сессия приложения.
-async fn callback(State(svc): Svc, headers: HeaderMap, Extension(meta): Extension<RequestMeta>, Query(q): Query<CallbackQuery>) -> PageResult {
+async fn callback(
+    State(svc): Svc,
+    headers: HeaderMap,
+    Extension(meta): Extension<RequestMeta>,
+    Query(q): Query<CallbackQuery>,
+) -> PageResult {
     let lang = lang_of(&headers);
     let cfg = svc.config();
     let clear_pending = set_cookie_at(cfg, OIDC_COOKIE, "", 0, "/auth");
@@ -270,7 +293,12 @@ struct CsrfForm {
 }
 
 /// Выход: сессия приложения отзывается, затем — выход из Rauthy (`end_session_endpoint`).
-async fn logout(State(svc): Svc, headers: HeaderMap, Extension(meta): Extension<RequestMeta>, Form(f): Form<CsrfForm>) -> Response {
+async fn logout(
+    State(svc): Svc,
+    headers: HeaderMap,
+    Extension(meta): Extension<RequestMeta>,
+    Form(f): Form<CsrfForm>,
+) -> Response {
     let cfg = svc.config();
     let clear = [session_cookie(cfg, "", 0), set_cookie(cfg, PROJECT_COOKIE, "", 0)];
     let Some((raw, csrf)) = session_csrf(cfg, &headers) else {
@@ -291,7 +319,12 @@ struct DevForm {
 }
 
 /// Вход под демо-пользователем без Rauthy — только в режиме разработки.
-async fn dev_login(State(svc): Svc, headers: HeaderMap, Extension(meta): Extension<RequestMeta>, Form(f): Form<DevForm>) -> PageResult {
+async fn dev_login(
+    State(svc): Svc,
+    headers: HeaderMap,
+    Extension(meta): Extension<RequestMeta>,
+    Form(f): Form<DevForm>,
+) -> PageResult {
     let cfg = svc.config();
     if !same_origin(cfg, &headers) {
         return Err(PageError(AppError::Forbidden("CSRF: запрос с чужого сайта".into())));
@@ -316,7 +349,10 @@ async fn demo(State(svc): Svc, headers: HeaderMap, Extension(meta): Extension<Re
     }
     let (raw, project) = svc.guest_login(&meta).await?;
     Ok((
-        AppendHeaders([session_cookie(cfg, &raw, 24 * 3600), set_cookie(cfg, PROJECT_COOKIE, &project.to_string(), 24 * 3600)]),
+        AppendHeaders([
+            session_cookie(cfg, &raw, 24 * 3600),
+            set_cookie(cfg, PROJECT_COOKIE, &project.to_string(), 24 * 3600),
+        ]),
         Redirect::to("/budget"),
     )
         .into_response())
@@ -329,13 +365,18 @@ struct BackQuery {
 }
 
 /// Переключить язык: cookie + настройка пользователя (если он вошёл).
-async fn set_lang(State(svc): Svc, headers: HeaderMap, Path(code): Path<String>, Query(q): Query<BackQuery>) -> Response {
+async fn set_lang(
+    State(svc): Svc,
+    headers: HeaderMap,
+    Path(code): Path<String>,
+    Query(q): Query<BackQuery>,
+) -> Response {
     let lang = Lang::parse(&code).unwrap_or_default();
     // Только сессия браузера: API-токен действует лишь в /api.
-    if let Some(cred) = session_credential(svc.config(), &headers) {
-        if let Ok(Some(id)) = kernel::auth::Authenticator::authenticate(svc.as_ref(), &cred).await {
-            let _ = svc.set_lang(id.user_id, lang).await;
-        }
+    if let Some(cred) = session_credential(svc.config(), &headers)
+        && let Ok(Some(id)) = kernel::auth::Authenticator::authenticate(svc.as_ref(), &cred).await
+    {
+        let _ = svc.set_lang(id.user_id, lang).await;
     }
     let back = if q.back.starts_with('/') && !q.back.starts_with("//") { q.back } else { "/".into() };
     ([set_cookie(svc.config(), LANG_COOKIE, lang.code(), YEAR)], Redirect::to(&back)).into_response()
@@ -377,7 +418,14 @@ impl JoinPage {
     }
 }
 
-async fn join_view(svc: &ProjectService, headers: &HeaderMap, code: String, viewer: Option<Uuid>, lang: Lang, error: Option<String>) -> Result<(JoinPage, bool), PageError> {
+async fn join_view(
+    svc: &ProjectService,
+    headers: &HeaderMap,
+    code: String,
+    viewer: Option<Uuid>,
+    lang: Lang,
+    error: Option<String>,
+) -> Result<(JoinPage, bool), PageError> {
     let invite = match svc.invite_preview(&code, viewer).await {
         Ok(p) => Some(p),
         Err(AppError::NotFound(_)) => None,
@@ -390,7 +438,12 @@ async fn join_view(svc: &ProjectService, headers: &HeaderMap, code: String, view
 
 /// Ссылка-приглашение: кто и куда зовёт. Только показывает — расходует приглашение кнопка «Присоединиться»,
 /// поэтому превью ссылки в мессенджере ничего не ломает.
-async fn join_page(State(svc): Svc, headers: HeaderMap, Extension(maybe): Extension<MaybeUser>, Path(code): Path<String>) -> PageResult {
+async fn join_page(
+    State(svc): Svc,
+    headers: HeaderMap,
+    Extension(maybe): Extension<MaybeUser>,
+    Path(code): Path<String>,
+) -> PageResult {
     let lang = lang_of(&headers);
     let (page, active) = join_view(&svc, &headers, code, maybe.0, lang, None).await?;
     let remember = active && maybe.0.is_none();
@@ -410,7 +463,13 @@ async fn join_page(State(svc): Svc, headers: HeaderMap, Extension(maybe): Extens
 }
 
 /// «Присоединиться»: стать участником и сразу открыть семейный бюджет.
-async fn join(State(svc): Svc, headers: HeaderMap, Extension(user): Extension<CurrentUser>, Extension(meta): Extension<RequestMeta>, Path(code): Path<String>) -> PageResult {
+async fn join(
+    State(svc): Svc,
+    headers: HeaderMap,
+    Extension(user): Extension<CurrentUser>,
+    Extension(meta): Extension<RequestMeta>,
+    Path(code): Path<String>,
+) -> PageResult {
     let cfg = svc.config();
     // Язык — как во всём приложении: выбранный в переключателе (cookie), иначе из профиля.
     let lang = cookie(&headers, LANG_COOKIE).and_then(|v| Lang::parse(&v)).unwrap_or(svc.user(user.id).await?.lang);
@@ -467,21 +526,48 @@ struct OnboardingForm {
     lang: String,
 }
 
-async fn onboarding_form(State(svc): Svc, headers: HeaderMap, Extension(user): Extension<CurrentUser>, Extension(csrf): Extension<Csrf>) -> PageResult {
+async fn onboarding_form(
+    State(svc): Svc,
+    headers: HeaderMap,
+    Extension(user): Extension<CurrentUser>,
+    Extension(csrf): Extension<Csrf>,
+) -> PageResult {
     let u = svc.user(user.id).await?;
     let lang = request_lang(&headers).unwrap_or(u.lang);
-    render(&OnboardingPage { lang, langs: Lang::ALL, csrf: csrf.0, name: u.display_name, currency: "THB".into(), error: None })
+    render(&OnboardingPage {
+        lang,
+        langs: Lang::ALL,
+        csrf: csrf.0,
+        name: u.display_name,
+        currency: "THB".into(),
+        error: None,
+    })
 }
 
-async fn onboarding(State(svc): Svc, Extension(user): Extension<CurrentUser>, Extension(csrf): Extension<Csrf>, Form(f): Form<OnboardingForm>) -> PageResult {
+async fn onboarding(
+    State(svc): Svc,
+    Extension(user): Extension<CurrentUser>,
+    Extension(csrf): Extension<Csrf>,
+    Form(f): Form<OnboardingForm>,
+) -> PageResult {
     let lang = Lang::parse(&f.lang).unwrap_or_default();
     match svc.onboard(user.id, &f.name, &f.base_currency, lang).await {
         Ok(project) => Ok((
-            AppendHeaders([set_cookie(svc.config(), PROJECT_COOKIE, &project.to_string(), YEAR), set_cookie(svc.config(), LANG_COOKIE, lang.code(), YEAR)]),
+            AppendHeaders([
+                set_cookie(svc.config(), PROJECT_COOKIE, &project.to_string(), YEAR),
+                set_cookie(svc.config(), LANG_COOKIE, lang.code(), YEAR),
+            ]),
             Redirect::to("/budget"),
         )
             .into_response()),
-        Err(AppError::Validation(m)) => render(&OnboardingPage { lang, langs: Lang::ALL, csrf: csrf.0, name: f.name, currency: f.base_currency, error: Some(m) }),
+        Err(AppError::Validation(m)) => render(&OnboardingPage {
+            lang,
+            langs: Lang::ALL,
+            csrf: csrf.0,
+            name: f.name,
+            currency: f.base_currency,
+            error: Some(m),
+        }),
         Err(e) => Err(PageError(e)),
     }
 }
@@ -505,7 +591,14 @@ fn profile_ctx(page: PageCtx) -> PageCtx {
 
 async fn profile_page(svc: &ProjectService, page: PageCtx, error: Option<String>) -> PageResult {
     let u = svc.user(page.session.user_id).await?;
-    render(&ProfilePage { page: profile_ctx(page), name: u.display_name, email: u.email, user_lang: u.lang.upper().into(), theme: u.theme.as_str().into(), error })
+    render(&ProfilePage {
+        page: profile_ctx(page),
+        name: u.display_name,
+        email: u.email,
+        user_lang: u.lang.upper().into(),
+        theme: u.theme.as_str().into(),
+        error,
+    })
 }
 
 async fn profile(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
@@ -528,14 +621,23 @@ async fn save_profile(State(svc): Svc, Extension(page): Extension<PageCtx>, Form
         Ok(()) => {
             let cfg = page.config.clone();
             let msg = kernel::i18n::t(lang, None, "toast.saved");
-            Ok((AppendHeaders([set_cookie(&cfg, LANG_COOKIE, lang.code(), YEAR), flash_cookie(&cfg, &Flash::ok(msg))]), Redirect::to("/profile")).into_response())
+            Ok((
+                AppendHeaders([set_cookie(&cfg, LANG_COOKIE, lang.code(), YEAR), flash_cookie(&cfg, &Flash::ok(msg))]),
+                Redirect::to("/profile"),
+            )
+                .into_response())
         }
         Err(AppError::Validation(m)) => profile_page(&svc, page, Some(m.replace("display_name", "name"))).await,
         Err(e) => Err(PageError(e)),
     }
 }
 
-async fn delete_account(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Form(f): Form<ProfileForm>) -> PageResult {
+async fn delete_account(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Form(f): Form<ProfileForm>,
+) -> PageResult {
     let u = svc.user(page.session.user_id).await?;
     if !f.confirm.trim().eq_ignore_ascii_case(&u.email) {
         let msg = kernel::i18n::t(page.lang, Some(crate::i18n::dict), "confirm_email_mismatch");
@@ -545,7 +647,11 @@ async fn delete_account(State(svc): Svc, Extension(page): Extension<PageCtx>, Ex
         Ok(d) => {
             let cfg = page.config.clone();
             let to = if d.rauthy { "/data-deletion?done=1" } else { "/data-deletion?done=1&rauthy=0" };
-            Ok((AppendHeaders([session_cookie(&cfg, "", 0), set_cookie(&cfg, PROJECT_COOKIE, "", 0)]), Redirect::to(to)).into_response())
+            Ok((
+                AppendHeaders([session_cookie(&cfg, "", 0), set_cookie(&cfg, PROJECT_COOKIE, "", 0)]),
+                Redirect::to(to),
+            )
+                .into_response())
         }
         Err(AppError::Validation(m)) => profile_page(&svc, page, Some(format!("confirm: {m}"))).await,
         Err(e) => Err(PageError(e)),
@@ -615,10 +721,17 @@ fn browser(ua: &str) -> String {
         "Chrome/" => "Chrome",
         _ => "Safari",
     });
-    let os = [("iPhone", "iPhone"), ("iPad", "iPad"), ("Android", "Android"), ("Mac OS X", "macOS"), ("Windows", "Windows"), ("Linux", "Linux")]
-        .iter()
-        .find(|(k, _)| ua.contains(k))
-        .map(|(_, v)| *v);
+    let os = [
+        ("iPhone", "iPhone"),
+        ("iPad", "iPad"),
+        ("Android", "Android"),
+        ("Mac OS X", "macOS"),
+        ("Windows", "Windows"),
+        ("Linux", "Linux"),
+    ]
+    .iter()
+    .find(|(k, _)| ua.contains(k))
+    .map(|(_, v)| *v);
     match (b, os) {
         (Some(b), Some(o)) => format!("{b} · {o}"),
         (Some(b), None) => b.to_string(),
@@ -627,7 +740,13 @@ fn browser(ua: &str) -> String {
     }
 }
 
-async fn security_page(svc: &ProjectService, page: PageCtx, identity: &Identity, new_token: Option<String>, error: Option<String>) -> PageResult {
+async fn security_page(
+    svc: &ProjectService,
+    page: PageCtx,
+    identity: &Identity,
+    new_token: Option<String>,
+    error: Option<String>,
+) -> PageResult {
     let user = page.session.user_id;
     let current = match &identity.via {
         Via::Session { id_hash } => id_hash.clone(),
@@ -645,7 +764,9 @@ async fn security_page(svc: &ProjectService, page: PageCtx, identity: &Identity,
         .filter(|s| !guest || s.id_hash == current)
         .map(|s: SessionRecord| DeviceView {
             current: s.id_hash == current,
-            browser: Some(browser(s.user_agent.as_deref().unwrap_or(""))).filter(|b| !b.is_empty()).unwrap_or_else(|| unknown.clone()),
+            browser: Some(browser(s.user_agent.as_deref().unwrap_or("")))
+                .filter(|b| !b.is_empty())
+                .unwrap_or_else(|| unknown.clone()),
             ip: s.ip.unwrap_or_default(),
             created: when(&page, s.created_at),
             last_seen: when(&page, s.last_seen_at),
@@ -654,7 +775,9 @@ async fn security_page(svc: &ProjectService, page: PageCtx, identity: &Identity,
         })
         .collect();
     let names: Vec<(Uuid, String)> = page.session.projects.iter().map(|p| (p.id, p.name.clone())).collect();
-    let project_name = |id: Option<Uuid>| id.and_then(|id| names.iter().find(|(p, _)| *p == id)).map(|(_, n)| n.clone()).unwrap_or_default();
+    let project_name = |id: Option<Uuid>| {
+        id.and_then(|id| names.iter().find(|(p, _)| *p == id)).map(|(_, n)| n.clone()).unwrap_or_default()
+    };
     let now = Utc::now();
     let tokens = if guest { Vec::new() } else { svc.tokens(user).await? };
     let tokens = tokens
@@ -678,17 +801,42 @@ async fn security_page(svc: &ProjectService, page: PageCtx, identity: &Identity,
     let events = if guest { Vec::new() } else { svc.audit_log(user).await? };
     let events = events
         .into_iter()
-        .map(|e: AuditEvent| EventView { at: when(&page, e.at), action: page.t(&format!("act.{}", e.action)), project: project_name(e.project_id), ip: e.ip.unwrap_or_default() })
+        .map(|e: AuditEvent| EventView {
+            at: when(&page, e.at),
+            action: page.t(&format!("act.{}", e.action)),
+            project: project_name(e.project_id),
+            ip: e.ip.unwrap_or_default(),
+        })
         .collect();
     let account_url = page.config.oidc.as_ref().map(|o| o.account_url.clone()).unwrap_or_default();
-    render(&SecurityPage { page, devices, tokens, events, projects: names, terms: TOKEN_TERMS, new_token, error, account_url, guest })
+    render(&SecurityPage {
+        page,
+        devices,
+        tokens,
+        events,
+        projects: names,
+        terms: TOKEN_TERMS,
+        new_token,
+        error,
+        account_url,
+        guest,
+    })
 }
 
-async fn security(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(identity): Extension<Identity>) -> PageResult {
+async fn security(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(identity): Extension<Identity>,
+) -> PageResult {
     security_page(&svc, page, &identity, None, None).await
 }
 
-async fn logout_all(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(identity): Extension<Identity>, Extension(meta): Extension<RequestMeta>) -> PageResult {
+async fn logout_all(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(identity): Extension<Identity>,
+    Extension(meta): Extension<RequestMeta>,
+) -> PageResult {
     let current = match &identity.via {
         Via::Session { id_hash } => id_hash.clone(),
         Via::Token { .. } => String::new(),
@@ -699,7 +847,12 @@ async fn logout_all(State(svc): Svc, Extension(page): Extension<PageCtx>, Extens
     Ok(see_other_flash(&cfg, "/profile/security", Flash::ok(msg)))
 }
 
-async fn revoke_session(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path(hash): Path<String>) -> PageResult {
+async fn revoke_session(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Path(hash): Path<String>,
+) -> PageResult {
     svc.revoke_session(page.session.user_id, &hash, &meta).await?;
     Ok(see_other("/profile/security"))
 }
@@ -724,12 +877,19 @@ async fn create_token(
     let days: i64 = f.days.parse().unwrap_or(90);
     match svc.create_token(page.session.user_id, project, &f.name, &f.scope, days, identity.mfa, &meta).await {
         Ok((raw, _)) => security_page(&svc, page, &identity, Some(raw), None).await,
-        Err(AppError::Validation(m) | AppError::Forbidden(m) | AppError::NotFound(m)) => security_page(&svc, page, &identity, None, Some(m)).await,
+        Err(AppError::Validation(m) | AppError::Forbidden(m) | AppError::NotFound(m)) => {
+            security_page(&svc, page, &identity, None, Some(m)).await
+        }
         Err(e) => Err(PageError(e)),
     }
 }
 
-async fn revoke_token(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path(id): Path<Uuid>) -> PageResult {
+async fn revoke_token(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Path(id): Path<Uuid>,
+) -> PageResult {
     svc.revoke_token(page.session.user_id, id, &meta).await?;
     Ok(see_other("/profile/security"))
 }
@@ -766,7 +926,11 @@ impl OverviewPage {
     }
 
     fn telegram(&self, project: &str, url: &str) -> String {
-        format!("https://t.me/share/url?url={}&text={}", kernel::web::url_encode(url), kernel::web::url_encode(&self.share_text(project)))
+        format!(
+            "https://t.me/share/url?url={}&text={}",
+            kernel::web::url_encode(url),
+            kernel::web::url_encode(&self.share_text(project))
+        )
     }
 
     fn whatsapp(&self, project: &str, url: &str) -> String {
@@ -778,15 +942,28 @@ impl OverviewPage {
 /// с полем вокруг — так его читает любая камера.
 fn qr_svg(url: &str) -> String {
     use qrcode::render::svg;
-    let Ok(code) = qrcode::QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::M) else { return String::new() };
-    let svg = code.render::<svg::Color>().min_dimensions(176, 176).dark_color(svg::Color("#000000")).light_color(svg::Color("#ffffff")).build();
+    let Ok(code) = qrcode::QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::M) else {
+        return String::new();
+    };
+    let svg = code
+        .render::<svg::Color>()
+        .min_dimensions(176, 176)
+        .dark_color(svg::Color("#000000"))
+        .light_color(svg::Color("#ffffff"))
+        .build();
     // Без XML-пролога: SVG встраивается прямо в HTML.
     svg.find("<svg").map(|i| svg[i..].to_string()).unwrap_or_default()
 }
 
 async fn show(svc: &ProjectService, page: PageCtx, error: Option<String>, opened: Option<Uuid>) -> PageResult {
     let projects = svc.overview(page.session.user_id).await?;
-    render(&OverviewPage { page: page.for_feature(crate::NAME, crate::i18n::dict), projects, roles: &Role::VALUES, error, opened })
+    render(&OverviewPage {
+        page: page.for_feature(crate::NAME, crate::i18n::dict),
+        projects,
+        roles: &Role::VALUES,
+        error,
+        opened,
+    })
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -805,11 +982,17 @@ async fn done(svc: &ProjectService, page: PageCtx, r: Result<(), AppError>, flas
         Ok(()) => {
             let cfg = page.config.clone();
             Ok(match flash {
-                Some(key) => see_other_flash(&cfg, "/projects", Flash::ok(kernel::i18n::t(page.lang, Some(crate::i18n::dict), key))),
+                Some(key) => see_other_flash(
+                    &cfg,
+                    "/projects",
+                    Flash::ok(kernel::i18n::t(page.lang, Some(crate::i18n::dict), key)),
+                ),
                 None => see_other("/projects"),
             })
         }
-        Err(AppError::Validation(m) | AppError::Conflict(m) | AppError::Forbidden(m)) => show(svc, page, Some(m), None).await,
+        Err(AppError::Validation(m) | AppError::Conflict(m) | AppError::Forbidden(m)) => {
+            show(svc, page, Some(m), None).await
+        }
         Err(e) => Err(PageError(e)),
     }
 }
@@ -822,10 +1005,16 @@ struct CreateForm {
     base_currency: String,
 }
 
-async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Form(f): Form<CreateForm>) -> PageResult {
+async fn create(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Form(f): Form<CreateForm>,
+) -> PageResult {
     let kind = ProjectKind::parse(&f.kind).unwrap_or(ProjectKind::Family);
     match svc.create_project(page.session.user_id, &f.name, kind, &f.base_currency, &meta).await {
-        Ok(id) => Ok(([set_cookie(&page.config, PROJECT_COOKIE, &id.to_string(), YEAR)], Redirect::to("/projects")).into_response()),
+        Ok(id) => Ok(([set_cookie(&page.config, PROJECT_COOKIE, &id.to_string(), YEAR)], Redirect::to("/projects"))
+            .into_response()),
         Err(e) => done(&svc, page, Err(e), None).await,
     }
 }
@@ -843,22 +1032,43 @@ struct NameForm {
     value: String,
 }
 
-async fn rename(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>, Form(f): Form<NameForm>) -> PageResult {
+async fn rename(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Path(id): Path<Uuid>,
+    Form(f): Form<NameForm>,
+) -> PageResult {
     let r = svc.rename(page.session.user_id, id, &f.name).await;
     done(&svc, page, r, Some("toast.saved")).await
 }
 
-async fn require_2fa(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path(id): Path<Uuid>, Form(f): Form<NameForm>) -> PageResult {
+async fn require_2fa(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Path(id): Path<Uuid>,
+    Form(f): Form<NameForm>,
+) -> PageResult {
     let r = svc.set_require_2fa(page.session.user_id, id, f.value == "1", &meta).await;
     done(&svc, page, r, Some("toast.saved")).await
 }
 
-async fn delete_project(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path(id): Path<Uuid>, Form(f): Form<NameForm>) -> PageResult {
+async fn delete_project(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Path(id): Path<Uuid>,
+    Form(f): Form<NameForm>,
+) -> PageResult {
     let r = svc.delete_project(page.session.user_id, id, &f.confirm, &meta).await;
     if r.is_ok() && id == page.session.project_id {
         let cfg = page.config.clone();
         let msg = kernel::i18n::t(page.lang, Some(crate::i18n::dict), "project_deleted");
-        return Ok((AppendHeaders([set_cookie(&cfg, PROJECT_COOKIE, "", 0), flash_cookie(&cfg, &Flash::ok(msg))]), Redirect::to("/projects")).into_response());
+        return Ok((
+            AppendHeaders([set_cookie(&cfg, PROJECT_COOKIE, "", 0), flash_cookie(&cfg, &Flash::ok(msg))]),
+            Redirect::to("/projects"),
+        )
+            .into_response());
     }
     done(&svc, page, r, Some("project_deleted")).await
 }
@@ -873,30 +1083,58 @@ fn parse_role(v: &str) -> Result<Role, AppError> {
     Role::parse(v).ok_or_else(|| AppError::Validation(format!("role: '{v}'")))
 }
 
-async fn set_role(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path((id, user)): Path<(Uuid, Uuid)>, Form(f): Form<MemberForm>) -> PageResult {
+async fn set_role(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Path((id, user)): Path<(Uuid, Uuid)>,
+    Form(f): Form<MemberForm>,
+) -> PageResult {
     let r = async { svc.set_role(page.session.user_id, id, user, parse_role(&f.role)?, &meta).await }.await;
     done(&svc, page, r, Some("toast.saved")).await
 }
 
-async fn remove_member(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path((id, user)): Path<(Uuid, Uuid)>) -> PageResult {
+async fn remove_member(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Path((id, user)): Path<(Uuid, Uuid)>,
+) -> PageResult {
     let me = page.session.user_id;
     let r = svc.remove_member(me, id, user, &meta).await;
     // Вышел сам из активного проекта — сбросить выбор проекта.
     if r.is_ok() && me == user {
         let cfg = page.config.clone();
         let msg = kernel::i18n::t(page.lang, Some(crate::i18n::dict), "left_project");
-        let clear = if id == page.session.project_id { set_cookie(&cfg, PROJECT_COOKIE, "", 0) } else { set_cookie(&cfg, "fb_noop", "", 0) };
-        return Ok((AppendHeaders([clear, flash_cookie(&cfg, &Flash::ok(msg))]), Redirect::to("/projects")).into_response());
+        let clear = if id == page.session.project_id {
+            set_cookie(&cfg, PROJECT_COOKIE, "", 0)
+        } else {
+            set_cookie(&cfg, "fb_noop", "", 0)
+        };
+        return Ok(
+            (AppendHeaders([clear, flash_cookie(&cfg, &Flash::ok(msg))]), Redirect::to("/projects")).into_response()
+        );
     }
     done(&svc, page, r, Some("toast.saved")).await
 }
 
-async fn make_family(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path(id): Path<Uuid>) -> PageResult {
+async fn make_family(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Path(id): Path<Uuid>,
+) -> PageResult {
     let r = svc.make_family(page.session.user_id, id, &meta).await;
     done(&svc, page, r, Some("made_family")).await
 }
 
-async fn create_invite(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path(id): Path<Uuid>, Form(f): Form<MemberForm>) -> PageResult {
+async fn create_invite(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Path(id): Path<Uuid>,
+    Form(f): Form<MemberForm>,
+) -> PageResult {
     let r = async { svc.create_invite(page.session.user_id, id, parse_role(&f.role)?, &meta).await }.await;
     match r {
         // Карточка нового приглашения открыта: QR-код и кнопки «Поделиться» сразу на экране.
@@ -905,7 +1143,12 @@ async fn create_invite(State(svc): Svc, Extension(page): Extension<PageCtx>, Ext
     }
 }
 
-async fn revoke_invite(State(svc): Svc, Extension(page): Extension<PageCtx>, Extension(meta): Extension<RequestMeta>, Path((id, invite)): Path<(Uuid, Uuid)>) -> PageResult {
+async fn revoke_invite(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Extension(meta): Extension<RequestMeta>,
+    Path((id, invite)): Path<(Uuid, Uuid)>,
+) -> PageResult {
     let r = svc.revoke_invite(page.session.user_id, id, invite, &meta).await;
     done(&svc, page, r, Some("invite_revoked")).await
 }
@@ -932,7 +1175,13 @@ mod tests {
     #[test]
     fn pending_cookie_roundtrip() {
         let cfg = Config::test();
-        let p = PendingLogin { state: "s".into(), nonce: "n".into(), pkce_verifier: "v".into(), next: "/budget".into(), started: 1 };
+        let p = PendingLogin {
+            state: "s".into(),
+            nonce: "n".into(),
+            pkce_verifier: "v".into(),
+            next: "/budget".into(),
+            started: 1,
+        };
         let mut h = HeaderMap::new();
         h.insert(axum::http::header::COOKIE, format!("{OIDC_COOKIE}={}", seal_pending(&cfg, &p)).parse().unwrap());
         assert_eq!(open_pending(&cfg, &h), Some(p));

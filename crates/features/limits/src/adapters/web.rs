@@ -7,7 +7,7 @@ use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use kernel::error::AppError;
-use kernel::web::{Flash, see_other_flash, Choice, PageCtx, PageError, PageResult, parse_money, render, see_other};
+use kernel::web::{Choice, Flash, PageCtx, PageError, PageResult, parse_money, render, see_other, see_other_flash};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -18,8 +18,11 @@ type Svc = State<Arc<LimitService>>;
 
 pub fn router(service: Arc<LimitService>) -> Router {
     Router::new()
-        .route("/", get(list).post(create)).route("/remove", post(remove)).route("/{id}/delete", post(delete))
-        .route("/undo/{token}", post(undo)).with_state(service)
+        .route("/", get(list).post(create))
+        .route("/remove", post(remove))
+        .route("/{id}/delete", post(delete))
+        .route("/undo/{token}", post(undo))
+        .with_state(service)
 }
 
 struct Row {
@@ -62,7 +65,7 @@ async fn show(svc: &LimitService, page: PageCtx, error: Option<String>) -> PageR
     for c in &categories {
         let mut mine: Vec<&LimitDto> = all.iter().filter(|l| l.category_code == c.code).collect();
         // Правило действует с начала своего периода; при одинаковом начале — более позднее по дате.
-        mine.sort_by(|a, b| (b.effective_from, b.valid_from).cmp(&(a.effective_from, a.valid_from)));
+        mine.sort_by_key(|l| std::cmp::Reverse((l.effective_from, l.valid_from)));
         let current = mine.iter().find(|l| l.effective_from <= today).map(|l| l.id);
         for l in mine {
             let superseded = l.effective_from <= today && Some(l.id) != current;
@@ -109,7 +112,11 @@ async fn save(svc: Arc<LimitService>, page: PageCtx, f: LimitForm, removed: bool
 /// Удаление без «Вы уверены?»: тост с «Отменить» на 5 секунд.
 async fn delete(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>) -> PageResult {
     let token = svc.delete_with_undo(page.session.project_id, id).await?;
-    Ok(see_other_flash(&page.config, "/limits", Flash::with_undo(page.t("toast.deleted"), format!("/limits/undo/{token}"))))
+    Ok(see_other_flash(
+        &page.config,
+        "/limits",
+        Flash::with_undo(page.t("toast.deleted"), format!("/limits/undo/{token}")),
+    ))
 }
 
 async fn undo(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(token): Path<Uuid>) -> PageResult {

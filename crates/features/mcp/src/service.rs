@@ -36,12 +36,23 @@ pub struct Settings {
 impl Settings {
     pub fn from_config(config: &kernel::config::Config) -> Self {
         let base_url = config.base_url.trim_end_matches('/').to_string();
-        let var = |name: &str, default: &str| std::env::var(name).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string());
+        let var = |name: &str, default: &str| {
+            std::env::var(name)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| default.to_string())
+        };
         Settings {
             resource: format!("{base_url}/mcp"),
             base_url,
             assistants: vec![
-                Assistant { key: "claude", name: "Claude", client_id: var("MCP_OAUTH_CLIENT_ID", "claude"), client_secret: None },
+                Assistant {
+                    key: "claude",
+                    name: "Claude",
+                    client_id: var("MCP_OAUTH_CLIENT_ID", "claude"),
+                    client_secret: None,
+                },
                 Assistant {
                     key: "chatgpt",
                     name: "ChatGPT",
@@ -118,7 +129,9 @@ pub type ToolResult = Result<ToolOutput, ToolError>;
 impl From<AppError> for ToolError {
     fn from(e: AppError) -> Self {
         match e {
-            AppError::Validation(m) | AppError::Conflict(m) | AppError::NotFound(m) | AppError::Forbidden(m) => ToolError(m),
+            AppError::Validation(m) | AppError::Conflict(m) | AppError::NotFound(m) | AppError::Forbidden(m) => {
+                ToolError(m)
+            }
             // Код ошибки — для ассистента (AMOUNT_MISMATCH, KIND_MISMATCH, NOT_FOUND…), текст — на языке пользователя.
             AppError::Invalid(p) | AppError::ConflictWith(p) => ToolError(format!("[{}] {p}", p.code)),
             AppError::TooManyRequests(m) => ToolError(m),
@@ -142,7 +155,9 @@ pub fn tool_right(name: &str) -> Option<Right> {
         "list_transactions" | "get_balances" => Right::read("transactions"),
         "get_budget" => Right::read("budget"),
         "list_upcoming_payments" => Right::read("planning"),
-        "add_expense" | "add_income" | "add_transfer" | "update_transaction" | "pay_planned" => Right::write("transactions"),
+        "add_expense" | "add_income" | "add_transfer" | "update_transaction" | "pay_planned" => {
+            Right::write("transactions")
+        }
         "skip_planned" | "add_plan" | "update_plan" => Right::write("planning"),
         "list_plans" => Right::read("planning"),
         "add_currency" | "update_currency" => Right::write("currencies"),
@@ -180,7 +195,9 @@ fn today() -> NaiveDate {
 fn lang_of(field: &str, value: Option<&str>, default: Lang) -> Result<Lang, String> {
     match value.map(str::trim).filter(|v| !v.is_empty()) {
         None => Ok(default),
-        Some(v) => Lang::parse(&v.to_ascii_lowercase()).ok_or_else(|| format!("{field}: expected ru, en or th, got '{v}'")),
+        Some(v) => {
+            Lang::parse(&v.to_ascii_lowercase()).ok_or_else(|| format!("{field}: expected ru, en or th, got '{v}'"))
+        }
     }
 }
 
@@ -218,7 +235,11 @@ impl McpService {
     /// Проверить `Authorization: Bearer`: личный API-токен или access-токен провайдера входа.
     pub async fn authenticate(&self, bearer: Option<&str>, meta: RequestMeta) -> AppResult<Auth> {
         let Some(raw) = bearer.map(str::trim).filter(|t| !t.is_empty()) else { return Ok(Auth::Missing) };
-        let caller = if raw.starts_with(API_TOKEN_PREFIX) { self.token_caller(raw, meta).await? } else { self.grant_caller(raw, meta).await? };
+        let caller = if raw.starts_with(API_TOKEN_PREFIX) {
+            self.token_caller(raw, meta).await?
+        } else {
+            self.grant_caller(raw, meta).await?
+        };
         let Some(caller) = caller else { return Ok(Auth::Invalid) };
         if !self.limiter.allow(&caller.throttle_key(), self.settings.rate_limit) {
             return Ok(Auth::Throttled);
@@ -227,10 +248,18 @@ impl McpService {
     }
 
     async fn token_caller(&self, raw: &str, meta: RequestMeta) -> AppResult<Option<Caller>> {
-        let Some(identity) = self.deps.authenticator.authenticate(&Credential::ApiToken(raw.to_string())).await? else { return Ok(None) };
+        let Some(identity) = self.deps.authenticator.authenticate(&Credential::ApiToken(raw.to_string())).await? else {
+            return Ok(None);
+        };
         let AuthVia::Token { token_id, project_id, scopes } = identity.via else { return Ok(None) };
         // Токен выпущен на один проект: если пользователь из него вышел — токен не действует.
-        let Some(info) = self.deps.memberships.session(identity.user_id, Some(project_id)).await?.filter(|i| i.project_id == project_id) else {
+        let Some(info) = self
+            .deps
+            .memberships
+            .session(identity.user_id, Some(project_id))
+            .await?
+            .filter(|i| i.project_id == project_id)
+        else {
             return Ok(None);
         };
         // Проект требует 2FA, а токен выпущен из сессии без второго фактора — как и сессия, не действует.
@@ -251,7 +280,10 @@ impl McpService {
     }
 
     async fn grant_caller(&self, raw: &str, meta: RequestMeta) -> AppResult<Option<Caller>> {
-        let Some((user_id, client_id)) = self.deps.accounts.verify_access_token(raw, &self.settings.resource).await? else { return Ok(None) };
+        let Some((user_id, client_id)) = self.deps.accounts.verify_access_token(raw, &self.settings.resource).await?
+        else {
+            return Ok(None);
+        };
         let unconfigured = |info: Option<kernel::auth::SessionInfo>, reason: Unconfigured| Caller {
             user_id,
             project_id: info.as_ref().map(|i| i.project_id).unwrap_or_default(),
@@ -304,7 +336,13 @@ impl McpService {
 
     /// Требует ли проект второй фактор (для проекта, в котором пользователь состоит).
     pub async fn require_2fa(&self, user_id: Uuid, project_id: Uuid) -> AppResult<bool> {
-        Ok(self.deps.memberships.session(user_id, Some(project_id)).await?.filter(|i| i.project_id == project_id).is_some_and(|i| i.require_2fa))
+        Ok(self
+            .deps
+            .memberships
+            .session(user_id, Some(project_id))
+            .await?
+            .filter(|i| i.project_id == project_id)
+            .is_some_and(|i| i.require_2fa))
     }
 
     /// Открыть или изменить доступ ассистента. Вызывается только со страницы в браузере (сессия и
@@ -326,7 +364,9 @@ impl McpService {
             return Err(AppError::Forbidden("демо-гость: только просмотр".into()));
         }
         if require_2fa && !session_mfa {
-            return Err(AppError::Forbidden("проект требует 2FA: войдите со вторым фактором и сохраните доступ снова".into()));
+            return Err(AppError::Forbidden(
+                "проект требует 2FA: войдите со вторым фактором и сохраните доступ снова".into(),
+            ));
         }
         let mut scopes = normalize_grant_scopes(scopes);
         if role < Role::Editor {
@@ -349,7 +389,13 @@ impl McpService {
         self.repo.save(&grant).await?;
         self.deps
             .accounts
-            .record(user_id, Some(project_id), "mcp_access_granted", meta, &[("client", client_id.to_string()), ("scopes", scopes.join(" "))])
+            .record(
+                user_id,
+                Some(project_id),
+                "mcp_access_granted",
+                meta,
+                &[("client", client_id.to_string()), ("scopes", scopes.join(" "))],
+            )
             .await;
         Ok(grant)
     }
@@ -357,7 +403,16 @@ impl McpService {
     pub async fn revoke_grant(&self, user_id: Uuid, client_id: &str, meta: &RequestMeta) -> AppResult<()> {
         let grant = self.repo.grant(user_id, client_id).await?;
         if self.repo.delete(user_id, client_id).await? {
-            self.deps.accounts.record(user_id, grant.map(|g| g.project_id), "mcp_access_revoked", meta, &[("client", client_id.to_string())]).await;
+            self.deps
+                .accounts
+                .record(
+                    user_id,
+                    grant.map(|g| g.project_id),
+                    "mcp_access_revoked",
+                    meta,
+                    &[("client", client_id.to_string())],
+                )
+                .await;
         }
         Ok(())
     }
@@ -416,7 +471,10 @@ impl McpService {
     pub async fn get_context(&self, caller: &Caller) -> ToolResult {
         if let Via::Unconfigured { reason, .. } = &caller.via {
             let setup_url = self.settings.setup_url_for(caller.client());
-            return Ok(ToolOutput { summary: reason.message(&setup_url), data: json!({"configured": false, "setup_url": setup_url}) });
+            return Ok(ToolOutput {
+                summary: reason.message(&setup_url),
+                data: json!({"configured": false, "setup_url": setup_url}),
+            });
         }
         let today = today();
         let mut base = json!({
@@ -428,9 +486,16 @@ impl McpService {
             "permissions": self.permissions(caller),
         });
         // Валюты — для просмотра и для ссылок из счетов и курсов.
-        if [Right::read("currencies"), Right::write("accounts"), Right::write("rates")].into_iter().any(|r| caller.allows(r)) {
+        if [Right::read("currencies"), Right::write("accounts"), Right::write("rates")]
+            .into_iter()
+            .any(|r| caller.allows(r))
+        {
             let list = self.deps.directories.currencies(caller.project_id).await?;
-            base["currencies"] = list.iter().filter(|c| !c.archived).map(|c| json!({"code": c.code, "name": c.name.show(caller.lang), "symbol": c.symbol})).collect();
+            base["currencies"] = list
+                .iter()
+                .filter(|c| !c.archived)
+                .map(|c| json!({"code": c.code, "name": c.name.show(caller.lang), "symbol": c.symbol}))
+                .collect();
         }
         if !caller.allows(Right::read("transactions")) {
             return Ok(ToolOutput { summary: "No read access to transactions in this project.".into(), data: base });
@@ -438,9 +503,7 @@ impl McpService {
         let q = self.quick(caller, today).await?;
         let balances = self.deps.ledger.balances(caller.project_id, today).await?;
         let balance = |code: &str| balances.iter().find(|b| b.0 == code).map(|b| b.1).unwrap_or_default();
-        let cat = |c: &CategoryInfo| {
-            json!({"code": c.code, "title": c.title, "names": c.search.split(kernel::search::SEP).collect::<Vec<_>>(), "parent": c.parent_code, "depth": c.depth, "month_limit": c.limit, "month_available": c.available})
-        };
+        let cat = |c: &CategoryInfo| json!({"code": c.code, "title": c.title, "names": c.search.split(kernel::search::SEP).collect::<Vec<_>>(), "parent": c.parent_code, "depth": c.depth, "month_limit": c.limit, "month_available": c.available});
         let mut data = base;
         data["default_account"] = json!(q.default_account);
         data["accounts"] = q.accounts.iter().map(|a| json!({"code": a.code, "title": a.title, "currency": a.currency, "symbol": a.symbol, "balance": balance(&a.code), "has_rate": a.has_rate})).collect();
@@ -449,7 +512,13 @@ impl McpService {
         data["frequent_expense_categories"] = json!(q.frequent_expense);
         data["frequent_income_categories"] = json!(q.frequent_income);
         // Места (шаг 5): частые — с тем, что они подставят; все — list_places.
-        data["frequent_places"] = q.places.iter().filter(|p| q.frequent_places.contains(&p.code)).take(FREQUENT_PLACES).map(place_info_json).collect();
+        data["frequent_places"] = q
+            .places
+            .iter()
+            .filter(|p| q.frequent_places.contains(&p.code))
+            .take(FREQUENT_PLACES)
+            .map(place_info_json)
+            .collect();
         data["places_total"] = json!(q.places.len());
         // Люди (шаг 6): все активные — их немного; запись пользователя — «для себя».
         let people = self.deps.directories.people(caller.project_id).await?;
@@ -487,7 +556,9 @@ impl McpService {
             Some(k) => return Err(ToolError(format!("kind: expected expense, income or transfer, got '{k}'"))),
         };
         let place_code = match clean(a.place) {
-            Some(p) => Some(find_record("place", &p, &self.deps.directories.places(caller.project_id).await?)?.code.clone()),
+            Some(p) => {
+                Some(find_record("place", &p, &self.deps.directories.places(caller.project_id).await?)?.code.clone())
+            }
             None => None,
         };
         let for_person = match a.for_whom.as_deref() {
@@ -500,7 +571,8 @@ impl McpService {
             None => None,
         };
         let external_provider = a.from_sms.unwrap_or(false).then(|| SMS_PROVIDER.to_string());
-        let filter = TxFilter { from: Some(from), to: Some(to), account_code, kind, place_code, for_person, external_provider };
+        let filter =
+            TxFilter { from: Some(from), to: Some(to), account_code, kind, place_code, for_person, external_provider };
         let category_set: Option<HashSet<String>> = match a.category.as_deref() {
             Some(c) => {
                 let root = resolve("category", c, &q.categories, |x| &x.code, |x| x.search.clone())?.code.clone();
@@ -518,14 +590,21 @@ impl McpService {
                 let (page, all) = self.deps.ledger.list(caller.project_id, filter.clone(), MAX_PAGE, scanned).await?;
                 let n = page.len() as i64;
                 found.extend(page.into_iter().filter(|t| {
-                    category_set.as_ref().is_none_or(|set| t.items.iter().filter_map(|x| x.category_code.as_ref()).any(|c| set.contains(c)) || t.fee_category_code.as_ref().is_some_and(|f| set.contains(f)))
-                        && text.as_ref().is_none_or(|needle| {
-                            [t.description.as_deref(), t.description_ru.as_deref(), t.description_en.as_deref(), t.description_th.as_deref()]
-                                .into_iter()
-                                .flatten()
-                                .chain(t.items.iter().flat_map(|x| [x.name.as_deref(), x.note.as_deref()]).flatten())
-                                .any(|s| s.to_lowercase().contains(needle.as_str()))
-                        })
+                    category_set.as_ref().is_none_or(|set| {
+                        t.items.iter().filter_map(|x| x.category_code.as_ref()).any(|c| set.contains(c))
+                            || t.fee_category_code.as_ref().is_some_and(|f| set.contains(f))
+                    }) && text.as_ref().is_none_or(|needle| {
+                        [
+                            t.description.as_deref(),
+                            t.description_ru.as_deref(),
+                            t.description_en.as_deref(),
+                            t.description_th.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .chain(t.items.iter().flat_map(|x| [x.name.as_deref(), x.note.as_deref()]).flatten())
+                        .any(|s| s.to_lowercase().contains(needle.as_str()))
+                    })
                 }));
                 scanned += n;
                 if n < MAX_PAGE || scanned >= all {
@@ -554,7 +633,10 @@ impl McpService {
             .iter()
             .map(|a| json!({"code": a.code, "title": a.title, "currency": a.currency, "balance": balances.iter().find(|b| b.0 == a.code).map(|b| b.1).unwrap_or_default()}))
             .collect();
-        Ok(ToolOutput { summary: format!("Balances of {} accounts at the end of {date}.", rows.len()), data: json!({"date": date, "accounts": rows}) })
+        Ok(ToolOutput {
+            summary: format!("Balances of {} accounts at the end of {date}.", rows.len()),
+            data: json!({"date": date, "accounts": rows}),
+        })
     }
 
     pub async fn get_budget(&self, caller: &Caller, a: BudgetArgs) -> ToolResult {
@@ -612,14 +694,29 @@ impl McpService {
             })
             .collect();
         let open = list.iter().filter(|o| o.status == "EXPECTED" || o.status == "OVERDUE").count();
-        Ok(ToolOutput { summary: format!("{} scheduled payments from {from} to {to}, {open} not settled yet.", rows.len()), data: json!({"from": from, "to": to, "payments": rows}) })
+        Ok(ToolOutput {
+            summary: format!("{} scheduled payments from {from} to {to}, {open} not settled yet.", rows.len()),
+            data: json!({"from": from, "to": to, "payments": rows}),
+        })
     }
 
     /// Позиции операции из параметров: позиции или сумма+категория. Категории — по коду или названию.
-    fn items(&self, q: &QuickInfo, people: &[Person], kind: &str, amount: Option<&str>, category: Option<&str>, items: Option<Vec<ItemArgs>>) -> Result<Vec<TxItem>, ToolError> {
+    fn items(
+        &self,
+        q: &QuickInfo,
+        people: &[Person],
+        kind: &str,
+        amount: Option<&str>,
+        category: Option<&str>,
+        items: Option<Vec<ItemArgs>>,
+    ) -> Result<Vec<TxItem>, ToolError> {
         match (items.filter(|i| !i.is_empty()), amount, category) {
-            (Some(items), None, None) => items.into_iter().enumerate().map(|(i, it)| item_from(q, people, None, kind, i + 1, it)).collect(),
-            (None, Some(amount), Some(category)) => Ok(vec![TxItem::simple(category_code(q, kind, "category", category)?, parse_amount("amount", amount)?)]),
+            (Some(items), None, None) => {
+                items.into_iter().enumerate().map(|(i, it)| item_from(q, people, None, kind, i + 1, it)).collect()
+            }
+            (None, Some(amount), Some(category)) => {
+                Ok(vec![TxItem::simple(category_code(q, kind, "category", category)?, parse_amount("amount", amount)?)])
+            }
             (None, _, _) => Err(ToolError("pass amount and category, or items".into())),
             (Some(_), _, _) => Err(ToolError("pass either items or amount+category, not both".into())),
         }
@@ -628,11 +725,21 @@ impl McpService {
     fn account(&self, q: &QuickInfo, field: &str, value: Option<&str>) -> Result<String, ToolError> {
         match value {
             Some(v) => Ok(resolve(field, v, &q.accounts, |x| &x.code, |x| x.title.clone())?.code.clone()),
-            None => q.default_account.clone().ok_or_else(|| ToolError(format!("{field}: no default account; pass an account code"))),
+            None => q
+                .default_account
+                .clone()
+                .ok_or_else(|| ToolError(format!("{field}: no default account; pass an account code"))),
         }
     }
 
-    fn describe(&self, caller: &Caller, draft: &mut TxDraft, description: Option<String>, lang: Option<String>, tr: Option<Translations>) -> Result<(), ToolError> {
+    fn describe(
+        &self,
+        caller: &Caller,
+        draft: &mut TxDraft,
+        description: Option<String>,
+        lang: Option<String>,
+        tr: Option<Translations>,
+    ) -> Result<(), ToolError> {
         let tr = tr.unwrap_or_default();
         draft.description = clean(description);
         draft.description_lang = lang_of("description_lang", lang.as_deref(), caller.lang)?;
@@ -649,10 +756,13 @@ impl McpService {
         let q = self.quick(caller, date).await?;
         // Место подставляет категорию и счёт, если их не передали (docs/group-1.md, 5.2).
         let place = clean(a.place).map(|p| place_of(&q, &p)).transpose()?;
-        let place_category = place.and_then(|p| p.category_code.as_deref()).filter(|c| q.categories.iter().any(|x| x.code == *c && x.kind == kind));
+        let place_category = place
+            .and_then(|p| p.category_code.as_deref())
+            .filter(|c| q.categories.iter().any(|x| x.code == *c && x.kind == kind));
         let category = a.category.as_deref().or(if a.items.is_none() { place_category } else { None });
         // Для кого (шаг 6): шапка и позиции — по коду или имени; по умолчанию — для всех.
-        let named = a.for_whom.is_some() || a.items.as_ref().is_some_and(|items| items.iter().any(|x| x.for_whom.is_some()));
+        let named =
+            a.for_whom.is_some() || a.items.as_ref().is_some_and(|items| items.iter().any(|x| x.for_whom.is_some()));
         let people = if named { self.deps.directories.people(caller.project_id).await? } else { Vec::new() };
         let for_person = a.for_whom.as_deref().map(|w| person_of(&people, "for", w, None)).transpose()?;
         let items = self.items(&q, &people, kind, a.amount.as_deref(), category, a.items)?;
@@ -669,7 +779,14 @@ impl McpService {
         let tx = self.deps.ledger.create(caller.project_id, caller.user_id, draft).await?;
         self.audit_write(caller, tool, &[("transaction", tx.id.to_string())]).await;
         let mut data = json!({"transaction": tx_json(&tx, caller.lang)});
-        let mut summary = format!("Saved {} {} {} on {} from account {}.", kind.to_lowercase(), tx.total.normalize(), tx.currency, tx.occurred_on, tx.account_code);
+        let mut summary = format!(
+            "Saved {} {} {} on {} from account {}.",
+            kind.to_lowercase(),
+            tx.total.normalize(),
+            tx.currency,
+            tx.occurred_on,
+            tx.account_code
+        );
         if let Some(who) = &tx.for_person_code {
             summary.push_str(&format!(" For {who}."));
         } else if tx.recipients_differ {
@@ -700,12 +817,25 @@ impl McpService {
                 .filter(|c| c.available.is_some())
                 .map(|c| json!({"category": c.code, "title": c.title, "month_limit": c.limit, "month_available": c.available}))
                 .collect();
-            let first = codes.iter().filter_map(|code| after.categories.iter().find(|c| c.code == *code)).find_map(|c| c.available.map(|a| (c, a)));
+            let first = codes
+                .iter()
+                .filter_map(|code| after.categories.iter().find(|c| c.code == *code))
+                .find_map(|c| c.available.map(|a| (c, a)));
             if let Some((c, available)) = first {
                 summary.push_str(&if available < rust_decimal::Decimal::ZERO {
-                    format!(" Monthly limit of '{}' is exceeded by {} {} (with parent limits).", c.title, (-available).normalize(), caller.base_currency)
+                    format!(
+                        " Monthly limit of '{}' is exceeded by {} {} (with parent limits).",
+                        c.title,
+                        (-available).normalize(),
+                        caller.base_currency
+                    )
                 } else {
-                    format!(" Left this month in '{}': {} {} (with parent limits).", c.title, available.normalize(), caller.base_currency)
+                    format!(
+                        " Left this month in '{}': {} {} (with parent limits).",
+                        c.title,
+                        available.normalize(),
+                        caller.base_currency
+                    )
                 });
             }
             data["limits_after"] = json!(left);
@@ -739,7 +869,8 @@ impl McpService {
         draft.amount = Some(parse_amount("amount", &a.amount)?);
         draft.to_amount = a.to_amount.as_deref().map(|v| parse_amount("to_amount", v)).transpose()?;
         draft.fee_amount = a.fee_amount.as_deref().map(|v| parse_amount("fee_amount", v)).transpose()?;
-        draft.fee_category_code = a.fee_category.as_deref().map(|c| category_code(&q, "EXPENSE", "fee_category", c)).transpose()?;
+        draft.fee_category_code =
+            a.fee_category.as_deref().map(|c| category_code(&q, "EXPENSE", "fee_category", c)).transpose()?;
         self.describe(caller, &mut draft, a.description, a.description_lang, a.translations)?;
         let tx = self.deps.ledger.create(caller.project_id, caller.user_id, draft).await?;
         self.audit_write(caller, "add_transfer", &[("transaction", tx.id.to_string())]).await;
@@ -762,7 +893,8 @@ impl McpService {
 
     pub async fn update_transaction(&self, caller: &Caller, a: UpdateTransactionArgs) -> ToolResult {
         self.check(caller, Right::write("transactions"))?;
-        let id = Uuid::parse_str(a.id.trim()).map_err(|_| ToolError(format!("id: not a transaction id: '{}'", a.id)))?;
+        let id =
+            Uuid::parse_str(a.id.trim()).map_err(|_| ToolError(format!("id: not a transaction id: '{}'", a.id)))?;
         let old = self.deps.ledger.get(caller.project_id, id).await?;
         if old.kind == "OPENING" {
             return Err(ToolError("opening balances are changed in the account settings, not here".into()));
@@ -777,7 +909,9 @@ impl McpService {
         }
         if old.kind == "TRANSFER" {
             if a.items.is_some() || a.category.is_some() || a.remove_item_ids.is_some() || a.discount_total.is_some() {
-                return Err(ToolError("transfers have no items or categories; change amount, accounts or to_amount".into()));
+                return Err(ToolError(
+                    "transfers have no items or categories; change amount, accounts or to_amount".into(),
+                ));
             }
             if let Some(v) = a.amount.as_deref() {
                 draft.amount = Some(parse_amount("amount", v)?);
@@ -793,20 +927,29 @@ impl McpService {
                 return Err(ToolError("to_account and to_amount apply to transfers only".into()));
             }
             // Для кого: прежние получатели операции остаются доступны и из архива.
-            let named = a.for_whom.is_some() || a.items.as_ref().is_some_and(|items| items.iter().any(|x| x.for_whom.is_some()));
+            let named = a.for_whom.is_some()
+                || a.items.as_ref().is_some_and(|items| items.iter().any(|x| x.for_whom.is_some()));
             let people = if named { self.deps.directories.people(caller.project_id).await? } else { Vec::new() };
             let keep: Vec<String> = old.items.iter().filter_map(|x| x.for_person.clone().flatten()).collect();
             if let Some(w) = a.for_whom.as_deref() {
                 draft.for_person = Some(person_of(&people, "for", w, Some(&keep))?);
             }
             match (a.items, a.amount.as_deref(), a.category.as_deref()) {
-                (Some(items), None, None) => draft.items = items.into_iter().enumerate().map(|(i, it)| item_from(&q, &people, Some(&keep), &old.kind, i + 1, it)).collect::<Result<_, _>>()?,
+                (Some(items), None, None) => {
+                    draft.items = items
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, it)| item_from(&q, &people, Some(&keep), &old.kind, i + 1, it))
+                        .collect::<Result<_, _>>()?
+                }
                 (Some(_), _, _) => return Err(ToolError("pass either items or amount/category, not both".into())),
                 (None, None, None) => {}
                 (None, amount, category) => {
                     // Операция из одной позиции — сумма и категория меняются у неё.
                     let [only] = old.items.as_slice() else {
-                        return Err(ToolError("this transaction has several items; pass items with their ids to change them".into()));
+                        return Err(ToolError(
+                            "this transaction has several items; pass items with their ids to change them".into(),
+                        ));
                     };
                     draft.items = vec![TxItem {
                         id: only.id,
@@ -817,7 +960,13 @@ impl McpService {
                 }
             }
             if let Some(ids) = a.remove_item_ids {
-                draft.remove_item_ids = ids.iter().map(|id| Uuid::parse_str(id.trim()).map_err(|_| ToolError(format!("remove_item_ids: not an item id: '{id}'")))).collect::<Result<_, _>>()?;
+                draft.remove_item_ids = ids
+                    .iter()
+                    .map(|id| {
+                        Uuid::parse_str(id.trim())
+                            .map_err(|_| ToolError(format!("remove_item_ids: not an item id: '{id}'")))
+                    })
+                    .collect::<Result<_, _>>()?;
             }
             draft.discount_total = a.discount_total.as_deref().map(|v| parse_money("discount_total", v)).transpose()?;
             if let Some(p) = a.place.as_deref() {
@@ -842,12 +991,16 @@ impl McpService {
         }
         let tx = self.deps.ledger.update(caller.project_id, id, draft).await?;
         self.audit_write(caller, "update_transaction", &[("transaction", tx.id.to_string())]).await;
-        Ok(ToolOutput { summary: format!("Updated transaction {} ({} {} on {}).", tx.id, tx.total, tx.currency, tx.occurred_on), data: json!({"transaction": tx_json(&tx, caller.lang)}) })
+        Ok(ToolOutput {
+            summary: format!("Updated transaction {} ({} {} on {}).", tx.id, tx.total, tx.currency, tx.occurred_on),
+            data: json!({"transaction": tx_json(&tx, caller.lang)}),
+        })
     }
 
     pub async fn pay_planned(&self, caller: &Caller, a: PayPlannedArgs) -> ToolResult {
         self.check(caller, Right::write("transactions"))?;
-        let plan_id = Uuid::parse_str(a.plan_id.trim()).map_err(|_| ToolError(format!("plan_id: not a plan id: '{}'", a.plan_id)))?;
+        let plan_id = Uuid::parse_str(a.plan_id.trim())
+            .map_err(|_| ToolError(format!("plan_id: not a plan id: '{}'", a.plan_id)))?;
         let today = today();
         let date = parse_date("date", Some(&a.date), today)?;
         let occ = self
@@ -859,7 +1012,10 @@ impl McpService {
             .find(|o| o.plan_id == plan_id)
             .ok_or_else(|| ToolError(format!("no scheduled payment of plan {plan_id} on {date}")))?;
         if occ.status == "PAID" {
-            return Err(ToolError(format!("already paid: transaction {}", occ.transaction_id.map(|t| t.to_string()).unwrap_or_default())));
+            return Err(ToolError(format!(
+                "already paid: transaction {}",
+                occ.transaction_id.map(|t| t.to_string()).unwrap_or_default()
+            )));
         }
         let paid_on = parse_date("paid_on", a.paid_on.as_deref(), today)?;
         let q = self.quick(caller, paid_on).await?;
@@ -885,24 +1041,37 @@ impl McpService {
         let tx = self.deps.ledger.create(caller.project_id, caller.user_id, draft).await?;
         self.audit_write(caller, "pay_planned", &[("transaction", tx.id.to_string())]).await;
         Ok(ToolOutput {
-            summary: format!("Paid '{}' scheduled for {date}: {} {} on {}.", occ.name, tx.total, tx.currency, tx.occurred_on),
+            summary: format!(
+                "Paid '{}' scheduled for {date}: {} {} on {}.",
+                occ.name, tx.total, tx.currency, tx.occurred_on
+            ),
             data: json!({"transaction": tx_json(&tx, caller.lang)}),
         })
     }
 
     pub async fn skip_planned(&self, caller: &Caller, a: SkipPlannedArgs) -> ToolResult {
         self.check(caller, Right::write("planning"))?;
-        let plan_id = Uuid::parse_str(a.plan_id.trim()).map_err(|_| ToolError(format!("plan_id: not a plan id: '{}'", a.plan_id)))?;
+        let plan_id = Uuid::parse_str(a.plan_id.trim())
+            .map_err(|_| ToolError(format!("plan_id: not a plan id: '{}'", a.plan_id)))?;
         let date = parse_date("date", Some(&a.date), today())?;
         self.deps.plans.skip(caller.project_id, caller.user_id, plan_id, date).await?;
         self.audit_write(caller, "skip_planned", &[("plan", plan_id.to_string()), ("date", date.to_string())]).await;
-        Ok(ToolOutput { summary: format!("Skipped the payment of plan {plan_id} scheduled for {date}."), data: json!({"plan_id": plan_id, "date": date, "status": "SKIPPED"}) })
+        Ok(ToolOutput {
+            summary: format!("Skipped the payment of plan {plan_id} scheduled for {date}."),
+            data: json!({"plan_id": plan_id, "date": date, "status": "SKIPPED"}),
+        })
     }
 
     // ------------------------------------------------------------ справочники: валюты, счета, категории
 
     /// Название новой записи: текст, язык (по умолчанию — язык пользователя), переводы.
-    fn new_name(&self, caller: &Caller, text: &str, lang: Option<&str>, tr: Option<NameTranslations>) -> Result<Name, ToolError> {
+    fn new_name(
+        &self,
+        caller: &Caller,
+        text: &str,
+        lang: Option<&str>,
+        tr: Option<NameTranslations>,
+    ) -> Result<Name, ToolError> {
         let tr = tr.unwrap_or_default();
         Ok(Name::new("name", text, lang_of("name_lang", lang, caller.lang)?, tr.ru, tr.en, tr.th)?)
     }
@@ -938,7 +1107,12 @@ impl McpService {
 
     pub async fn update_currency(&self, caller: &Caller, a: UpdateCurrencyArgs) -> ToolResult {
         self.check(caller, Right::write("currencies"))?;
-        if a.name.is_none() && a.name_lang.is_none() && a.translations.is_none() && a.symbol.is_none() && a.minor_units.is_none() {
+        if a.name.is_none()
+            && a.name_lang.is_none()
+            && a.translations.is_none()
+            && a.symbol.is_none()
+            && a.minor_units.is_none()
+        {
             return Err(nothing_to_change());
         }
         let list = self.deps.directories.currencies(caller.project_id).await?;
@@ -953,11 +1127,19 @@ impl McpService {
         }
         let c = self.deps.directories.update_currency(caller.project_id, &c).await?;
         self.audit_write(caller, "update_currency", &[("currency", c.code.clone())]).await;
-        Ok(ToolOutput { summary: format!("Updated currency {} '{}' ({}).", c.code, c.name.show(caller.lang), c.symbol), data: json!({"currency": currency_json(&c)}) })
+        Ok(ToolOutput {
+            summary: format!("Updated currency {} '{}' ({}).", c.code, c.name.show(caller.lang), c.symbol),
+            data: json!({"currency": currency_json(&c)}),
+        })
     }
 
     /// Начальный остаток из параметров (со знаком) и его дата. Это операция в журнале — нужно ещё право на операции.
-    fn opening(&self, caller: &Caller, amount: Option<&str>, date: Option<&str>) -> Result<Option<(Decimal, NaiveDate)>, ToolError> {
+    fn opening(
+        &self,
+        caller: &Caller,
+        amount: Option<&str>,
+        date: Option<&str>,
+    ) -> Result<Option<(Decimal, NaiveDate)>, ToolError> {
         let Some(amount) = amount else {
             return match clean(date.map(String::from)) {
                 Some(_) => Err(ToolError("opening_date: pass opening_balance with it".into())),
@@ -969,7 +1151,14 @@ impl McpService {
     }
 
     /// Задать начальный остаток уже сохранённого счёта; ошибка — предупреждением в итоге (счёт уже изменён).
-    async fn apply_opening(&self, caller: &Caller, account: &Account, opening: Option<(Decimal, NaiveDate)>, record: &mut Vec<(&str, String)>, summary: &mut String) {
+    async fn apply_opening(
+        &self,
+        caller: &Caller,
+        account: &Account,
+        opening: Option<(Decimal, NaiveDate)>,
+        record: &mut Vec<(&str, String)>,
+        summary: &mut String,
+    ) {
         let Some((amount, date)) = opening else { return };
         match self.deps.directories.set_opening(caller.project_id, caller.user_id, &account.code, amount, date).await {
             Ok(()) if amount.is_zero() => {
@@ -990,7 +1179,9 @@ impl McpService {
     pub async fn add_account(&self, caller: &Caller, a: AddAccountArgs) -> ToolResult {
         self.check(caller, Right::write("accounts"))?;
         let code = parse_code("code", &a.code)?;
-        let opening = self.opening(caller, a.opening_balance.as_deref(), a.opening_date.as_deref())?.filter(|(amount, _)| !amount.is_zero());
+        let opening = self
+            .opening(caller, a.opening_balance.as_deref(), a.opening_date.as_deref())?
+            .filter(|(amount, _)| !amount.is_zero());
         let kind = parse_choice("kind", &a.kind, &ACCOUNT_KINDS)?;
         let name = self.new_name(caller, &a.name, a.name_lang.as_deref(), a.translations)?;
         let dirs = &self.deps.directories;
@@ -1000,9 +1191,20 @@ impl McpService {
         if let Some(x) = accounts.iter().find(|x| x.code == code) {
             return Err(taken("account", &x.code, x.name.show(caller.lang), x.archived, "update_account"));
         }
-        let acc = dirs.create_account(caller.project_id, &Account { code, name, kind, currency, holder_user_id: None, archived: false }).await?;
+        let acc = dirs
+            .create_account(
+                caller.project_id,
+                &Account { code, name, kind, currency, holder_user_id: None, archived: false },
+            )
+            .await?;
         let mut record = vec![("account", acc.code.clone())];
-        let mut summary = format!("Added account {} '{}' ({}, {}).", acc.code, acc.name.show(caller.lang), acc.kind.to_lowercase(), acc.currency);
+        let mut summary = format!(
+            "Added account {} '{}' ({}, {}).",
+            acc.code,
+            acc.name.show(caller.lang),
+            acc.kind.to_lowercase(),
+            acc.currency
+        );
         self.apply_opening(caller, &acc, opening, &mut record, &mut summary).await;
         self.audit_write(caller, "add_account", &record).await;
         Ok(ToolOutput { summary, data: json!({"account": account_json(&acc)}) })
@@ -1011,7 +1213,11 @@ impl McpService {
     pub async fn update_account(&self, caller: &Caller, a: UpdateAccountArgs) -> ToolResult {
         self.check(caller, Right::write("accounts"))?;
         let opening = self.opening(caller, a.opening_balance.as_deref(), a.opening_date.as_deref())?;
-        let fields = a.name.is_some() || a.name_lang.is_some() || a.translations.is_some() || a.kind.is_some() || a.currency.is_some();
+        let fields = a.name.is_some()
+            || a.name_lang.is_some()
+            || a.translations.is_some()
+            || a.kind.is_some()
+            || a.currency.is_some();
         if !fields && opening.is_none() {
             return Err(nothing_to_change());
         }
@@ -1031,7 +1237,13 @@ impl McpService {
             acc = dirs.update_account(caller.project_id, &acc).await?;
         }
         let mut record = vec![("account", acc.code.clone())];
-        let mut summary = format!("Updated account {} '{}' ({}, {}).", acc.code, acc.name.show(caller.lang), acc.kind.to_lowercase(), acc.currency);
+        let mut summary = format!(
+            "Updated account {} '{}' ({}, {}).",
+            acc.code,
+            acc.name.show(caller.lang),
+            acc.kind.to_lowercase(),
+            acc.currency
+        );
         match (fields, opening) {
             // Меняется только начальный остаток — его ошибка и есть ошибка инструмента.
             (false, Some((amount, date))) => {
@@ -1039,7 +1251,12 @@ impl McpService {
                 summary = if amount.is_zero() {
                     format!("Removed the opening balance of account {}.", acc.code)
                 } else {
-                    format!("Opening balance of account {}: {} {} on {date}.", acc.code, amount.normalize(), acc.currency)
+                    format!(
+                        "Opening balance of account {}: {} {} on {date}.",
+                        acc.code,
+                        amount.normalize(),
+                        acc.currency
+                    )
                 };
                 record.push(("opening_balance", amount.to_string()));
             }
@@ -1050,7 +1267,13 @@ impl McpService {
     }
 
     /// Код активной категории вида `kind` по коду или названию на любом языке.
-    async fn category_of_kind(&self, caller: &Caller, kind: &str, field: &str, value: &str) -> Result<String, ToolError> {
+    async fn category_of_kind(
+        &self,
+        caller: &Caller,
+        kind: &str,
+        field: &str,
+        value: &str,
+    ) -> Result<String, ToolError> {
         let all = self.deps.directories.categories(caller.project_id).await?;
         let pool: Vec<&Category> = all.iter().filter(|c| c.kind == kind).collect();
         Ok(find_ref(field, value, &pool)?.code.clone())
@@ -1073,25 +1296,42 @@ impl McpService {
         let kind = match (kind, parent) {
             (Some(k), _) => k,
             (None, Some(p)) => p.kind.clone(),
-            (None, None) => return Err(ToolError("kind: expense or income is required for a top-level category".into())),
+            (None, None) => {
+                return Err(ToolError("kind: expense or income is required for a top-level category".into()));
+            }
         };
         let parent_code = parent.map(|p| p.code.clone());
         let sort_order = a.sort_order.unwrap_or_else(|| next_sort_order(&all, parent_code.as_deref(), &kind));
-        let c = dirs.create_category(caller.project_id, &Category { code, name, kind, parent_code, sort_order, archived: false }).await?;
+        let c = dirs
+            .create_category(
+                caller.project_id,
+                &Category { code, name, kind, parent_code, sort_order, archived: false },
+            )
+            .await?;
         self.audit_write(caller, "add_category", &[("category", c.code.clone())]).await;
         let place = match parent {
             Some(p) => format!("under '{}' ({})", p.name.show(caller.lang), p.code),
             None => "at the top level".into(),
         };
         Ok(ToolOutput {
-            summary: format!("Added {} category {} '{}' {place}.", c.kind.to_lowercase(), c.code, c.name.show(caller.lang)),
+            summary: format!(
+                "Added {} category {} '{}' {place}.",
+                c.kind.to_lowercase(),
+                c.code,
+                c.name.show(caller.lang)
+            ),
             data: json!({"category": category_json(&c)}),
         })
     }
 
     pub async fn update_category(&self, caller: &Caller, a: UpdateCategoryArgs) -> ToolResult {
         self.check(caller, Right::write("categories"))?;
-        if a.name.is_none() && a.name_lang.is_none() && a.translations.is_none() && a.parent.is_none() && a.sort_order.is_none() {
+        if a.name.is_none()
+            && a.name_lang.is_none()
+            && a.translations.is_none()
+            && a.parent.is_none()
+            && a.sort_order.is_none()
+        {
             return Err(nothing_to_change());
         }
         let all = self.deps.directories.categories(caller.project_id).await?;
@@ -1151,7 +1391,14 @@ impl McpService {
             )));
         }
         // Курсы этой валюты до даты включительно, новые сначала: курс на эту дату заменяется.
-        let history: Vec<Rate> = self.deps.rates.list(caller.project_id, None, Some(date)).await?.into_iter().filter(|r| r.currency == currency).collect();
+        let history: Vec<Rate> = self
+            .deps
+            .rates
+            .list(caller.project_id, None, Some(date))
+            .await?
+            .into_iter()
+            .filter(|r| r.currency == currency)
+            .collect();
         let old = history.iter().find(|r| r.date == date);
         let previous = history.iter().filter(|r| r.date < date).max_by_key(|r| r.date);
         let draft = Rate::entered(old.map(|r| r.id).unwrap_or_default(), date, currency, entered, inverted);
@@ -1159,12 +1406,19 @@ impl McpService {
             Some(_) => self.deps.rates.update(caller.project_id, &draft).await?,
             None => self.deps.rates.create(caller.project_id, &draft).await?,
         };
-        self.audit_write(caller, "set_rate", &[("rate", saved.id.to_string()), ("currency", saved.currency.clone()), ("date", saved.date.to_string())]).await;
+        self.audit_write(
+            caller,
+            "set_rate",
+            &[("rate", saved.id.to_string()), ("currency", saved.currency.clone()), ("date", saved.date.to_string())],
+        )
+        .await;
         let mut summary = format!("Rate on {}: {} (the base currency is {base}).", saved.date, rate_text(&saved, base));
         if let Some(o) = old {
             summary.push_str(&format!(" Replaced the previous rate {} for that date.", rate_main(o, base)));
         }
-        if let Some(p) = previous.filter(|p| saved.rate > p.rate * Decimal::from(5) || saved.rate * Decimal::from(5) < p.rate) {
+        if let Some(p) =
+            previous.filter(|p| saved.rate > p.rate * Decimal::from(5) || saved.rate * Decimal::from(5) < p.rate)
+        {
             summary.push_str(&format!(
                 " Check the direction: the rate on {} was {} — more than 5 times different. If the user meant the other direction, set it again with {}.",
                 p.date,
@@ -1172,7 +1426,10 @@ impl McpService {
                 if saved.inverted { "rate instead of inverse_rate" } else { "inverse_rate instead of rate" }
             ));
         }
-        Ok(ToolOutput { summary, data: json!({"base_currency": base, "rate": rate_json(&saved, base), "replaced": old.is_some()}) })
+        Ok(ToolOutput {
+            summary,
+            data: json!({"base_currency": base, "rate": rate_json(&saved, base), "replaced": old.is_some()}),
+        })
     }
 
     /// Места по названию; `text` — поиск по названию и вариантам написания без регистра и диакритики.
@@ -1186,7 +1443,11 @@ impl McpService {
             .filter(|p| with_archived || !p.archived)
             .filter(|p| {
                 // С родителями: «7-11» находит и сеть, и её магазины.
-                let text = if p.search.is_empty() { format!("{}{}{}", p.names(), kernel::search::SEP, p.code) } else { p.search.clone() };
+                let text = if p.search.is_empty() {
+                    format!("{}{}{}", p.names(), kernel::search::SEP, p.code)
+                } else {
+                    p.search.clone()
+                };
                 needle.as_ref().is_none_or(|n| kernel::search::fold(&text).contains(n.as_str()))
             })
             .collect();
@@ -1217,21 +1478,38 @@ impl McpService {
                 None => None,
             },
             account_code: match clean(a.account) {
-                Some(acc) => Some(find_ref("account", &acc, &self.deps.directories.accounts(caller.project_id).await?)?.code.clone()),
+                Some(acc) => Some(
+                    find_ref("account", &acc, &self.deps.directories.accounts(caller.project_id).await?)?.code.clone(),
+                ),
                 None => None,
             },
-            kind: a.kind.as_deref().map(|k| parse_choice("kind", k, &PLACE_KINDS)).transpose()?.unwrap_or_else(|| "OTHER".into()),
+            kind: a
+                .kind
+                .as_deref()
+                .map(|k| parse_choice("kind", k, &PLACE_KINDS))
+                .transpose()?
+                .unwrap_or_else(|| "OTHER".into()),
             location: clean(a.location),
             ..Default::default()
         };
         let p = self.deps.directories.create_place(caller.project_id, &place).await?;
         self.audit_write(caller, "add_place", &[("place", p.code.clone())]).await;
-        Ok(ToolOutput { summary: format!("Added place {} '{}'.", p.code, p.title()), data: json!({"place": place_json(&p)}) })
+        Ok(ToolOutput {
+            summary: format!("Added place {} '{}'.", p.code, p.title()),
+            data: json!({"place": place_json(&p)}),
+        })
     }
 
     pub async fn update_place(&self, caller: &Caller, a: UpdatePlaceArgs) -> ToolResult {
         self.check(caller, Right::write("places"))?;
-        if a.name.is_none() && a.parent.is_none() && a.aliases.is_none() && a.category.is_none() && a.account.is_none() && a.kind.is_none() && a.location.is_none() {
+        if a.name.is_none()
+            && a.parent.is_none()
+            && a.aliases.is_none()
+            && a.category.is_none()
+            && a.account.is_none()
+            && a.kind.is_none()
+            && a.location.is_none()
+        {
             return Err(nothing_to_change());
         }
         let all = self.deps.directories.places(caller.project_id).await?;
@@ -1257,7 +1535,9 @@ impl McpService {
         if let Some(acc) = a.account {
             p.account_code = match acc.trim() {
                 "" => None,
-                acc => Some(find_ref("account", acc, &self.deps.directories.accounts(caller.project_id).await?)?.code.clone()),
+                acc => Some(
+                    find_ref("account", acc, &self.deps.directories.accounts(caller.project_id).await?)?.code.clone(),
+                ),
             };
         }
         if let Some(k) = a.kind.as_deref() {
@@ -1268,7 +1548,10 @@ impl McpService {
         }
         let p = self.deps.directories.update_place(caller.project_id, &p).await?;
         self.audit_write(caller, "update_place", &[("place", p.code.clone())]).await;
-        Ok(ToolOutput { summary: format!("Updated place {} '{}'.", p.code, p.title()), data: json!({"place": place_json(&p)}) })
+        Ok(ToolOutput {
+            summary: format!("Updated place {} '{}'.", p.code, p.title()),
+            data: json!({"place": place_json(&p)}),
+        })
     }
 
     /// Люди по имени; `text` — поиск по имени и другим именам без регистра и диакритики.
@@ -1280,10 +1563,18 @@ impl McpService {
         let list: Vec<&Person> = all
             .iter()
             .filter(|p| with_archived || !p.archived)
-            .filter(|p| needle.as_ref().is_none_or(|n| kernel::search::fold(&format!("{}{}{}", p.names(), kernel::search::SEP, p.code)).contains(n.as_str())))
+            .filter(|p| {
+                needle.as_ref().is_none_or(|n| {
+                    kernel::search::fold(&format!("{}{}{}", p.names(), kernel::search::SEP, p.code))
+                        .contains(n.as_str())
+                })
+            })
             .collect();
         Ok(ToolOutput {
-            summary: format!("{} people. Project members get their record automatically; use the codes in \"for\".", list.len()),
+            summary: format!(
+                "{} people. Project members get their record automatically; use the codes in \"for\".",
+                list.len()
+            ),
             data: json!({"people": list.iter().map(|p| person_json(p, caller.user_id)).collect::<Vec<_>>(), "my_person_code": all.iter().find(|p| p.user_id == Some(caller.user_id)).map(|p| &p.code)}),
         })
     }
@@ -1296,10 +1587,20 @@ impl McpService {
         if let Some(x) = all.iter().find(|x| x.code == code) {
             return Err(taken("person", &x.code, &x.name, x.archived, "update_person"));
         }
-        let person = Person { code, name: a.name.trim().to_string(), aliases: a.aliases.unwrap_or_default(), user_id: None, former_member: false, archived: false };
+        let person = Person {
+            code,
+            name: a.name.trim().to_string(),
+            aliases: a.aliases.unwrap_or_default(),
+            user_id: None,
+            former_member: false,
+            archived: false,
+        };
         let p = self.deps.directories.create_person(caller.project_id, &person).await?;
         self.audit_write(caller, "add_person", &[("person", p.code.clone())]).await;
-        Ok(ToolOutput { summary: format!("Added person {} '{}'.", p.code, p.name), data: json!({"person": person_json(&p, caller.user_id)}) })
+        Ok(ToolOutput {
+            summary: format!("Added person {} '{}'.", p.code, p.name),
+            data: json!({"person": person_json(&p, caller.user_id)}),
+        })
     }
 
     pub async fn update_person(&self, caller: &Caller, a: UpdatePersonArgs) -> ToolResult {
@@ -1317,7 +1618,10 @@ impl McpService {
         }
         let p = self.deps.directories.update_person(caller.project_id, &p).await?;
         self.audit_write(caller, "update_person", &[("person", p.code.clone())]).await;
-        Ok(ToolOutput { summary: format!("Updated person {} '{}'.", p.code, p.name), data: json!({"person": person_json(&p, caller.user_id)}) })
+        Ok(ToolOutput {
+            summary: format!("Updated person {} '{}'.", p.code, p.name),
+            data: json!({"person": person_json(&p, caller.user_id)}),
+        })
     }
 
     /// Код активной категории любого вида по коду или названию на любом языке.
@@ -1347,7 +1651,12 @@ impl McpService {
                 latest.push(r);
             }
         }
-        let latest_text = latest.iter().take(10).map(|r| format!("{} ({})", rate_text(r, base), r.date)).collect::<Vec<_>>().join(", ");
+        let latest_text = latest
+            .iter()
+            .take(10)
+            .map(|r| format!("{} ({})", rate_text(r, base), r.date))
+            .collect::<Vec<_>>()
+            .join(", ");
         Ok(ToolOutput {
             summary: format!(
                 "{} rates (newest first, up to {MAX_PAGE} shown); rate = units of {base} for 1 unit of the currency, inverse_rate = units of the currency for 1 {base}.{}",
@@ -1371,7 +1680,11 @@ impl McpService {
         let amount = match (remove, a.amount.as_deref()) {
             (true, Some(_)) => return Err(ToolError("pass either amount or remove: true, not both".into())),
             (true, None) => None,
-            (false, None) => return Err(ToolError("amount: required (0 = no spending allowed); to remove the limit pass remove: true".into())),
+            (false, None) => {
+                return Err(ToolError(
+                    "amount: required (0 = no spending allowed); to remove the limit pass remove: true".into(),
+                ));
+            }
             (false, Some(v)) => {
                 let v = parse_signed_amount("amount", v)?;
                 if v < rust_decimal::Decimal::ZERO {
@@ -1387,7 +1700,9 @@ impl McpService {
         // Снять лимит — по умолчанию в периоде действующего правила.
         let period = match clean(a.period) {
             Some(p) => parse_choice("period", &p, &LIMIT_PERIODS)?,
-            None if remove => in_force(&rules, &cat.code, today).map_or_else(|| "MONTH".to_string(), |l| l.period.clone()),
+            None if remove => {
+                in_force(&rules, &cat.code, today).map_or_else(|| "MONTH".to_string(), |l| l.period.clone())
+            }
             None => "MONTH".into(),
         };
         let valid_from = match clean(a.valid_from) {
@@ -1396,12 +1711,23 @@ impl McpService {
         };
         // У категории одно правило на дату начала: правило с тем же valid_from заменяется (и период тоже).
         let old = rules.iter().find(|l| l.category_code == cat.code && l.valid_from == valid_from);
-        let draft = Limit { id: old.map(|l| l.id).unwrap_or_default(), category_code: cat.code.clone(), period, valid_from, amount };
+        let draft = Limit {
+            id: old.map(|l| l.id).unwrap_or_default(),
+            category_code: cat.code.clone(),
+            period,
+            valid_from,
+            amount,
+        };
         let saved = match old {
             Some(_) => self.deps.limits.update(caller.project_id, &draft).await?,
             None => self.deps.limits.create(caller.project_id, &draft).await?,
         };
-        self.audit_write(caller, "set_limit", &[("limit", saved.id.to_string()), ("category", saved.category_code.clone())]).await;
+        self.audit_write(
+            caller,
+            "set_limit",
+            &[("limit", saved.id.to_string()), ("category", saved.category_code.clone())],
+        )
+        .await;
         let base = &caller.base_currency;
         let from = period_start(&saved.period, saved.valid_from);
         let mut summary = match saved.amount {
@@ -1426,10 +1752,21 @@ impl McpService {
         if let Some(o) = old {
             summary.push_str(&format!(" Replaced {} from the same date.", limit_text(o, base)));
         }
-        if let Some(later) = rules.iter().filter(|l| l.category_code == cat.code && l.valid_from > saved.valid_from).min_by_key(|l| l.valid_from) {
-            summary.push_str(&format!(" Note: a later rule from {} ({}) takes over from that date.", later.valid_from, limit_text(later, base)));
+        if let Some(later) = rules
+            .iter()
+            .filter(|l| l.category_code == cat.code && l.valid_from > saved.valid_from)
+            .min_by_key(|l| l.valid_from)
+        {
+            summary.push_str(&format!(
+                " Note: a later rule from {} ({}) takes over from that date.",
+                later.valid_from,
+                limit_text(later, base)
+            ));
         }
-        Ok(ToolOutput { summary, data: json!({"base_currency": base, "limit": limit_json(&saved, cat.name.show(caller.lang), None), "replaced": old.is_some()}) })
+        Ok(ToolOutput {
+            summary,
+            data: json!({"base_currency": base, "limit": limit_json(&saved, cat.name.show(caller.lang), None), "replaced": old.is_some()}),
+        })
     }
 
     pub async fn list_limits(&self, caller: &Caller) -> ToolResult {
@@ -1439,9 +1776,12 @@ impl McpService {
         let key = |l: &Limit| (period_start(&l.period, l.valid_from), l.valid_from);
         rules.sort_by(|x, y| x.category_code.cmp(&y.category_code).then(key(y).cmp(&key(x))));
         let categories = self.deps.directories.categories(caller.project_id).await?;
-        let title = |code: &str| categories.iter().find(|c| c.code == code).map(|c| c.name.show(caller.lang).to_string()).unwrap_or_default();
+        let title = |code: &str| {
+            categories.iter().find(|c| c.code == code).map(|c| c.name.show(caller.lang).to_string()).unwrap_or_default()
+        };
         let current = |l: &Limit| in_force(&rules, &l.category_code, today).is_some_and(|c| c.id == l.id);
-        let rows: Vec<Value> = rules.iter().map(|l| limit_json(l, &title(&l.category_code), Some(current(l)))).collect();
+        let rows: Vec<Value> =
+            rules.iter().map(|l| limit_json(l, &title(&l.category_code), Some(current(l)))).collect();
         // «Лимит снят» тоже действует, но лимита по нему нет.
         let in_force_now = rules.iter().filter(|l| current(l) && l.amount.is_some()).count();
         Ok(ToolOutput {
@@ -1462,7 +1802,10 @@ impl McpService {
         let plans = self.deps.plans.list(caller.project_id).await?;
         let active = plans.iter().filter(|p| p.draft.active).count();
         Ok(ToolOutput {
-            summary: format!("{} plans, {active} active (paused ones expect no payments); amounts in the account currency.", plans.len()),
+            summary: format!(
+                "{} plans, {active} active (paused ones expect no payments); amounts in the account currency.",
+                plans.len()
+            ),
             data: json!({"plans": plans.iter().map(|p| plan_json(p, caller.lang)).collect::<Vec<_>>()}),
         })
     }
@@ -1482,13 +1825,17 @@ impl McpService {
             if a.category.is_some() {
                 return Err(ToolError("category: transfers have no category; pass to_account".into()));
             }
-            let to = a.to_account.as_deref().ok_or_else(|| ToolError("to_account: required for a transfer plan".into()))?;
+            let to =
+                a.to_account.as_deref().ok_or_else(|| ToolError("to_account: required for a transfer plan".into()))?;
             (None, Some(find_ref("to_account", to, &accounts)?.code.clone()))
         } else {
             if a.to_account.is_some() {
                 return Err(ToolError("to_account: only transfer plans have a destination account".into()));
             }
-            let c = a.category.as_deref().ok_or_else(|| ToolError(format!("category: required for an {} plan", kind.to_lowercase())))?;
+            let c = a
+                .category
+                .as_deref()
+                .ok_or_else(|| ToolError(format!("category: required for an {} plan", kind.to_lowercase())))?;
             (Some(self.category_of_kind(caller, &kind, "category", c).await?), None)
         };
         let draft = PlanDraft {
@@ -1541,7 +1888,14 @@ impl McpService {
         if !changes {
             return Err(nothing_to_change());
         }
-        let old = self.deps.plans.list(caller.project_id).await?.into_iter().find(|p| p.id == id).ok_or_else(|| ToolError(format!("id: plan {id} not found; call list_plans")))?;
+        let old = self
+            .deps
+            .plans
+            .list(caller.project_id)
+            .await?
+            .into_iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| ToolError(format!("id: plan {id} not found; call list_plans")))?;
         let today = today();
         let mut d = old.draft.clone();
         d.name = renamed(caller, &old.draft.name, a.name.as_deref(), a.name_lang.as_deref(), a.translations)?;
@@ -1592,7 +1946,10 @@ impl McpService {
             // Сменили правило дат при прошедших вхождениях: прежний план закрыт и хранит историю.
             state.push_str(&format!(" The date rule changed after past occurrences: plan {id} keeps their history and is closed; the new rule continues as plan {}.", plan.id));
         }
-        Ok(ToolOutput { summary: format!("Updated plan '{}' (id {}).{state}", plan.draft.name.show(caller.lang), plan.id), data: json!({"plan": plan_json(&plan, caller.lang)}) })
+        Ok(ToolOutput {
+            summary: format!("Updated plan '{}' (id {}).{state}", plan.draft.name.show(caller.lang), plan.id),
+            data: json!({"plan": plan_json(&plan, caller.lang)}),
+        })
     }
 }
 
@@ -1611,15 +1968,25 @@ fn minor_units(value: u32) -> Result<i32, ToolError> {
 /// Код уже занят: подсказка, как быть.
 fn taken(what: &str, code: &str, title: &str, archived: bool, update_tool: &str) -> ToolError {
     if archived {
-        ToolError(format!("code: {what} {code} ('{title}') already exists and is archived; the user can restore it in the browser, or choose another code"))
+        ToolError(format!(
+            "code: {what} {code} ('{title}') already exists and is archived; the user can restore it in the browser, or choose another code"
+        ))
     } else {
-        ToolError(format!("code: {what} {code} ('{title}') already exists; change it with {update_tool} or choose another code"))
+        ToolError(format!(
+            "code: {what} {code} ('{title}') already exists; change it with {update_tool} or choose another code"
+        ))
     }
 }
 
 /// Частичное изменение названия: текст, язык, переводы — только переданные. Язык нового текста по
 /// умолчанию — язык пользователя (как у новых записей), без нового текста — прежний.
-fn renamed(caller: &Caller, old: &Name, text: Option<&str>, lang: Option<&str>, tr: Option<NameTranslations>) -> Result<Name, ToolError> {
+fn renamed(
+    caller: &Caller,
+    old: &Name,
+    text: Option<&str>,
+    lang: Option<&str>,
+    tr: Option<NameTranslations>,
+) -> Result<Name, ToolError> {
     let default = if text.is_some() { caller.lang } else { old.lang };
     let lang = lang_of("name_lang", lang, default)?;
     let tr = tr.unwrap_or_default();
@@ -1628,7 +1995,12 @@ fn renamed(caller: &Caller, old: &Name, text: Option<&str>, lang: Option<&str>, 
 
 /// Родитель категории вида `kind` (если известен) по коду или названию, кроме самой категории `except`.
 /// Нашёлся только родитель другого вида — так и сказать, а не «не найдено».
-fn parent_of<'a>(all: &'a [Category], query: &str, kind: Option<&str>, except: Option<&str>) -> Result<&'a Category, ToolError> {
+fn parent_of<'a>(
+    all: &'a [Category],
+    query: &str,
+    kind: Option<&str>,
+    except: Option<&str>,
+) -> Result<&'a Category, ToolError> {
     let candidates: Vec<&Category> = all.iter().filter(|c| except != Some(c.code.as_str())).collect();
     let same: Vec<&Category> = candidates.iter().copied().filter(|c| kind.is_none_or(|k| c.kind == k)).collect();
     match find_ref("parent", query, &same) {
@@ -1648,7 +2020,11 @@ fn parent_of<'a>(all: &'a [Category], query: &str, kind: Option<&str>, except: O
 
 /// Порядок новой категории: после последнего соседа (тот же родитель и вид).
 fn next_sort_order(all: &[Category], parent: Option<&str>, kind: &str) -> i32 {
-    all.iter().filter(|c| c.parent_code.as_deref() == parent && c.kind == kind).map(|c| c.sort_order).max().map_or(10, |m| m.saturating_add(10))
+    all.iter()
+        .filter(|c| c.parent_code.as_deref() == parent && c.kind == kind)
+        .map(|c| c.sort_order)
+        .max()
+        .map_or(10, |m| m.saturating_add(10))
 }
 
 /// «every month», «every 2 weeks», «once».
@@ -1692,12 +2068,20 @@ fn rate_json(r: &Rate, base: &str) -> Value {
 
 /// Курс в направлении, в котором его ввели: «1 THB = 2.5 RUB».
 fn rate_main(r: &Rate, base: &str) -> String {
-    if r.inverted { format!("1 {base} = {} {}", r.entered.normalize(), r.currency) } else { format!("1 {} = {} {base}", r.currency, r.entered.normalize()) }
+    if r.inverted {
+        format!("1 {base} = {} {}", r.entered.normalize(), r.currency)
+    } else {
+        format!("1 {} = {} {base}", r.currency, r.entered.normalize())
+    }
 }
 
 /// Оба направления: «1 THB = 2.5 RUB (1 RUB = 0.4 THB)».
 fn rate_text(r: &Rate, base: &str) -> String {
-    let other = if r.inverted { format!("1 {} = {} {base}", r.currency, show_rate(r.rate)) } else { format!("1 {base} = {} {}", show_rate(r.inverse_rate()), r.currency) };
+    let other = if r.inverted {
+        format!("1 {} = {} {base}", r.currency, show_rate(r.rate))
+    } else {
+        format!("1 {base} = {} {}", show_rate(r.inverse_rate()), r.currency)
+    };
     format!("{} ({other})", rate_main(r, base))
 }
 
@@ -1833,13 +2217,23 @@ fn item_json(x: &TxItem) -> Value {
 
 /// Позиция из параметров инструмента: категория — по коду или названию, числа — как в форме («120+45»).
 /// `keep` — получатели правимой операции: их можно указать и после архивации.
-fn item_from(q: &QuickInfo, people: &[Person], keep: Option<&[String]>, kind: &str, i: usize, it: ItemArgs) -> Result<TxItem, ToolError> {
+fn item_from(
+    q: &QuickInfo,
+    people: &[Person],
+    keep: Option<&[String]>,
+    kind: &str,
+    i: usize,
+    it: ItemArgs,
+) -> Result<TxItem, ToolError> {
     let f = |name: &str| format!("items[{i}].{name}");
     let num = |name: &str, v: Option<String>| v.map(|v| parse_money(&f(name), &v)).transpose();
     // Количество и цена — до 6 знаков, без округления до 4.
     let qty = |name: &str, v: Option<String>| v.map(|v| kernel::web::parse_number(&f(name), &v)).transpose();
     Ok(TxItem {
-        id: it.id.map(|id| Uuid::parse_str(id.trim()).map_err(|_| ToolError(format!("{}: not an item id: '{id}'", f("id"))))).transpose()?,
+        id: it
+            .id
+            .map(|id| Uuid::parse_str(id.trim()).map_err(|_| ToolError(format!("{}: not an item id: '{id}'", f("id")))))
+            .transpose()?,
         category_code: it.category.map(|c| category_code(q, kind, &f("category"), &c)).transpose()?,
         // Пустая строка стирает название позиции, отсутствие — оставляет прежнее.
         name: it.name.map(|n| n.trim().to_string()),
@@ -1891,7 +2285,9 @@ fn tx_json(t: &Tx, lang: Lang) -> Value {
     }
     // Из SMS банка или подтверждена им — последняя такая связь (docs/external-refs.md, раздел 4); время — местное.
     if let Some(r) = t.external_refs.iter().filter(|r| r.provider == SMS_PROVIDER).max_by_key(|r| r.created_at) {
-        let at = r.received_at.map(|at| at.with_timezone(&chrono::Local).to_rfc3339_opts(chrono::SecondsFormat::Secs, false));
+        let at = r
+            .received_at
+            .map(|at| at.with_timezone(&chrono::Local).to_rfc3339_opts(chrono::SecondsFormat::Secs, false));
         v["sms"] = json!({"link": r.link, "received_at": at});
     }
     v
@@ -1911,14 +2307,20 @@ fn person_json(p: &Person, me: Uuid) -> Value {
 
 /// Для кого: код, имя или другое имя человека; "all" или пусто — «Для всех» (`None`). Только активные, кроме `keep` —
 /// получателей правимой операции.
-fn person_of(people: &[Person], field: &str, value: &str, keep: Option<&[String]>) -> Result<Option<String>, ToolError> {
+fn person_of(
+    people: &[Person],
+    field: &str,
+    value: &str,
+    keep: Option<&[String]>,
+) -> Result<Option<String>, ToolError> {
     let v = value.trim();
     if v.is_empty() || v.eq_ignore_ascii_case("all") {
         return Ok(None);
     }
     let keep = keep.unwrap_or_default();
     let usable: Vec<&Person> = people.iter().filter(|p| !p.archived || keep.contains(&p.code)).collect();
-    let found = resolve(field, v, &usable, |x| &x.code, |x| x.names()).map_err(|e| ToolError(format!("{e}; get_context lists people, add_person adds one")))?;
+    let found = resolve(field, v, &usable, |x| &x.code, |x| x.names())
+        .map_err(|e| ToolError(format!("{e}; get_context lists people, add_person adds one")))?;
     Ok(Some(found.code.clone()))
 }
 
@@ -1936,6 +2338,6 @@ fn place_json(p: &Place) -> Value {
 
 /// Активное место по коду, названию или варианту написания (`kernel::search`).
 fn place_of<'a>(q: &'a QuickInfo, value: &str) -> Result<&'a PlaceInfo, ToolError> {
-    resolve("place", value, &q.places, |x| &x.code, |x| x.search.clone()).map_err(|e| ToolError(format!("{e}; list_places shows all places, add_place adds one")))
+    resolve("place", value, &q.places, |x| &x.code, |x| x.search.clone())
+        .map_err(|e| ToolError(format!("{e}; list_places shows all places, add_place adds one")))
 }
-

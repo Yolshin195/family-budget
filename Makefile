@@ -11,9 +11,15 @@ NODE     := $(ENGINE) run --rm -v "$(CURDIR)":/w -w /w docker.io/library/node:22
 # Сайт (site/): генератор Zola и проверка трёх языков — тоже в контейнерах. Версия — как в .github/workflows/site.yml.
 ZOLA     := $(ENGINE) run --rm -v "$(CURDIR)/site":/app -w /app ghcr.io/getzola/zola:v0.23.6
 PYTHON   := $(ENGINE) run --rm -v "$(CURDIR)":/w -w /w docker.io/library/python:3.12-alpine python3
+# Линтеры скриптов, workflow, Dockerfile и Python — в контейнерах. CI (ci.yml, job Lint) вызывает make lint-scripts,
+# поэтому версии здесь — единственные.
+SHELLCHECK := $(ENGINE) run --rm -v "$(CURDIR)":/mnt -w /mnt docker.io/koalaman/shellcheck:v0.10.0
+ACTIONLINT := $(ENGINE) run --rm -v "$(CURDIR)":/repo -w /repo docker.io/rhysd/actionlint:1.7.7
+HADOLINT   := $(ENGINE) run --rm -i -v "$(CURDIR)/.hadolint.yaml":/.config/hadolint.yaml:ro docker.io/hadolint/hadolint:v2.12.0
+RUFF       := $(ENGINE) run --rm -v "$(CURDIR)":/io -w /io ghcr.io/astral-sh/ruff:0.16.9
 
 .DEFAULT_GOAL := up
-.PHONY: up down restart logs ps build rebuild clean db dev test css assets db-roles rauthy-secrets backup restore-check audit site site-check site-serve help
+.PHONY: up down restart logs ps build rebuild clean db dev test lint lint-rust lint-scripts fmt css assets db-roles rauthy-secrets backup restore-check audit site site-check site-serve help
 
 up: ## Собрать образ и запустить приложение, PostgreSQL и Rauthy в фоне
 	$(COMPOSE) up -d --build
@@ -61,6 +67,21 @@ dev: db ## cargo run локально против PostgreSQL и Rauthy в ко�
 
 test: ## Тесты (БД не нужна)
 	cargo test --workspace
+
+lint: lint-rust lint-scripts ## Все линтеры, как в CI
+
+lint-rust: ## rustfmt и clippy (предупреждения — ошибки)
+	cargo fmt --all --check
+	cargo clippy --workspace --all-targets --locked -- -D warnings
+
+lint-scripts: ## shellcheck, actionlint (workflow), hadolint (Dockerfile), ruff (Python) — в контейнерах
+	$(SHELLCHECK) -S warning scripts/*.sh deploy/postgres/*.sh
+	$(ACTIONLINT) -color
+	$(HADOLINT) < Dockerfile
+	$(RUFF) check --no-cache .
+
+fmt: ## Отформатировать Rust-код (rustfmt.toml)
+	cargo fmt --all
 
 css: ## Пересобрать Tailwind CSS после правки шаблонов
 	$(NODE) sh -c "npm ci --silent && npm run css"

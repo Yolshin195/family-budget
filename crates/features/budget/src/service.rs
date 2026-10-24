@@ -84,7 +84,8 @@ impl BudgetService {
 
         let exchange = d.facts.exchange(project_id, period.from, period.to).await?;
 
-        let currency_of: HashMap<&str, &str> = accounts.iter().map(|a| (a.code.as_str(), a.currency.as_str())).collect();
+        let currency_of: HashMap<&str, &str> =
+            accounts.iter().map(|a| (a.code.as_str(), a.currency.as_str())).collect();
         let mut missing = BTreeSet::new();
         // Пересчёт между валютами через базовую по курсам на дату. Без курса суммы нет (этап 0, Ц3):
         // раньше она считалась 1:1 и молча портила итоги.
@@ -110,10 +111,18 @@ impl BudgetService {
         let mut no_rate = Vec::new();
         for f in facts.iter().filter(|f| mine(f.created_by)) {
             let Some(a) = convert(&f.currency, base_currency, f.amount, f.date) else {
-                no_rate.push(NoRate { category_code: f.category_code.clone(), currency: f.currency.clone(), amount: f.amount });
+                no_rate.push(NoRate {
+                    category_code: f.category_code.clone(),
+                    currency: f.currency.clone(),
+                    amount: f.amount,
+                });
                 continue;
             };
-            if f.kind == "EXPENSE" { exp_f += a } else { inc_f += a }
+            if f.kind == "EXPENSE" {
+                exp_f += a
+            } else {
+                inc_f += a
+            }
             fact_amounts.push(Amount { category_code: f.category_code.clone(), amount: a });
         }
         // Обмен валют: проводки «Обмен валют» в базовой валюте. Отдали больше, чем получили, — потеря.
@@ -151,7 +160,11 @@ impl BudgetService {
             };
             // Плановый перевод не меняет доходы и расходы — он только виден в «Предстоящих».
             if let Some(code) = p.category_code.clone().filter(|_| p.kind != "TRANSFER") {
-                if p.kind == "EXPENSE" { exp_p += a } else { inc_p += a }
+                if p.kind == "EXPENSE" {
+                    exp_p += a
+                } else {
+                    inc_p += a
+                }
                 plan_amounts.push(Amount { category_code: code, amount: a });
             }
             upcoming.push(PlannedRec { amount: a, ..p });
@@ -165,7 +178,8 @@ impl BudgetService {
             let archived = nodes.iter().any(|n| n.code == r.code && n.archived);
             !archived || !r.forecast.is_zero() || !r.no_rate.is_empty()
         };
-        let (expenses, incomes): (Vec<Row>, Vec<Row>) = rows.into_iter().filter(visible).partition(|r| r.kind == "EXPENSE");
+        let (expenses, incomes): (Vec<Row>, Vec<Row>) =
+            rows.into_iter().filter(visible).partition(|r| r.kind == "EXPENSE");
 
         // Остаток счёта = сумма его проводок (начальный остаток — тоже проводка).
         let balances: HashMap<String, Decimal> = d.facts.balances(project_id, period.to).await?.into_iter().collect();
@@ -207,7 +221,13 @@ pub struct CategoryLimit {
 
 impl BudgetService {
     /// Остатки лимитов по всем категориям за месяц, содержащий `date` (все участники).
-    pub async fn month_limits(&self, project_id: Uuid, base_currency: &str, date: NaiveDate, lang: Lang) -> AppResult<Vec<CategoryLimit>> {
+    pub async fn month_limits(
+        &self,
+        project_id: Uuid,
+        base_currency: &str,
+        date: NaiveDate,
+        lang: Lang,
+    ) -> AppResult<Vec<CategoryLimit>> {
         let today = chrono::Local::now().date_naive();
         let period = Period::containing(crate::domain::View::Month, date);
         let r = self.report(project_id, base_currency, period, lang, None, today).await?;
@@ -219,7 +239,12 @@ impl BudgetService {
     }
 
     /// Курсы валют к базовой на дату (ближайший предыдущий) — для пересчёта суммы в форме.
-    pub async fn rates_on(&self, project_id: Uuid, base_currency: &str, date: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
+    pub async fn rates_on(
+        &self,
+        project_id: Uuid,
+        base_currency: &str,
+        date: NaiveDate,
+    ) -> AppResult<Vec<(String, Decimal)>> {
         let rates = self.deps.rates.all(project_id).await?;
         let mut currencies: Vec<String> = rates.iter().map(|r| r.0.clone()).collect();
         currencies.sort();

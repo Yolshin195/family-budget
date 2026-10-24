@@ -6,8 +6,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 #[allow(unused_imports)]
-use crate::domain::{LimitLimitPeriod, Limit};
-use crate::ports::{Period, LimitRepository};
+use crate::domain::{Limit, LimitLimitPeriod};
+use crate::ports::{LimitRepository, Period};
 
 const COLUMNS: &str = "id, project_id, valid_from, category_code, limit_period, amount";
 /// Общий фильтр: пользователь + период ($2, $3 — границы или NULL).
@@ -44,7 +44,8 @@ impl TryFrom<Row> for Limit {
             project_id: r.project_id,
             valid_from: r.valid_from,
             category_code: r.category_code,
-            limit_period: LimitLimitPeriod::parse(&r.limit_period).ok_or_else(|| bad_value("limit_period", &r.limit_period))?,
+            limit_period: LimitLimitPeriod::parse(&r.limit_period)
+                .ok_or_else(|| bad_value("limit_period", &r.limit_period))?,
             amount: r.amount,
         })
     }
@@ -99,9 +100,8 @@ impl LimitRepository for PostgresLimitRepository {
     }
 
     async fn list(&self, project_id: Uuid, period: Period, limit: i64, offset: i64) -> AppResult<Vec<Limit>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_limits WHERE {FILTER} ORDER BY valid_from DESC, id LIMIT $4 OFFSET $5"
-        );
+        let sql =
+            format!("SELECT {COLUMNS} FROM fb_limits WHERE {FILTER} ORDER BY valid_from DESC, id LIMIT $4 OFFSET $5");
         let rows: Vec<Row> = sqlx::query_as(&sql)
             .bind(project_id)
             .bind(period.from)
@@ -115,12 +115,8 @@ impl LimitRepository for PostgresLimitRepository {
 
     async fn count(&self, project_id: Uuid, period: Period) -> AppResult<i64> {
         let sql = format!("SELECT COUNT(*) FROM fb_limits WHERE {FILTER}");
-        let (n,): (i64,) = sqlx::query_as(&sql)
-            .bind(project_id)
-            .bind(period.from)
-            .bind(period.to)
-            .fetch_one(&self.pool)
-            .await?;
+        let (n,): (i64,) =
+            sqlx::query_as(&sql).bind(project_id).bind(period.from).bind(period.to).fetch_one(&self.pool).await?;
         Ok(n)
     }
 

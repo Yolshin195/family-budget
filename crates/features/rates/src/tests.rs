@@ -10,7 +10,6 @@ use crate::adapters::memory::InMemoryRateRepository;
 use crate::dto::{PeriodQuery, RateInput};
 use crate::service::RateService;
 
-
 /// Фейковый справочник для тестов: знает любой код, кроме UNKNOWN.
 struct FakeLookup;
 
@@ -22,9 +21,7 @@ impl super::ports::CurrenciesLookup for FakeLookup {
 }
 
 fn deps() -> super::ports::Deps {
-    super::ports::Deps {
-        currencies: Arc::new(FakeLookup),
-    }
+    super::ports::Deps { currencies: Arc::new(FakeLookup) }
 }
 
 fn service() -> RateService {
@@ -99,7 +96,8 @@ async fn update_then_delete() {
 #[test]
 fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
 
@@ -116,7 +114,10 @@ async fn foreign_project_undo_and_purge() {
 
     let token = svc.delete_with_undo(mine, created.id).await.unwrap();
     assert!(svc.get(mine, created.id).await.is_err());
-    assert!(matches!(svc.undo_delete(other, token).await.unwrap_err(), AppError::NotFound(_)), "чужой проект не может отменить");
+    assert!(
+        matches!(svc.undo_delete(other, token).await.unwrap_err(), AppError::NotFound(_)),
+        "чужой проект не может отменить"
+    );
     svc.undo_delete(mine, token).await.unwrap();
     assert_eq!(svc.get(mine, created.id).await.unwrap().id, created.id, "тот же id");
     assert!(svc.undo_delete(mine, token).await.is_err(), "второй раз не отменить");
@@ -211,7 +212,10 @@ async fn default_direction_comes_from_the_latest_rate_of_the_currency() {
     svc.create(p, rate_in(3, "USD", "0.0274", true)).await.unwrap();
     assert!(!svc.default_inverted(p, "USD").await.unwrap());
     let latest = svc.latest_by_currency(p).await.unwrap();
-    assert_eq!(latest.iter().map(|r| (r.currency_code.as_str(), r.rate_date)).collect::<Vec<_>>(), vec![("USD", day(9)), ("RUB", day(5))]);
+    assert_eq!(
+        latest.iter().map(|r| (r.currency_code.as_str(), r.rate_date)).collect::<Vec<_>>(),
+        vec![("USD", day(9)), ("RUB", day(5))]
+    );
     assert!(!svc.default_inverted(Uuid::new_v4(), "RUB").await.unwrap(), "чужой проект не влияет");
 }
 
@@ -226,11 +230,16 @@ async fn migration_fills_entered_from_rate() {
         return;
     };
     let migrator = sqlx::migrate!("./migrations");
-    let sql = |desc: &str| migrator.iter().find(|m| m.description == desc && m.migration_type.is_up_migration()).unwrap().sql.to_string();
+    let sql = |desc: &str| {
+        migrator.iter().find(|m| m.description == desc && m.migration_type.is_up_migration()).unwrap().sql.to_string()
+    };
     let mut conn = sqlx::PgConnection::connect(&url).await.unwrap();
     let mut tx = conn.begin().await.unwrap();
     let schema = format!("rates_mig_{}", Uuid::new_v4().simple());
-    sqlx::raw_sql(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}")).execute(&mut *tx).await.unwrap();
+    sqlx::raw_sql(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}"))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
     sqlx::raw_sql(&sql("create fb rates")).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO fb_rates (id, project_id, rate_date, currency_code, rate) VALUES ($1, $2, $3, 'USD', 36.5), ($4, $2, $3, 'RUB', 0.4)")
         .bind(Uuid::new_v4())
@@ -241,13 +250,30 @@ async fn migration_fills_entered_from_rate() {
         .await
         .unwrap();
     sqlx::raw_sql(&sql("rate direction")).execute(&mut *tx).await.unwrap();
-    let rows = sqlx::query("SELECT currency_code, rate, entered, inverted FROM fb_rates ORDER BY currency_code").fetch_all(&mut *tx).await.unwrap();
-    let got: Vec<(String, rust_decimal::Decimal, rust_decimal::Decimal, bool)> =
-        rows.iter().map(|r| (r.get(0), r.get::<rust_decimal::Decimal, _>(1).normalize(), r.get::<rust_decimal::Decimal, _>(2).normalize(), r.get(3))).collect();
+    let rows = sqlx::query("SELECT currency_code, rate, entered, inverted FROM fb_rates ORDER BY currency_code")
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap();
+    let got: Vec<(String, rust_decimal::Decimal, rust_decimal::Decimal, bool)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.get(0),
+                r.get::<rust_decimal::Decimal, _>(1).normalize(),
+                r.get::<rust_decimal::Decimal, _>(2).normalize(),
+                r.get(3),
+            )
+        })
+        .collect();
     assert_eq!(got, vec![("RUB".into(), d("0.4"), d("0.4"), false), ("USD".into(), d("36.5"), d("36.5"), false)]);
     // Новый курс «1 THB = 2.53 RUB» хранится с 12 знаками и не расходится с введённым.
-    sqlx::query("UPDATE fb_rates SET entered = 2.53, inverted = true, rate = $1 WHERE currency_code = 'RUB'").bind(crate::domain::invert(d("2.53"))).execute(&mut *tx).await.unwrap();
-    let (rate,): (rust_decimal::Decimal,) = sqlx::query_as("SELECT rate FROM fb_rates WHERE currency_code = 'RUB'").fetch_one(&mut *tx).await.unwrap();
+    sqlx::query("UPDATE fb_rates SET entered = 2.53, inverted = true, rate = $1 WHERE currency_code = 'RUB'")
+        .bind(crate::domain::invert(d("2.53")))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let (rate,): (rust_decimal::Decimal,) =
+        sqlx::query_as("SELECT rate FROM fb_rates WHERE currency_code = 'RUB'").fetch_one(&mut *tx).await.unwrap();
     assert_eq!(rate.normalize(), d("0.395256916996"));
     tx.rollback().await.unwrap();
 }

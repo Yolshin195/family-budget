@@ -64,5 +64,6 @@
 
 ## Проверки перед PR
 
-- Приложение: `cargo test --workspace` (`make test`), при изменении шаблонов — `make css`.
+- Приложение: `cargo test --workspace` (`make test`) и линтеры (`make lint`: rustfmt, clippy без предупреждений,
+  shellcheck, actionlint, hadolint, ruff; `make fmt` — отформатировать), при изменении шаблонов — `make css`.
 - Сайт: `make site-check` и `make site` (или `python3 scripts/check_site.py`, `npm run site:assets`, `zola build` в `site/`).

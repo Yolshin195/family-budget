@@ -7,7 +7,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 #[allow(unused_imports)]
-use crate::domain::{AccountNameLang, AccountAccountKind, Account};
+use crate::domain::{Account, AccountAccountKind, AccountNameLang};
 use crate::ports::AccountRepository;
 
 const COLUMNS: &str = "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, account_kind, currency_code, holder_user_id";
@@ -52,7 +52,8 @@ impl TryFrom<Row> for Account {
             name_ru: r.name_ru,
             name_en: r.name_en,
             name_th: r.name_th,
-            account_kind: AccountAccountKind::parse(&r.account_kind).ok_or_else(|| bad_value("account_kind", &r.account_kind))?,
+            account_kind: AccountAccountKind::parse(&r.account_kind)
+                .ok_or_else(|| bad_value("account_kind", &r.account_kind))?,
             currency_code: r.currency_code,
             holder_user_id: r.holder_user_id,
         })
@@ -134,16 +135,18 @@ impl AccountRepository for PostgresAccountRepository {
     }
 
     async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64> {
-        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fb_accounts WHERE project_id = $1 AND ($2 OR NOT archived)")
-            .bind(project_id)
-            .bind(include_archived)
-            .fetch_one(&self.pool)
-            .await?;
+        let (n,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM fb_accounts WHERE project_id = $1 AND ($2 OR NOT archived)")
+                .bind(project_id)
+                .bind(include_archived)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(n)
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
-        let r = sqlx::query("DELETE FROM fb_accounts WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        let r =
+            sqlx::query("DELETE FROM fb_accounts WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
         Ok(r.rows_affected())
     }
 }

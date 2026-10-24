@@ -14,7 +14,8 @@ pub trait CurrencyRepository: Send + Sync {
     async fn insert(&self, item: &Currency) -> AppResult<()>;
     async fn update(&self, item: &Currency) -> AppResult<()>;
     async fn find_by_code(&self, project_id: Uuid, code: &str) -> AppResult<Option<Currency>>;
-    async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Currency>>;
+    async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64)
+    -> AppResult<Vec<Currency>>;
     async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64>;
     /// Удалить все записи проекта (удаление проекта или аккаунта).
     async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
@@ -37,4 +38,3 @@ pub trait CurrencyUsage: Send + Sync {
     /// Базовая валюта проекта — её не архивировать.
     async fn base_currency(&self, project_id: Uuid) -> AppResult<Option<String>>;
 }
-

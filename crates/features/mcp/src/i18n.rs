@@ -27,13 +27,21 @@ pub fn dict(key: &str) -> Option<Tr> {
         "never" => ("ещё не было", "not yet", "ยังไม่เคย"),
         "project_gone" => ("проект недоступен", "project unavailable", "ไม่มีสิทธิ์ในโปรเจกต์"),
         "scope.read" => ("Просмотр всего", "View everything", "ดูทั้งหมด"),
-        "scope.transactions:write" => ("Операции: добавлять и исправлять", "Transactions: add and edit", "รายการ: เพิ่มและแก้ไข"),
+        "scope.transactions:write" => {
+            ("Операции: добавлять и исправлять", "Transactions: add and edit", "รายการ: เพิ่มและแก้ไข")
+        }
         "scope.currencies:write" => ("Валюты: добавлять и изменять", "Currencies: add and edit", "สกุลเงิน: เพิ่มและแก้ไข"),
         "scope.accounts:write" => ("Счета: добавлять и изменять", "Accounts: add and edit", "บัญชี: เพิ่มและแก้ไข"),
-        "scope.categories:write" => ("Категории: добавлять, переименовывать, переносить", "Categories: add, rename, move", "หมวดหมู่: เพิ่ม เปลี่ยนชื่อ ย้าย"),
+        "scope.categories:write" => (
+            "Категории: добавлять, переименовывать, переносить",
+            "Categories: add, rename, move",
+            "หมวดหมู่: เพิ่ม เปลี่ยนชื่อ ย้าย",
+        ),
         "scope.places:write" => ("Места: добавлять и изменять", "Places: add and edit", "สถานที่: เพิ่มและแก้ไข"),
         "scope.people:write" => ("Люди: добавлять и изменять", "People: add and edit", "บุคคล: เพิ่มและแก้ไข"),
-        "scope.rates:write" => ("Курсы валют: задавать и исправлять", "Exchange rates: set and correct", "อัตราแลกเปลี่ยน: กำหนดและแก้ไข"),
+        "scope.rates:write" => {
+            ("Курсы валют: задавать и исправлять", "Exchange rates: set and correct", "อัตราแลกเปลี่ยน: กำหนดและแก้ไข")
+        }
         "scope.limits:write" => ("Лимиты: задавать и изменять", "Limits: set and change", "วงเงิน: กำหนดและเปลี่ยน"),
         "scope.planning:write" => (
             "Плановые операции: создавать, изменять, приостанавливать, пропускать платежи",
@@ -55,15 +63,27 @@ pub fn dict(key: &str) -> Option<Tr> {
             "“ข้อมูลหลักทั้งหมด” ให้สิทธิ์ข้อมูลอ้างอิงทั้งหมด หากต้องการยกเลิกสิทธิ์ใด ให้ยกเลิกช่องนี้ด้วย",
         ),
         "scope_read_always" => ("всегда", "always", "เสมอ"),
-        "viewer_hint" => ("Роль VIEWER в проекте — только просмотр.", "VIEWER role in the project — view only.", "บทบาท VIEWER ในโปรเจกต์ — ดูอย่างเดียว"),
-        "no_delete" => ("Удаление через ассистента недоступно.", "Deleting through the assistant is not available.", "ลบผ่านผู้ช่วยไม่ได้"),
+        "viewer_hint" => (
+            "Роль VIEWER в проекте — только просмотр.",
+            "VIEWER role in the project — view only.",
+            "บทบาท VIEWER ในโปรเจกต์ — ดูอย่างเดียว",
+        ),
+        "no_delete" => (
+            "Удаление через ассистента недоступно.",
+            "Deleting through the assistant is not available.",
+            "ลบผ่านผู้ช่วยไม่ได้",
+        ),
         "save" => ("Сохранить доступ", "Save access", "บันทึกสิทธิ์"),
         "revoke" => ("Отключить", "Revoke", "ยกเลิกสิทธิ์"),
         "saved" => ("Доступ ассистента сохранён", "Assistant access saved", "บันทึกสิทธิ์ผู้ช่วยแล้ว"),
         "revoked" => ("Доступ ассистента отключён", "Assistant access revoked", "ยกเลิกสิทธิ์ผู้ช่วยแล้ว"),
         "no_such_project" => ("Выберите проект из списка", "Choose a project from the list", "เลือกโปรเจกต์จากรายการ"),
         "connect" => ("Как подключить", "How to connect", "วิธีเชื่อมต่อ"),
-        "connect_claude" => ("Claude на сайте, в приложении на телефоне и компьютере", "Claude on the web, phone and desktop apps", "Claude บนเว็บ แอปโทรศัพท์ และคอมพิวเตอร์"),
+        "connect_claude" => (
+            "Claude на сайте, в приложении на телефоне и компьютере",
+            "Claude on the web, phone and desktop apps",
+            "Claude บนเว็บ แอปโทรศัพท์ และคอมพิวเตอร์",
+        ),
         "step1" => (
             "claude.ai → «Настроить» → «Коннекторы» → «+» → «Добавить свой коннектор».",
             "claude.ai → Customize → Connectors → “+” → Add custom connector.",
@@ -85,7 +105,11 @@ pub fn dict(key: &str) -> Option<Tr> {
             "Sign-in provider is not configured on this server — connecting from claude.ai is unavailable. Use a personal API token in Claude Code.",
             "เซิร์ฟเวอร์นี้ยังไม่ได้ตั้งค่าผู้ให้บริการเข้าสู่ระบบ — ใช้โทเคน API ส่วนตัวใน Claude Code",
         ),
-        "connect_chatgpt" => ("ChatGPT на сайте, в приложении на телефоне и компьютере", "ChatGPT on the web, phone and desktop apps", "ChatGPT บนเว็บ แอปโทรศัพท์ และคอมพิวเตอร์"),
+        "connect_chatgpt" => (
+            "ChatGPT на сайте, в приложении на телефоне и компьютере",
+            "ChatGPT on the web, phone and desktop apps",
+            "ChatGPT บนเว็บ แอปโทรศัพท์ และคอมพิวเตอร์",
+        ),
         "gpt_step1" => (
             "В браузере на chatgpt.com откройте Plugins в меню слева и нажмите Add → Add custom MCP server. В приложении на телефоне сервер не добавить, но потом он работает и там.",
             "In a browser on chatgpt.com open Plugins in the left menu and click Add → Add custom MCP server. The phone app cannot add a server, but it works there afterwards.",
@@ -126,14 +150,22 @@ pub fn dict(key: &str) -> Option<Tr> {
             "Sign-in provider is not configured on this server — ChatGPT cannot be connected.",
             "เซิร์ฟเวอร์นี้ยังไม่ได้ตั้งค่าผู้ให้บริการเข้าสู่ระบบ — เชื่อมต่อ ChatGPT ไม่ได้",
         ),
-        "connect_code" => ("Claude Code (с личным API-токеном)", "Claude Code (with a personal API token)", "Claude Code (ด้วยโทเคน API ส่วนตัว)"),
+        "connect_code" => (
+            "Claude Code (с личным API-токеном)",
+            "Claude Code (with a personal API token)",
+            "Claude Code (ด้วยโทเคน API ส่วนตัว)",
+        ),
         "code_hint" => (
             "Создайте токен в «Безопасности» (проект и права — у токена) и выполните:",
             "Create a token in Security (the token defines project and permissions) and run:",
             "สร้างโทเคนในหน้าความปลอดภัย (โปรเจกต์และสิทธิ์อยู่ที่โทเคน) แล้วรัน:",
         ),
         "to_tokens" => ("К API-токенам", "API tokens", "โทเคน API"),
-        "guest" => ("Демо-гостю ассистенты недоступны.", "Assistants are not available to the demo guest.", "ผู้เยี่ยมชมเดโมใช้ผู้ช่วยไม่ได้"),
+        "guest" => (
+            "Демо-гостю ассистенты недоступны.",
+            "Assistants are not available to the demo guest.",
+            "ผู้เยี่ยมชมเดโมใช้ผู้ช่วยไม่ได้",
+        ),
         "copy" => ("Копировать", "Copy", "คัดลอก"),
         "copied" => ("Скопировано", "Copied", "คัดลอกแล้ว"),
         _ => return None,

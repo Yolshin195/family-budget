@@ -70,7 +70,12 @@ fn setup() -> (PlanningService, Arc<FakePayments>) {
     let payments = Arc::new(FakePayments::default());
     let svc = PlanningService::new(
         Arc::new(InMemoryPlanRepository::default()),
-        Deps { payments: Arc::new(payments.clone()), accounts: Arc::new(FakeAccounts), categories: Arc::new(FakeCategories), rates: Arc::new(FakeRates) },
+        Deps {
+            payments: Arc::new(payments.clone()),
+            accounts: Arc::new(FakeAccounts),
+            categories: Arc::new(FakeCategories),
+            rates: Arc::new(FakeRates),
+        },
     );
     (svc, payments)
 }
@@ -143,12 +148,23 @@ async fn category_kind_and_refs() {
 async fn transfer_plan() {
     let (svc, _) = setup();
     let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
-    let savings = || PlanInput { tx_kind: "TRANSFER".into(), category_code: Some("ignored".into()), to_account_code: Some("savings".into()), ..rent() };
+    let savings = || PlanInput {
+        tx_kind: "TRANSFER".into(),
+        category_code: Some("ignored".into()),
+        to_account_code: Some("savings".into()),
+        ..rent()
+    };
     let plan = svc.create(p, u, savings()).await.unwrap();
     assert_eq!((plan.category_code, plan.to_account_code.as_deref()), (None, Some("SAVINGS")));
     assert!(svc.create(p, u, PlanInput { to_account_code: None, ..savings() }).await.is_err(), "нужен счёт зачисления");
-    assert!(svc.create(p, u, PlanInput { to_account_code: Some("card".into()), ..savings() }).await.is_err(), "тот же счёт");
-    assert!(svc.create(p, u, PlanInput { to_account_code: Some("nope".into()), ..savings() }).await.is_err(), "счёт не найден");
+    assert!(
+        svc.create(p, u, PlanInput { to_account_code: Some("card".into()), ..savings() }).await.is_err(),
+        "тот же счёт"
+    );
+    assert!(
+        svc.create(p, u, PlanInput { to_account_code: Some("nope".into()), ..savings() }).await.is_err(),
+        "счёт не найден"
+    );
     assert!(svc.create(p, u, PlanInput { category_code: None, ..rent() }).await.is_err(), "у расхода нужна категория");
 }
 
@@ -165,7 +181,8 @@ async fn inactive_plan_hides_open_occurrences() {
 #[test]
 fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
 
@@ -200,7 +217,8 @@ async fn foreign_project_undo_and_purge() {
 async fn rule_change_keeps_payment_history() {
     let (svc, payments) = setup();
     let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
-    let plan = svc.create(p, u, PlanInput { start_on: d(10, 16), amount: Decimal::from(2000), ..rent() }).await.unwrap();
+    let plan =
+        svc.create(p, u, PlanInput { start_on: d(10, 16), amount: Decimal::from(2000), ..rent() }).await.unwrap();
     payments.0.lock().unwrap().push(PaidRef {
         plan_id: plan.id,
         plan_date: d(10, 16),
@@ -209,14 +227,23 @@ async fn rule_change_keeps_payment_history() {
         currency: "THB".into(),
         paid_on: d(10, 17),
     });
-    let next = svc.update_on(p, plan.id, PlanInput { start_on: d(10, 1), amount: Decimal::from(2000), ..rent() }, d(10, 19)).await.unwrap();
+    let next = svc
+        .update_on(p, plan.id, PlanInput { start_on: d(10, 1), amount: Decimal::from(2000), ..rent() }, d(10, 19))
+        .await
+        .unwrap();
     let occ = svc.occurrences(p, d(10, 1), d(11, 30), d(10, 19)).await.unwrap();
     let st: Vec<_> = occ.iter().map(|o| (o.date, o.status.as_str(), o.plan.id)).collect();
     assert_eq!(st, vec![(d(10, 16), "PAID", plan.id), (d(11, 1), "EXPECTED", next.id)], "история оплат потерялась");
     let old = svc.get(p, plan.id).await.unwrap();
-    assert_eq!((old.end_on, next.series_id, next.start_on, next.effective_from), (Some(d(10, 18)), plan.id, d(10, 1), Some(d(10, 19))));
+    assert_eq!(
+        (old.end_on, next.series_id, next.start_on, next.effective_from),
+        (Some(d(10, 18)), plan.id, d(10, 1), Some(d(10, 19)))
+    );
     // Сумма меняется на месте — это не смена правила дат.
-    let same = svc.update_on(p, next.id, PlanInput { start_on: d(10, 1), amount: Decimal::from(1600), ..rent() }, d(10, 19)).await.unwrap();
+    let same = svc
+        .update_on(p, next.id, PlanInput { start_on: d(10, 1), amount: Decimal::from(1600), ..rent() }, d(10, 19))
+        .await
+        .unwrap();
     assert_eq!((same.id, same.amount), (next.id, Decimal::from(1600)));
 }
 
@@ -236,9 +263,16 @@ async fn rule_change_edge_cases() {
         paid_on: d(10, 19),
     });
     let next = svc.update_on(p, plan.id, PlanInput { start_on: d(9, 10), ..rent() }, d(10, 19)).await.unwrap();
-    assert_eq!(svc.get(p, plan.id).await.unwrap().end_on, Some(d(11, 5)), "ноябрь оплачен заранее — он у прежнего плана");
+    assert_eq!(
+        svc.get(p, plan.id).await.unwrap().end_on,
+        Some(d(11, 5)),
+        "ноябрь оплачен заранее — он у прежнего плана"
+    );
     // Новое правило не знает, что 05.11 был «ноябрьским» платежом: 10.11 тоже ожидается (можно пропустить).
-    assert_eq!(svc.occurrences(p, d(11, 1), d(12, 31), d(10, 19)).await.unwrap().iter().map(|o| o.date).collect::<Vec<_>>(), vec![d(11, 5), d(11, 10), d(12, 10)]);
+    assert_eq!(
+        svc.occurrences(p, d(11, 1), d(12, 31), d(10, 19)).await.unwrap().iter().map(|o| o.date).collect::<Vec<_>>(),
+        vec![d(11, 5), d(11, 10), d(12, 10)]
+    );
     assert_eq!(next.effective_from, Some(d(11, 6)));
     // Будущий план: прошлых вхождений нет — правка на месте.
     let future = svc.create(p, u, PlanInput { start_on: d(12, 16), ..rent() }).await.unwrap();
@@ -246,6 +280,9 @@ async fn rule_change_edge_cases() {
     assert_eq!((moved.id, moved.start_on, moved.effective_from), (future.id, d(11, 16), None));
     // Разовый платёж в прошлом: у нового правила нет дат после вчера.
     let once = svc.create(p, u, PlanInput { recurrence: "ONCE".into(), start_on: d(10, 16), ..rent() }).await.unwrap();
-    let err = svc.update_on(p, once.id, PlanInput { recurrence: "ONCE".into(), start_on: d(10, 15), ..rent() }, d(10, 19)).await.unwrap_err();
+    let err = svc
+        .update_on(p, once.id, PlanInput { recurrence: "ONCE".into(), start_on: d(10, 15), ..rent() }, d(10, 19))
+        .await
+        .unwrap_err();
     assert!(matches!(err, AppError::Validation(m) if m.starts_with("start_on")));
 }

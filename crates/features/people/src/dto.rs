@@ -50,7 +50,15 @@ pub struct ListQuery {
 
 impl From<Person> for PersonDto {
     fn from(x: Person) -> Self {
-        Self { id: x.id, code: x.code, name: x.name, aliases: x.aliases, user_id: x.user_id, former_member: x.former_member, archived: x.archived }
+        Self {
+            id: x.id,
+            code: x.code,
+            name: x.name,
+            aliases: x.aliases,
+            user_id: x.user_id,
+            former_member: x.former_member,
+            archived: x.archived,
+        }
     }
 }
 
@@ -72,7 +80,9 @@ impl PersonDto {
     /// Имя, другие имена и код через `kernel::search::SEP` — для поиска.
     pub fn search(&self, lang: Lang) -> String {
         let title = self.title(lang);
-        kernel::search::join(std::iter::once(title.as_str()).chain(self.aliases.iter().map(String::as_str)).chain([self.code.as_str()]))
+        kernel::search::join(
+            std::iter::once(title.as_str()).chain(self.aliases.iter().map(String::as_str)).chain([self.code.as_str()]),
+        )
     }
 
     /// Запись участника проекта (не человека без аккаунта).

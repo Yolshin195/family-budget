@@ -34,7 +34,14 @@ pub struct LedgerAdapter(pub Arc<OnceLock<Arc<dyn LedgerSource>>>);
 pub trait LedgerSource: Send + Sync {
     async fn balances(&self, project_id: Uuid, date: NaiveDate) -> AppResult<Vec<(String, Decimal)>>;
     async fn opening(&self, project_id: Uuid, code: &str) -> AppResult<Option<(Decimal, NaiveDate)>>;
-    async fn set_opening(&self, project_id: Uuid, user_id: Uuid, code: &str, amount: Decimal, date: NaiveDate) -> AppResult<()>;
+    async fn set_opening(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        code: &str,
+        amount: Decimal,
+        date: NaiveDate,
+    ) -> AppResult<()>;
     async fn has_postings(&self, project_id: Uuid, code: &str) -> AppResult<bool>;
 }
 
@@ -47,7 +54,14 @@ impl LedgerSource for ::transactions::Service {
     async fn opening(&self, project_id: Uuid, code: &str) -> AppResult<Option<(Decimal, NaiveDate)>> {
         ::transactions::Service::opening(self, project_id, code).await
     }
-    async fn set_opening(&self, project_id: Uuid, user_id: Uuid, code: &str, amount: Decimal, date: NaiveDate) -> AppResult<()> {
+    async fn set_opening(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        code: &str,
+        amount: Decimal,
+        date: NaiveDate,
+    ) -> AppResult<()> {
         ::transactions::Service::set_opening(self, project_id, user_id, code, amount, date).await
     }
     async fn has_postings(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
@@ -69,11 +83,20 @@ impl ::accounts::Ledger for LedgerAdapter {
             None => Ok(None),
         }
     }
-    async fn set_opening(&self, project_id: Uuid, user_id: Uuid, code: &str, amount: Decimal, date: NaiveDate) -> AppResult<()> {
+    async fn set_opening(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        code: &str,
+        amount: Decimal,
+        date: NaiveDate,
+    ) -> AppResult<()> {
         match self.0.get() {
             Some(l) => l.set_opening(project_id, user_id, code, amount, date).await,
             None if amount.is_zero() => Ok(()),
-            None => Err(kernel::error::AppError::Validation("opening_balance: журнал операций выключен — остаток не задать".into())),
+            None => Err(kernel::error::AppError::Validation(
+                "opening_balance: журнал операций выключен — остаток не задать".into(),
+            )),
         }
     }
     async fn has_postings(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
