@@ -104,11 +104,10 @@ impl From<sqlx::Error> for AppError {
         if let sqlx::Error::RowNotFound = e {
             return AppError::NotFound(tr(None, "err.not_found", &[]));
         }
-        if let sqlx::Error::Database(db) = &e {
-            if db.is_unique_violation() {
+        if let sqlx::Error::Database(db) = &e
+            && db.is_unique_violation() {
                 return AppError::Conflict(tr(None, "err.duplicate", &[]));
             }
-        }
         AppError::Internal(e.into())
     }
 }

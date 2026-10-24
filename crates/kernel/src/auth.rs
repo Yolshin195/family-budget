@@ -437,6 +437,8 @@ pub fn same_origin_strict(config: &Config, headers: &HeaderMap) -> bool {
 
 /// CSRF-проверка меняющего запроса по cookie-сессии. Тело формы буферизуется (≤ 64 КБ) и
 /// возвращается в запрос нетронутым.
+// Err — готовый ответ middleware (403, 401), как принято в axum; Ok — запрос того же размера.
+#[allow(clippy::result_large_err)]
 async fn check_csrf(config: &Config, id_hash: &str, req: Request) -> Result<Request, Response> {
     let forbidden = |m: &str| AppError::Forbidden(m.into()).into_response();
     if !same_origin(config, req.headers()) {
@@ -463,6 +465,8 @@ async fn check_csrf(config: &Config, id_hash: &str, req: Request) -> Result<Requ
 }
 
 /// Аутентификация + CSRF + лимит запросов. Общая часть обоих middleware.
+// Err — готовый ответ middleware (403, 401), как принято в axum; Ok — запрос того же размера.
+#[allow(clippy::result_large_err)]
 async fn identify(auth: &AuthState, req: Request) -> Result<(Identity, Request), Response> {
     let headers = req.headers();
     let pq = req.uri().path_and_query().map(|p| p.as_str().to_string()).unwrap_or_else(|| "/".into());

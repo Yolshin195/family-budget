@@ -62,7 +62,7 @@ async fn show(svc: &LimitService, page: PageCtx, error: Option<String>) -> PageR
     for c in &categories {
         let mut mine: Vec<&LimitDto> = all.iter().filter(|l| l.category_code == c.code).collect();
         // Правило действует с начала своего периода; при одинаковом начале — более позднее по дате.
-        mine.sort_by(|a, b| (b.effective_from, b.valid_from).cmp(&(a.effective_from, a.valid_from)));
+        mine.sort_by_key(|l| std::cmp::Reverse((l.effective_from, l.valid_from)));
         let current = mine.iter().find(|l| l.effective_from <= today).map(|l| l.id);
         for l in mine {
             let superseded = l.effective_from <= today && Some(l.id) != current;

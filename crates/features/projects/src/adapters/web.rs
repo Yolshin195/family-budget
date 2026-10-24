@@ -332,11 +332,10 @@ struct BackQuery {
 async fn set_lang(State(svc): Svc, headers: HeaderMap, Path(code): Path<String>, Query(q): Query<BackQuery>) -> Response {
     let lang = Lang::parse(&code).unwrap_or_default();
     // Только сессия браузера: API-токен действует лишь в /api.
-    if let Some(cred) = session_credential(svc.config(), &headers) {
-        if let Ok(Some(id)) = kernel::auth::Authenticator::authenticate(svc.as_ref(), &cred).await {
+    if let Some(cred) = session_credential(svc.config(), &headers)
+        && let Ok(Some(id)) = kernel::auth::Authenticator::authenticate(svc.as_ref(), &cred).await {
             let _ = svc.set_lang(id.user_id, lang).await;
         }
-    }
     let back = if q.back.starts_with('/') && !q.back.starts_with("//") { q.back } else { "/".into() };
     ([set_cookie(svc.config(), LANG_COOKIE, lang.code(), YEAR)], Redirect::to(&back)).into_response()
 }

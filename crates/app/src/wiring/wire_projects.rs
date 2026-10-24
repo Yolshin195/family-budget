@@ -37,7 +37,9 @@ impl BootstrapAdapter {
 pub const DEFAULT_ACCOUNT: (&str, &str, &str, &str, &str) = ("CASH", "CASH", "Наличные", "Cash", "เงินสด");
 
 /// (код, родитель, тип, ru, en, th)
-pub const DEFAULT_CATEGORIES: &[(&str, Option<&str>, &str, &str, &str, &str)] = &[
+pub type DefaultCategory = (&'static str, Option<&'static str>, &'static str, &'static str, &'static str, &'static str);
+
+pub const DEFAULT_CATEGORIES: &[DefaultCategory] = &[
     ("HOME", None, "EXPENSE", "Жильё", "Housing", "ที่อยู่อาศัย"),
     ("HOME_RENT", Some("HOME"), "EXPENSE", "Аренда", "Rent", "ค่าเช่า"),
     ("HOME_UTIL", Some("HOME"), "EXPENSE", "Коммунальные услуги", "Utilities", "ค่าสาธารณูปโภค"),

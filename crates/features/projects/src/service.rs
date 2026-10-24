@@ -171,11 +171,10 @@ impl ProjectService {
         // пока владелец не привяжет его в Rauthy.
         // Разработка: демо-пользователи (`demo:*`) стенда Rauthy сопоставляются по email — так
         // заранее настроенная копия Rauthy входит в демо-данные. В продакшене — только по sub.
-        if !self.config.is_prod() && self.repo.user_by_sub(&login.sub).await?.is_none() {
-            if let Some(demo) = self.repo.user_by_email(&email).await?.filter(|u| u.rauthy_sub.starts_with("demo:") && u.rauthy_sub != GUEST_SUB) {
+        if !self.config.is_prod() && self.repo.user_by_sub(&login.sub).await?.is_none()
+            && let Some(demo) = self.repo.user_by_email(&email).await?.filter(|u| u.rauthy_sub.starts_with("demo:") && u.rauthy_sub != GUEST_SUB) {
                 self.repo.set_sub(demo.id, &login.sub).await?;
             }
-        }
         let user = match self.repo.user_by_sub(&login.sub).await? {
             Some(u) => {
                 self.repo.update_user_identity(u.id, &email, &name, login.picture.as_deref()).await?;
@@ -277,6 +276,7 @@ impl ProjectService {
     // ------------------------------------------------------------ API-токены
 
     /// Новый личный API-токен на один проект. Сырой токен возвращается один раз, в БД — хеш.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_token(
         &self,
         user_id: Uuid,

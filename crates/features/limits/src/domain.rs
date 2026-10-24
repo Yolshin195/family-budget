@@ -79,10 +79,10 @@ impl Limit {
         let mut item = Self {
             id: Uuid::new_v4(),
             project_id,
-            valid_from: data.valid_from.clone(),
+            valid_from: data.valid_from,
             category_code: data.category_code.clone(),
-            limit_period: data.limit_period.clone(),
-            amount: data.amount.clone(),
+            limit_period: data.limit_period,
+            amount: data.amount,
         };
         item.change(data)?;
         Ok(item)

@@ -287,11 +287,10 @@ pub async fn attach_page(State(state): State<WebState>, mut req: Request, next: 
     // Тост показан на этой странице — снять cookie (если ответ не ставит новый тост).
     let sets_flash = resp.headers().get_all(SET_COOKIE).iter().any(|v| v.to_str().is_ok_and(|s| s.starts_with(FLASH_COOKIE)));
     let is_page = resp.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/html"));
-    if flash.is_some() && !sets_flash && is_page {
-        if let Ok(v) = crate::auth::set_cookie(&state.config, FLASH_COOKIE, "", 0).1.parse() {
+    if flash.is_some() && !sets_flash && is_page
+        && let Ok(v) = crate::auth::set_cookie(&state.config, FLASH_COOKIE, "", 0).1.parse() {
             resp.headers_mut().append(SET_COOKIE, v);
         }
-    }
     resp
 }
 
@@ -463,7 +462,10 @@ struct AssetEntry {
     mime: &'static str,
 }
 
-static ASSETS: OnceLock<(HashMap<&'static str, AssetEntry>, HashMap<String, &'static str>)> = OnceLock::new();
+/// По имени (`app.css`) и по имени с хешем (`app.3f2a9c1b0d.css` → `app.css`).
+type AssetIndex = (HashMap<&'static str, AssetEntry>, HashMap<String, &'static str>);
+
+static ASSETS: OnceLock<AssetIndex> = OnceLock::new();
 
 /// `app.css` + хеш содержимого → `app.3f2a9c1b0d.css`.
 fn hashed_name(name: &str, bytes: &[u8]) -> String {

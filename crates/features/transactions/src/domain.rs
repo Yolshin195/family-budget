@@ -567,7 +567,7 @@ fn resolve_items(d: ItemsDraft, existing: &[Item], cur: &AccountCurrency) -> Res
             }
         };
         let slot = if patch { old.and_then(|o| out.iter().position(|x| x.id == o.id)) } else { None };
-        let n = slot.map_or(out.len(), |s| s) + 1;
+        let n = slot.unwrap_or(out.len()) + 1;
         let for_person = match draft.for_person.clone() {
             Some(v) => recipient(&format!("items[{n}].for_person_code"), v)?,
             None => old.map_or_else(|| new_default.clone(), |o| follow(&o.for_person)),

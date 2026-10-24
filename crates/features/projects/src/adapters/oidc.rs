@@ -60,11 +60,10 @@ impl<'c> AsyncHttpClient<'c> for RewritingHttp {
     type Future = <reqwest::Client as AsyncHttpClient<'c>>::Future;
 
     fn call(&'c self, mut request: HttpRequest) -> Self::Future {
-        if self.internal.is_some() {
-            if let Ok(uri) = self.map(&request.uri().to_string()).parse() {
+        if self.internal.is_some()
+            && let Ok(uri) = self.map(&request.uri().to_string()).parse() {
                 *request.uri_mut() = uri;
             }
-        }
         self.inner.call(request)
     }
 }
@@ -98,11 +97,10 @@ impl RauthyProvider {
 
     /// Discovery + JWKS из кэша; `force` — перечитать (например, Rauthy сменил ключи подписи).
     async fn discovered(&self, force: bool) -> AppResult<(CoreProviderMetadata, Option<String>)> {
-        if !force {
-            if let Some(d) = self.cache.read().await.as_ref().filter(|d| d.at.elapsed() < REFRESH) {
+        if !force
+            && let Some(d) = self.cache.read().await.as_ref().filter(|d| d.at.elapsed() < REFRESH) {
                 return Ok((d.metadata.clone(), d.end_session.clone()));
             }
-        }
         let issuer = IssuerUrl::new(self.cfg.issuer.clone()).map_err(misconfigured)?;
         let metadata = CoreProviderMetadata::discover_async(issuer, &self.oidc_http).await.map_err(unavailable)?;
         // end_session_endpoint нет в стандартных метаданных крейта — читаем из того же документа.

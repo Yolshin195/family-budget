@@ -115,7 +115,7 @@ impl AccountForm {
 
 async fn form_page(svc: &AccountService, page: PageCtx, is_new: bool, f: AccountForm, error: Option<String>) -> PageResult {
     let currencies = svc.currency_choices(page.session.project_id, page.lang).await?;
-    render(&FormPage { page: form_ctx(page), is_new, f, kinds: &AccountAccountKind::VALUES, currencies, error })
+    render(&FormPage { page: form_ctx(page), is_new, f, kinds: AccountAccountKind::VALUES, currencies, error })
 }
 
 fn today() -> NaiveDate {

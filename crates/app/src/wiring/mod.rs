@@ -85,7 +85,9 @@ pub fn features(ctx: &AppContext) -> Wired {
     #[cfg(all(feature = "currencies", feature = "transactions"))] let _ = currency_usage.transactions.set(transactions_api.clone());
     #[cfg(all(feature = "currencies", feature = "accounts"))] let _ = currency_usage.accounts.set(accounts_api.clone());
     #[cfg(all(feature = "currencies", feature = "projects"))] let _ = currency_usage.projects.set(projects_api.clone());
+    // vec![] не подходит: каждый push — под своей фичей.
     #[cfg(feature = "categories")]
+    #[allow(clippy::vec_init_then_push)]
     {
         #[allow(unused_mut)]
         let mut sources: Vec<Arc<dyn wire_categories::UsageSource>> = Vec::new();

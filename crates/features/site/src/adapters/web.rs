@@ -104,11 +104,10 @@ impl Public {
 /// Явно выбранный язык запоминаем — дальше в приложении он же.
 fn with_lang_cookie(cfg: &Config, lang: Lang, explicit: bool, resp: PageResult) -> PageResult {
     let mut r = resp?;
-    if explicit {
-        if let Ok(v) = set_cookie(cfg, LANG_COOKIE, lang.code(), 365 * 24 * 3600).1.parse() {
+    if explicit
+        && let Ok(v) = set_cookie(cfg, LANG_COOKIE, lang.code(), 365 * 24 * 3600).1.parse() {
             r.headers_mut().append(axum::http::header::SET_COOKIE, v);
         }
-    }
     // Публичные страницы кэшируются ненадолго: язык зависит от URL и cookie.
     r.headers_mut().insert(axum::http::header::VARY, axum::http::HeaderValue::from_static("Cookie, Accept-Language"));
     Ok(r)
