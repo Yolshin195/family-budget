@@ -94,6 +94,7 @@ sudo bash deploy-vds.sh install vds.conf
 /srv/family-budget/scripts/deploy-vds.sh rollback        # вернуть образ, работавший до последнего update (шаг 14.2)
 /srv/family-budget/scripts/deploy-vds.sh rollback sha-1a2b3c4
 /srv/family-budget/scripts/deploy-vds.sh check           # проверки шага 12
+sudo /srv/family-budget/scripts/deploy-vds.sh logs       # ограничить логи на сервере, установленном до этой версии
 /srv/family-budget/scripts/deploy-vds.sh auto-update status   # автообновление: таймер и последние запуски (шаг 14.3)
 /srv/family-budget/scripts/deploy-vds.sh auto-update test     # пробное уведомление в Telegram / на почту
 ```
@@ -281,6 +282,10 @@ sudo systemctl enable docker containerd
 Если `daemon.json` уже есть (его кладут некоторые хостеры), не заменяйте его, а добавьте в него эти два ключа.
 Настройка действует на новые контейнеры: если приложение уже запущено, пересоздайте их —
 `docker compose up -d --force-recreate` в `/srv/family-budget`. Проверка — `deploy-vds.sh check` или шаг 12.
+
+Сервер установлен раньше? `sudo /srv/family-budget/scripts/deploy-vds.sh logs` (после `git pull`) делает всё сразу:
+ограничивает журнал systemd (шаг 3.8) и логи контейнеров, дописывает ротацию в готовый `daemon.json`, пересоздаёт
+контейнеры, если нужно, и настраивает ротацию `backup.log` (шаг 13.3).
 
 ### 4.3. Доступ к Docker без sudo и `ENGINE=docker` по умолчанию
 

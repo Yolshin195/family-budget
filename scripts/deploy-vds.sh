@@ -10,6 +10,8 @@
 #   sudo ./deploy-vds.sh auto-update on|off включить или выключить таймер
 #   ./deploy-vds.sh auto-update status|test состояние таймера и последние запуски | пробное уведомление
 #   ./deploy-vds.sh check                   проверки шага 12
+#   sudo ./deploy-vds.sh logs               ограничить логи на уже развёрнутом сервере: журнал systemd, логи контейнеров,
+#                                          backup.log (шаги 3.8, 4.2, 13.3; install делает это сам)
 #
 # update, rollback, auto-update и check запускаются от пользователя deploy (или через sudo) и берут настройки из .env.
 # Вручную остаётся то, что требует человека: пароль и passkey администратора Rauthy (шаг 11.1),
@@ -157,13 +159,18 @@ install_system() {
   [ -z "${TIMEZONE:-}" ] || timedatectl set-timezone "$TIMEZONE"
   # То же, что ответ «Yes» в dpkg-reconfigure -plow unattended-upgrades.
   printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' > /etc/apt/apt.conf.d/20auto-upgrades
-  # Журнал systemd (Caddy, таймер автообновления, cron) по умолчанию занимает до 10% диска. Правку вручную не трогаем.
-  if [ ! -f "$JOURNALD_CONF" ]; then
-    mkdir -p "$(dirname "$JOURNALD_CONF")"
-    printf '[Journal]\nSystemMaxUse=500M\n' > "$JOURNALD_CONF"
-    systemctl restart systemd-journald
-  fi
+  journald_limit
   ok "$(. /etc/os-release && echo "$PRETTY_NAME"), часовой пояс $(timedatectl show -p Timezone --value)"
+}
+
+# Журнал systemd (Caddy, таймер автообновления, cron) по умолчанию занимает до 10% диска (шаг 3.8). Правку вручную
+# не трогаем.
+journald_limit() {
+  if [ -f "$JOURNALD_CONF" ]; then info "журнал systemd: $JOURNALD_CONF уже есть"; return; fi
+  mkdir -p "$(dirname "$JOURNALD_CONF")"
+  printf '[Journal]\nSystemMaxUse=500M\n' > "$JOURNALD_CONF"
+  systemctl restart systemd-journald
+  ok "журнал systemd: не больше 500 МБ ($JOURNALD_CONF)"
 }
 
 install_swap() {
@@ -257,7 +264,10 @@ install_docker() {
 docker_log_rotation() {
   local daemon=/etc/docker/daemon.json old='{}'
   if [ -s "$daemon" ]; then old=$(jq . "$daemon") || die "$daemon — не JSON: исправьте его и запустите install ещё раз"; fi
-  jq -e '(."log-driver" // "json-file") != "json-file" or ."log-opts"."max-size" != null' <<< "$old" >/dev/null && return 0
+  if jq -e '(."log-driver" // "json-file") != "json-file" or ."log-opts"."max-size" != null' <<< "$old" >/dev/null; then
+    info "логи контейнеров: ротация в $daemon уже настроена"
+    return
+  fi
   mkdir -p /etc/docker
   [ ! -s "$daemon" ] || cp -p "$daemon" "$daemon.bak.$(date +%Y%m%d%H%M%S)"
   jq '."log-driver" = "json-file" | ."log-opts" = {"max-size": "20m", "max-file": "5"} + (."log-opts" // {})' <<< "$old" > "$daemon"
@@ -587,7 +597,12 @@ install_backups() {
     { crontab -u "$APP_USER" -l 2>/dev/null || true; echo "$line"; } | crontab -u "$APP_USER" -
     ok "cron: каждый день в 03:15"
   fi
-  # backup.log дописывается каждую ночь: раз в месяц уходит в архив, архивы — за год.
+  backup_log_rotation
+  as_app env ENGINE=docker make --no-print-directory backup
+}
+
+# backup.log дописывается каждую ночь (cron): раз в месяц уходит в архив, архивы — за год (шаг 13.3).
+backup_log_rotation() {
   cat > "$LOGROTATE_CONF" <<EOF
 $APP_DIR/backups/backup.log {
 	monthly
@@ -598,7 +613,7 @@ $APP_DIR/backups/backup.log {
 	su $APP_USER $APP_USER
 }
 EOF
-  as_app env ENGINE=docker make --no-print-directory backup
+  ok "backup.log: раз в месяц в архив, 12 архивов ($LOGROTATE_CONF)"
 }
 
 install_auto_update() {
@@ -694,6 +709,26 @@ cmd_install() {
     warn "https://$DOMAIN пока недоступен: sudo journalctl -u caddy -n 50 (DNS, порты 80/443 у хостера); потом $APP_DIR/scripts/deploy-vds.sh check"
   fi
   install_summary
+}
+
+# Логи на уже развёрнутом сервере: то же, что делает install (шаги 3.8, 4.2, 13.3).
+cmd_logs() {
+  [ "$(id -u)" -eq 0 ] || die "logs настраивает систему — запустите через sudo: sudo $0 logs"
+  app_context
+  step "Логи: журнал systemd, контейнеры, backup.log (шаги 3.8, 4.2, 13.3)"
+  journald_limit
+  docker_log_rotation
+  backup_log_rotation
+  if [ ${#RECREATE[@]} -gt 0 ] || ! logs_limited; then
+    info "пересоздаю контейнеры: настройка логов действует только на новые"
+    compose up -d --force-recreate --wait --wait-timeout 180 db rauthy || die "db или rauthy не запустились: docker compose logs db rauthy"
+    compose up -d --force-recreate app
+    wait_app
+  fi
+  CHECK_FAILS=0
+  check_item "логи контейнеров с ротацией (шаг 4.2)" logs_limited
+  info "занято: журнал — $(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMGT]' | tail -n 1), логи контейнеров — $(du -sh /var/lib/docker/containers 2>/dev/null | cut -f1)"
+  [ "$CHECK_FAILS" -eq 0 ]
 }
 
 # ---------------------------------------------------------------- check, update, rollback
@@ -979,6 +1014,7 @@ main() {
     rollback) cmd_rollback "$@" ;;
     auto-update) cmd_auto_update "$@" ;;
     check) cmd_check ;;
+    logs) cmd_logs ;;
     help | -h | --help) usage ;;
     *) usage >&2; exit 2 ;;
   esac
