@@ -17,7 +17,8 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use ::mcp::{
-    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Person, Place, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem, TxRef,
+    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Person, Place, Plan,
+    PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem, TxRef,
 };
 
 pub struct LedgerAdapter(pub Arc<::transactions::Service>);
@@ -63,7 +64,11 @@ fn tx_from(d: ::transactions::dto::TransactionDto) -> Tx {
         place_code: d.place_code,
         for_person_code: d.for_person_code,
         recipients_differ: d.recipients_differ,
-        external_refs: d.external_refs.into_iter().map(|r| TxRef { provider: r.provider, link: r.link, received_at: r.received_at, created_at: r.created_at }).collect(),
+        external_refs: d
+            .external_refs
+            .into_iter()
+            .map(|r| TxRef { provider: r.provider, link: r.link, received_at: r.received_at, created_at: r.created_at })
+            .collect(),
     }
 }
 
@@ -119,22 +124,54 @@ fn input_from(d: TxDraft) -> ::transactions::dto::TransactionInput {
 
 #[async_trait]
 impl ::mcp::Ledger for LedgerAdapter {
-    async fn quick(&self, project_id: Uuid, user_id: Uuid, base_currency: &str, lang: Lang, date: NaiveDate) -> AppResult<QuickInfo> {
+    async fn quick(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        base_currency: &str,
+        lang: Lang,
+        date: NaiveDate,
+    ) -> AppResult<QuickInfo> {
         let q = self.0.quick_defaults(project_id, user_id, base_currency, lang, date).await?;
         Ok(QuickInfo {
             default_account: q.default_account,
-            accounts: q.accounts.into_iter().map(|a| ::mcp::AccountInfo { has_rate: a.rate_to_base.is_some(), code: a.code, title: a.title, currency: a.currency, symbol: a.symbol }).collect(),
+            accounts: q
+                .accounts
+                .into_iter()
+                .map(|a| ::mcp::AccountInfo {
+                    has_rate: a.rate_to_base.is_some(),
+                    code: a.code,
+                    title: a.title,
+                    currency: a.currency,
+                    symbol: a.symbol,
+                })
+                .collect(),
             categories: q
                 .categories
                 .into_iter()
-                .map(|c| CategoryInfo { code: c.code, parent_code: c.parent_code, kind: c.kind, title: c.title, depth: c.depth, search: c.search, limit: c.limit, available: c.available })
+                .map(|c| CategoryInfo {
+                    code: c.code,
+                    parent_code: c.parent_code,
+                    kind: c.kind,
+                    title: c.title,
+                    depth: c.depth,
+                    search: c.search,
+                    limit: c.limit,
+                    available: c.available,
+                })
                 .collect(),
             frequent_expense: q.frequent_expense,
             frequent_income: q.frequent_income,
             places: q
                 .places
                 .into_iter()
-                .map(|p| ::mcp::PlaceInfo { code: p.code, title: p.title, search: p.search, category_code: p.category, account_code: p.account })
+                .map(|p| ::mcp::PlaceInfo {
+                    code: p.code,
+                    title: p.title,
+                    search: p.search,
+                    category_code: p.category,
+                    account_code: p.account,
+                })
                 .collect(),
             frequent_places: q.frequent_places,
         })
@@ -178,7 +215,14 @@ pub struct BudgetAdapter(pub Arc<::budget::Service>);
 
 #[async_trait]
 impl ::mcp::Budget for BudgetAdapter {
-    async fn report(&self, project_id: Uuid, base_currency: &str, view: &str, date: NaiveDate, lang: Lang) -> AppResult<BudgetReport> {
+    async fn report(
+        &self,
+        project_id: Uuid,
+        base_currency: &str,
+        view: &str,
+        date: NaiveDate,
+        lang: Lang,
+    ) -> AppResult<BudgetReport> {
         let today = chrono::Local::now().date_naive();
         let period = ::budget::Period::containing(::budget::View::parse(view), date);
         let r = self.0.report(project_id, base_currency, period, lang, None, today).await?;
@@ -219,7 +263,14 @@ pub struct PlansAdapter(pub Arc<::planning::Service>);
 
 #[async_trait]
 impl ::mcp::Plans for PlansAdapter {
-    async fn occurrences(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate, today: NaiveDate, lang: Lang) -> AppResult<Vec<Occurrence>> {
+    async fn occurrences(
+        &self,
+        project_id: Uuid,
+        from: NaiveDate,
+        to: NaiveDate,
+        today: NaiveDate,
+        lang: Lang,
+    ) -> AppResult<Vec<Occurrence>> {
         Ok(self
             .0
             .occurrences(project_id, from, to, today)
@@ -310,7 +361,14 @@ pub struct DirectoriesAdapter {
 }
 
 fn person_from(d: ::people::dto::PersonDto) -> Person {
-    Person { code: d.code, name: d.name, aliases: d.aliases, user_id: d.user_id, former_member: d.former_member, archived: d.archived }
+    Person {
+        code: d.code,
+        name: d.name,
+        aliases: d.aliases,
+        user_id: d.user_id,
+        former_member: d.former_member,
+        archived: d.archived,
+    }
 }
 
 fn person_fields(p: &Person) -> ::people::dto::PersonFields {
@@ -346,7 +404,13 @@ fn place_fields(p: &Place) -> ::places::dto::PlaceFields {
 }
 
 fn currency_from(d: ::currencies::dto::CurrencyDto) -> Currency {
-    Currency { code: d.code, name: name_from(d.name, &d.name_lang, d.name_ru, d.name_en, d.name_th), symbol: d.symbol, minor_units: d.minor_units, archived: d.archived }
+    Currency {
+        code: d.code,
+        name: name_from(d.name, &d.name_lang, d.name_ru, d.name_en, d.name_th),
+        symbol: d.symbol,
+        minor_units: d.minor_units,
+        archived: d.archived,
+    }
 }
 
 fn account_from(d: ::accounts::dto::AccountDto) -> Account {
@@ -441,7 +505,14 @@ impl ::mcp::Directories for DirectoriesAdapter {
         Ok(account_from(self.accounts.update(project_id, &a.code, dto).await?))
     }
 
-    async fn set_opening(&self, project_id: Uuid, user_id: Uuid, account_code: &str, amount: Decimal, date: NaiveDate) -> AppResult<()> {
+    async fn set_opening(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        account_code: &str,
+        amount: Decimal,
+        date: NaiveDate,
+    ) -> AppResult<()> {
         self.accounts.set_opening(project_id, user_id, account_code, amount, date).await
     }
 
@@ -504,11 +575,23 @@ impl ::mcp::Directories for DirectoriesAdapter {
 pub struct RatesAdapter(pub Arc<::rates::Service>);
 
 fn rate_from(r: ::rates::dto::RateDto) -> Rate {
-    Rate { id: r.id, date: r.rate_date, currency: r.currency_code, rate: r.rate, entered: r.entered, inverted: r.inverted }
+    Rate {
+        id: r.id,
+        date: r.rate_date,
+        currency: r.currency_code,
+        rate: r.rate,
+        entered: r.entered,
+        inverted: r.inverted,
+    }
 }
 
 fn rate_input(r: &Rate) -> ::rates::dto::RateInput {
-    ::rates::dto::RateInput { rate_date: r.date, currency_code: r.currency.clone(), rate: r.entered, inverted: r.inverted }
+    ::rates::dto::RateInput {
+        rate_date: r.date,
+        currency_code: r.currency.clone(),
+        rate: r.entered,
+        inverted: r.inverted,
+    }
 }
 
 #[async_trait]
@@ -536,11 +619,23 @@ impl ::mcp::Rates for RatesAdapter {
 pub struct LimitsAdapter(pub Arc<::limits::Service>);
 
 fn limit_from(l: ::limits::dto::LimitDto) -> Limit {
-    Limit { id: l.id, category_code: l.category_code, period: l.limit_period, valid_from: l.valid_from, amount: l.amount }
+    Limit {
+        id: l.id,
+        category_code: l.category_code,
+        period: l.limit_period,
+        valid_from: l.valid_from,
+        amount: l.amount,
+    }
 }
 
 fn limit_input(l: &Limit) -> ::limits::dto::LimitInput {
-    ::limits::dto::LimitInput { valid_from: l.valid_from, category_code: l.category_code.clone(), limit_period: l.period.clone(), amount: l.amount, removed: l.amount.is_none() }
+    ::limits::dto::LimitInput {
+        valid_from: l.valid_from,
+        category_code: l.category_code.clone(),
+        limit_period: l.period.clone(),
+        amount: l.amount,
+        removed: l.amount.is_none(),
+    }
 }
 
 #[async_trait]
@@ -571,7 +666,14 @@ impl ::mcp::Accounts for AccountsAdapter {
     async fn is_guest(&self, user_id: Uuid) -> AppResult<bool> {
         self.0.is_guest(user_id).await
     }
-    async fn record(&self, user_id: Uuid, project_id: Option<Uuid>, action: &str, meta: &RequestMeta, details: &[(&str, String)]) {
+    async fn record(
+        &self,
+        user_id: Uuid,
+        project_id: Option<Uuid>,
+        action: &str,
+        meta: &RequestMeta,
+        details: &[(&str, String)],
+    ) {
         self.0.record_event(user_id, project_id, action, meta, details).await
     }
 }

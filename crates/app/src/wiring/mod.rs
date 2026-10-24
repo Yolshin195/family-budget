@@ -12,18 +12,30 @@ use kernel::context::AppContext;
 use kernel::feature::Feature;
 
 // @arch:mods:begin
-#[cfg(feature = "projects")] pub mod wire_projects; // @f:projects
-#[cfg(feature = "currencies")] mod wire_currencies; // @f:currencies
-#[cfg(feature = "categories")] mod wire_categories; // @f:categories
-#[cfg(feature = "rates")] mod wire_rates; // @f:rates
-#[cfg(feature = "accounts")] mod wire_accounts; // @f:accounts
-#[cfg(feature = "places")] mod wire_places; // @f:places
-#[cfg(feature = "transactions")] mod wire_transactions; // @f:transactions
-#[cfg(feature = "limits")] mod wire_limits; // @f:limits
-#[cfg(feature = "planning")] mod wire_planning; // @f:planning
-#[cfg(feature = "budget")] mod wire_budget; // @f:budget
-#[cfg(feature = "site")] mod wire_site; // @f:site
-#[cfg(feature = "mcp")] mod wire_mcp; // @f:mcp
+#[cfg(feature = "accounts")]
+mod wire_accounts; // @f:accounts
+#[cfg(feature = "budget")]
+mod wire_budget; // @f:budget
+#[cfg(feature = "categories")]
+mod wire_categories; // @f:categories
+#[cfg(feature = "currencies")]
+mod wire_currencies; // @f:currencies
+#[cfg(feature = "limits")]
+mod wire_limits; // @f:limits
+#[cfg(feature = "mcp")]
+mod wire_mcp;
+#[cfg(feature = "places")]
+mod wire_places; // @f:places
+#[cfg(feature = "planning")]
+mod wire_planning; // @f:planning
+#[cfg(feature = "projects")]
+pub mod wire_projects; // @f:projects
+#[cfg(feature = "rates")]
+mod wire_rates; // @f:rates
+#[cfg(feature = "site")]
+mod wire_site; // @f:site
+#[cfg(feature = "transactions")]
+mod wire_transactions; // @f:transactions // @f:mcp
 // @arch:mods:end
 
 /// Собранные фичи + сервисы, которые нужны приложению напрямую (auth, демо-данные).

@@ -34,7 +34,14 @@ impl CategoriesSource for Fake {
         if p != P {
             return Ok(vec![]);
         }
-        let n = |c: &str, p: Option<&str>, k: &str, depth| Node { code: c.into(), parent_code: p.map(Into::into), kind: k.into(), title: c.into(), depth, archived: false };
+        let n = |c: &str, p: Option<&str>, k: &str, depth| Node {
+            code: c.into(),
+            parent_code: p.map(Into::into),
+            kind: k.into(),
+            title: c.into(),
+            depth,
+            archived: false,
+        };
         Ok(vec![n("FOOD", None, "EXPENSE", 0), n("CAFE", Some("FOOD"), "EXPENSE", 1), n("SALARY", None, "INCOME", 0)])
     }
 }
@@ -45,8 +52,19 @@ impl FactsSource for Fake {
         if p != P {
             return Ok(vec![]);
         }
-        let f = |cur: &str, k: &str, c: &str, a: &str, who| FactRec { date: d(10, 3), currency: cur.into(), kind: k.into(), category_code: c.into(), amount: dec(a), created_by: who };
-        Ok(vec![f("THB", "EXPENSE", "CAFE", "300", self.me), f("USD", "EXPENSE", "FOOD", "10", self.partner), f("THB", "INCOME", "SALARY", "50000", self.me)])
+        let f = |cur: &str, k: &str, c: &str, a: &str, who| FactRec {
+            date: d(10, 3),
+            currency: cur.into(),
+            kind: k.into(),
+            category_code: c.into(),
+            amount: dec(a),
+            created_by: who,
+        };
+        Ok(vec![
+            f("THB", "EXPENSE", "CAFE", "300", self.me),
+            f("USD", "EXPENSE", "FOOD", "10", self.partner),
+            f("THB", "INCOME", "SALARY", "50000", self.me),
+        ])
     }
     async fn balances(&self, p: Uuid, _: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
         if p != P {
@@ -60,7 +78,13 @@ impl FactsSource for Fake {
             return Ok(vec![]);
         }
         // Обмен 3 400 ฿ → 100 $: по справочнику 100 $ = 3 300 ฿, потеряно 100 ฿.
-        let x = |cur: &str, a: &str| ExchangeRec { transaction_id: Uuid::nil(), date: d(10, 3), currency: cur.into(), amount: dec(a), created_by: self.me };
+        let x = |cur: &str, a: &str| ExchangeRec {
+            transaction_id: Uuid::nil(),
+            date: d(10, 3),
+            currency: cur.into(),
+            amount: dec(a),
+            created_by: self.me,
+        };
         Ok(vec![x("THB", "3400"), x("USD", "-100")])
     }
 }
@@ -93,7 +117,12 @@ impl LimitsSource for Fake {
         if p != P {
             return Ok(vec![]);
         }
-        Ok(vec![LimitRule { category_code: "FOOD".into(), period: View::Month, amount: Some(dec("2000")), valid_from: d(1, 1) }])
+        Ok(vec![LimitRule {
+            category_code: "FOOD".into(),
+            period: View::Month,
+            amount: Some(dec("2000")),
+            valid_from: d(1, 1),
+        }])
     }
 }
 
@@ -121,7 +150,14 @@ impl RatesSource for Fake {
 }
 
 fn service(f: Arc<Fake>) -> BudgetService {
-    BudgetService::new(Deps { categories: f.clone(), facts: f.clone(), plans: f.clone(), limits: f.clone(), accounts: f.clone(), rates: f })
+    BudgetService::new(Deps {
+        categories: f.clone(),
+        facts: f.clone(),
+        plans: f.clone(),
+        limits: f.clone(),
+        accounts: f.clone(),
+        rates: f,
+    })
 }
 
 #[tokio::test]
@@ -137,7 +173,11 @@ async fn report_converts_currency_and_rolls_up() {
     assert_eq!(r.income_fact, dec("50000"));
     assert_eq!((r.accounts[0].balance, r.accounts[1].balance), (dec("47400"), dec("90")), "остатки — суммы проводок");
     // Прогноз: CARD − 1 000 (расход) − 5 000 (перевод); USD_CARD + 5 000 ฿ / 33 = 151,52 $.
-    assert_eq!((r.accounts[0].forecast, r.accounts[1].forecast), (dec("41400"), dec("241.52")), "прогноз остатков — с планами");
+    assert_eq!(
+        (r.accounts[0].forecast, r.accounts[1].forecast),
+        (dec("41400"), dec("241.52")),
+        "прогноз остатков — с планами"
+    );
     assert_eq!(r.net_fact(), dec("49370"), "итог по факту — без планов");
     assert_eq!(r.expense_planned, dec("1000"), "плановый перевод не входит в расходы");
     assert_eq!(r.upcoming.len(), 2, "но виден в «Предстоящих»");
@@ -152,7 +192,8 @@ async fn report_converts_currency_and_rolls_up() {
 #[test]
 fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
 
@@ -192,7 +233,14 @@ impl RatesSource for NoRates {
 #[tokio::test]
 async fn amount_without_rate_is_not_summed() {
     let f = Arc::new(Fake { me: Uuid::new_v4(), partner: Uuid::new_v4() });
-    let svc = BudgetService::new(Deps { categories: f.clone(), facts: f.clone(), plans: f.clone(), limits: f.clone(), accounts: f.clone(), rates: Arc::new(NoRates) });
+    let svc = BudgetService::new(Deps {
+        categories: f.clone(),
+        facts: f.clone(),
+        plans: f.clone(),
+        limits: f.clone(),
+        accounts: f.clone(),
+        rates: Arc::new(NoRates),
+    });
     let r = svc.report(P, "THB", Period::containing(View::Month, d(10, 9)), Lang::Ru, None, d(10, 9)).await.unwrap();
     assert_eq!(r.missing_rates, vec!["USD".to_string()]);
     assert_eq!(r.expense_fact, dec("300"), "10 $ без курса сложены с батами 1:1");

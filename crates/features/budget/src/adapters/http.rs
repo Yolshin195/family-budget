@@ -73,7 +73,11 @@ pub struct BudgetDto {
 
 #[utoipa::path(get, path = "/api/budget", tag = "Бюджет", params(ReportQuery),
     responses((status = 200, body = BudgetDto, description = "Бюджет за период")), security(("bearer_auth" = [])))]
-pub async fn report(State(svc): Svc, Extension(s): Extension<Session>, Query(q): Query<ReportQuery>) -> AppResult<Json<BudgetDto>> {
+pub async fn report(
+    State(svc): Svc,
+    Extension(s): Extension<Session>,
+    Query(q): Query<ReportQuery>,
+) -> AppResult<Json<BudgetDto>> {
     let today = chrono::Local::now().date_naive();
     let period = Period::containing(View::parse(q.view.as_deref().unwrap_or("month")), q.date.unwrap_or(today));
     let r = svc.report(s.project_id, &s.base_currency, period, s.lang, q.member, today).await?;
@@ -94,5 +98,12 @@ pub async fn report(State(svc): Svc, Extension(s): Extension<Session>, Query(q):
             level: x.level.code().into(),
         })
         .collect();
-    Ok(Json(BudgetDto { from: r.period.from, to: r.period.to, base_currency: r.base_currency, rows, fx_result: r.fx_result, missing_rates: r.missing_rates }))
+    Ok(Json(BudgetDto {
+        from: r.period.from,
+        to: r.period.to,
+        base_currency: r.base_currency,
+        rows,
+        fx_result: r.fx_result,
+        missing_rates: r.missing_rates,
+    }))
 }

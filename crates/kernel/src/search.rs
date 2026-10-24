@@ -58,7 +58,12 @@ pub enum Found<'a, T> {
 
 /// Запись по коду или названию: точный код → единственное точное название на любом языке →
 /// единственное совпадение по части названия. `names` — названия записи через [`SEP`].
-pub fn find<'a, T>(query: &str, items: &'a [T], code: impl Fn(&T) -> &str, names: impl Fn(&T) -> String) -> Found<'a, T> {
+pub fn find<'a, T>(
+    query: &str,
+    items: &'a [T],
+    code: impl Fn(&T) -> &str,
+    names: impl Fn(&T) -> String,
+) -> Found<'a, T> {
     let q = query.trim();
     if q.is_empty() {
         return Found::None;
@@ -68,7 +73,8 @@ pub fn find<'a, T>(query: &str, items: &'a [T], code: impl Fn(&T) -> &str, names
     }
     let q = fold(q);
     let folded: Vec<String> = items.iter().map(|x| fold(&names(x))).collect();
-    let exact: Vec<&T> = items.iter().zip(&folded).filter(|(_, n)| n.split(SEP).any(|n| n.trim() == q)).map(|(x, _)| x).collect();
+    let exact: Vec<&T> =
+        items.iter().zip(&folded).filter(|(_, n)| n.split(SEP).any(|n| n.trim() == q)).map(|(x, _)| x).collect();
     if let [one] = exact[..] {
         return Found::One(one);
     }
@@ -101,7 +107,11 @@ mod tests {
 
     #[test]
     fn find_prefers_code_then_exact_name_then_part() {
-        let items = [("CAR", join(["Машина", "Car", "รถ"])), ("CARWASH", join(["Мойка", "Car wash", "ล้างรถ"])), ("COFFEE", join(["Кофейня", "Café"]))];
+        let items = [
+            ("CAR", join(["Машина", "Car", "รถ"])),
+            ("CARWASH", join(["Мойка", "Car wash", "ล้างรถ"])),
+            ("COFFEE", join(["Кофейня", "Café"])),
+        ];
         let pick = |q: &str| match find(q, &items, |x| x.0, |x| x.1.clone()) {
             Found::One(x) => Ok(x.0),
             Found::None => Err(0),

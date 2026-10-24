@@ -11,7 +11,10 @@ use uuid::Uuid;
 
 use kernel::error::Problem;
 
-use crate::domain::{Body, Description, Draft, ExternalRef, Fee, Item, ItemDraft, ItemsDraft, RefDraft, Transaction, TransactionData, TxKind};
+use crate::domain::{
+    Body, Description, Draft, ExternalRef, Fee, Item, ItemDraft, ItemsDraft, RefDraft, Transaction, TransactionData,
+    TxKind,
+};
 
 /// Позиция чека в старом формате `lines`: категория и сумма. Принимается по-прежнему — как позиция
 /// «1 шт» с названием из `note`; `lines` заменяют все позиции операции.
@@ -141,7 +144,11 @@ impl From<Item> for ItemDto {
 impl ItemDto {
     /// Одна штука без названия, цены и скидки — как обычная операция.
     pub fn is_simple(&self) -> bool {
-        self.name.is_none() && self.price_per_unit.is_none() && self.quantity == Decimal::ONE && self.unit == "pcs" && self.discount.is_zero()
+        self.name.is_none()
+            && self.price_per_unit.is_none()
+            && self.quantity == Decimal::ONE
+            && self.unit == "pcs"
+            && self.discount.is_zero()
     }
 }
 
@@ -183,9 +190,17 @@ impl ExternalRefInput {
     pub fn into_draft(self, prefix: &str) -> Result<RefDraft, Problem> {
         let at = self.received_at.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(DateTime::parse_from_rfc3339);
         // Ошибки — в порядке полей: источник, id, время.
-        let r = RefDraft::new(prefix, &self.provider, &self.external_id, at.and_then(Result::ok).map(|t| t.with_timezone(&Utc)))?;
+        let r = RefDraft::new(
+            prefix,
+            &self.provider,
+            &self.external_id,
+            at.and_then(Result::ok).map(|t| t.with_timezone(&Utc)),
+        )?;
         if let Some(Err(_)) = at {
-            return Err(Problem::validation(&format!("{prefix}received_at"), kernel::i18n::tr(Some(crate::i18n::dict), "err.external_received_at", &[])));
+            return Err(Problem::validation(
+                &format!("{prefix}received_at"),
+                kernel::i18n::tr(Some(crate::i18n::dict), "err.external_received_at", &[]),
+            ));
         }
         Ok(r)
     }
@@ -211,7 +226,14 @@ pub struct ExternalRefDto {
 
 impl From<ExternalRef> for ExternalRefDto {
     fn from(r: ExternalRef) -> Self {
-        Self { provider: r.provider, external_id: r.external_id, transaction_id: r.transaction_id, link: r.link.as_str().to_string(), received_at: r.received_at, created_at: r.created_at }
+        Self {
+            provider: r.provider,
+            external_id: r.external_id,
+            transaction_id: r.transaction_id,
+            link: r.link.as_str().to_string(),
+            received_at: r.received_at,
+            created_at: r.created_at,
+        }
     }
 }
 
@@ -398,7 +420,8 @@ pub struct ListQuery {
 impl From<Transaction> for TransactionDto {
     fn from(x: Transaction) -> Self {
         let total = x.total();
-        let currency_of = |code: &str| x.postings.iter().find(|p| p.is_account(code)).map(|p| p.currency.clone()).unwrap_or_default();
+        let currency_of =
+            |code: &str| x.postings.iter().find(|p| p.is_account(code)).map(|p| p.currency.clone()).unwrap_or_default();
         let (account_code, to_account_code, refund, items, to_amount, fee) = match x.body() {
             Body::Flow { account, items, refund, .. } => (account, None, refund, items, None, None),
             Body::Transfer { from, to, to_amount, fee, .. } => (from, Some(to), false, Vec::new(), to_amount, fee),
@@ -417,7 +440,10 @@ impl From<Transaction> for TransactionDto {
             account_code,
             to_account_code,
             refund,
-            lines: items.iter().map(|x| LineDto { category_code: x.category_code.clone(), amount: x.amount, note: x.name.clone() }).collect(),
+            lines: items
+                .iter()
+                .map(|x| LineDto { category_code: x.category_code.clone(), amount: x.amount, note: x.name.clone() })
+                .collect(),
             items: items.into_iter().map(Into::into).collect(),
             total,
             to_amount,
@@ -435,7 +461,13 @@ impl From<Transaction> for TransactionDto {
             postings: x
                 .postings
                 .into_iter()
-                .map(|p| PostingDto { ref_kind: p.ref_kind.as_str().into(), ref_code: p.ref_code, currency_code: p.currency, amount: p.amount, note: p.note })
+                .map(|p| PostingDto {
+                    ref_kind: p.ref_kind.as_str().into(),
+                    ref_code: p.ref_code,
+                    currency_code: p.currency,
+                    amount: p.amount,
+                    note: p.note,
+                })
                 .collect(),
             // Связи хранятся отдельно от операции — их добавляет сервис.
             external_refs: Vec::new(),
@@ -445,9 +477,13 @@ impl From<Transaction> for TransactionDto {
 
 impl TransactionInput {
     pub fn into_domain(self) -> Result<TransactionData, Problem> {
-        let err = |field: &str, key: &str, args: &[(&str, &dyn std::fmt::Display)]| Problem::validation(field, kernel::i18n::tr(Some(crate::i18n::dict), key, args));
-        let tx_kind = TxKind::parse(&self.tx_kind).ok_or_else(|| err("tx_kind", "err.kind_invalid", &[("value", &self.tx_kind)]))?;
-        let lang = Lang::parse(&self.description_lang).ok_or_else(|| err("description_lang", "err.lang_invalid", &[("value", &self.description_lang)]))?;
+        let err = |field: &str, key: &str, args: &[(&str, &dyn std::fmt::Display)]| {
+            Problem::validation(field, kernel::i18n::tr(Some(crate::i18n::dict), key, args))
+        };
+        let tx_kind = TxKind::parse(&self.tx_kind)
+            .ok_or_else(|| err("tx_kind", "err.kind_invalid", &[("value", &self.tx_kind)]))?;
+        let lang = Lang::parse(&self.description_lang)
+            .ok_or_else(|| err("description_lang", "err.lang_invalid", &[("value", &self.description_lang)]))?;
         let plan = match (self.plan_id, self.plan_date) {
             (Some(id), Some(date)) => Some((id, date)),
             (None, None) => None,
@@ -459,7 +495,10 @@ impl TransactionInput {
                     (false, false) => return Err(err("items", "err.lines_and_items", &[])),
                     // Старый формат: категория, сумма, уточнение → название; весь чек целиком.
                     (false, true) => ItemsDraft::replace(
-                        self.lines.into_iter().map(|l| ItemDraft { name: l.note, ..ItemDraft::simple(&l.category_code, l.amount) }).collect(),
+                        self.lines
+                            .into_iter()
+                            .map(|l| ItemDraft { name: l.note, ..ItemDraft::simple(&l.category_code, l.amount) })
+                            .collect(),
                     ),
                     _ => ItemsDraft {
                         items: self.items.into_iter().map(ItemInput::into_draft).collect(),
@@ -468,12 +507,25 @@ impl TransactionInput {
                         ..Default::default()
                     },
                 };
-                let items = ItemsDraft { discount_total: self.discount_total, for_default: recipient_of(self.for_person_code), ..items };
-                Draft::Flow { income: tx_kind == TxKind::Income, account: self.account_code.clone(), items, refund: self.refund }
+                let items = ItemsDraft {
+                    discount_total: self.discount_total,
+                    for_default: recipient_of(self.for_person_code),
+                    ..items
+                };
+                Draft::Flow {
+                    income: tx_kind == TxKind::Income,
+                    account: self.account_code.clone(),
+                    items,
+                    refund: self.refund,
+                }
             }
             TxKind::Transfer => Draft::Transfer {
                 from: self.account_code.clone(),
-                to: self.to_account_code.clone().filter(|s| !s.trim().is_empty()).ok_or_else(|| err("to_account_code", "err.to_account_required", &[]))?,
+                to: self
+                    .to_account_code
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| err("to_account_code", "err.to_account_required", &[]))?,
                 amount: self.amount.ok_or_else(|| err("amount", "err.amount_required", &[]))?,
                 to_amount: self.to_amount,
                 fee: match (self.fee_category_code.clone().filter(|s| !s.trim().is_empty()), self.fee_amount) {
@@ -483,11 +535,20 @@ impl TransactionInput {
                     (Some(_), None) => return Err(err("fee_amount", "err.fee_amount_required", &[])),
                 },
             },
-            TxKind::Opening => Draft::Opening { account: self.account_code.clone(), amount: self.amount.ok_or_else(|| err("amount", "err.opening_required", &[]))? },
+            TxKind::Opening => Draft::Opening {
+                account: self.account_code.clone(),
+                amount: self.amount.ok_or_else(|| err("amount", "err.opening_required", &[]))?,
+            },
         };
         Ok(TransactionData {
             occurred_on: self.occurred_on,
-            description: Description { text: self.description, lang, ru: self.description_ru, en: self.description_en, th: self.description_th },
+            description: Description {
+                text: self.description,
+                lang,
+                ru: self.description_ru,
+                en: self.description_en,
+                th: self.description_th,
+            },
             plan,
             place_code: self.place_code,
             body,

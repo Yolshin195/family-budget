@@ -72,13 +72,24 @@ impl IdentityProvider for Arc<FakeRauthy> {
         true
     }
     async fn authorize(&self, _lang: Lang) -> AppResult<AuthRequest> {
-        Ok(AuthRequest { url: "https://auth.test/authorize".into(), state: "state-1".into(), nonce: "nonce-1".into(), pkce_verifier: "pkce-1".into() })
+        Ok(AuthRequest {
+            url: "https://auth.test/authorize".into(),
+            state: "state-1".into(),
+            nonce: "nonce-1".into(),
+            pkce_verifier: "pkce-1".into(),
+        })
     }
     async fn exchange(&self, code: &str, pkce: &str, nonce: &str) -> AppResult<VerifiedLogin> {
         if nonce != "nonce-1" || pkce != "pkce-1" {
             return Err(AppError::Forbidden("nonce".into()));
         }
-        self.logins.lock().unwrap().iter().find(|l| l.sub == code).cloned().ok_or_else(|| AppError::Forbidden("code".into()))
+        self.logins
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|l| l.sub == code)
+            .cloned()
+            .ok_or_else(|| AppError::Forbidden("code".into()))
     }
     async fn logout_url(&self, post: &str) -> Option<String> {
         Some(format!("https://auth.test/logout?post_logout_redirect_uri={post}"))
@@ -92,7 +103,9 @@ impl IdentityProvider for Arc<FakeRauthy> {
     /// Access-токен понарошку: `at:<sub>:<клиент>:<ресурс>`.
     async fn verify_access_token(&self, token: &str, audience: &str) -> AppResult<Option<AccessToken>> {
         Ok(match token.splitn(4, ':').collect::<Vec<_>>()[..] {
-            ["at", sub, client, aud] if aud == audience => Some(AccessToken { sub: sub.into(), client_id: client.into() }),
+            ["at", sub, client, aud] if aud == audience => {
+                Some(AccessToken { sub: sub.into(), client_id: client.into() })
+            }
             _ => None,
         })
     }
@@ -107,7 +120,13 @@ struct Env {
 }
 
 fn login(sub: &str, email: &str, name: &str, amr: &[&str]) -> VerifiedLogin {
-    VerifiedLogin { sub: sub.into(), email: email.into(), name: Some(name.into()), picture: None, amr: amr.iter().map(|s| s.to_string()).collect() }
+    VerifiedLogin {
+        sub: sub.into(),
+        email: email.into(),
+        name: Some(name.into()),
+        picture: None,
+        amr: amr.iter().map(|s| s.to_string()).collect(),
+    }
 }
 
 fn env() -> Env {
@@ -123,13 +142,24 @@ fn env() -> Env {
         ]),
     });
     let people = Arc::new(FakePeople::default());
-    let deps = Deps { bootstrap: Arc::new(boot.clone()), purge: Arc::new(purge.clone()), identity: Arc::new(rauthy), people: Arc::new(people.clone()) };
+    let deps = Deps {
+        bootstrap: Arc::new(boot.clone()),
+        purge: Arc::new(purge.clone()),
+        identity: Arc::new(rauthy),
+        people: Arc::new(people.clone()),
+    };
     let svc = ProjectService::new(repo.clone(), repo.clone(), deps, Arc::new(Config::test()));
     Env { svc, repo, boot, purge, people }
 }
 
 fn pending() -> PendingLogin {
-    PendingLogin { state: "state-1".into(), nonce: "nonce-1".into(), pkce_verifier: "pkce-1".into(), next: "/transactions".into(), started: Utc::now().timestamp() }
+    PendingLogin {
+        state: "state-1".into(),
+        nonce: "nonce-1".into(),
+        pkce_verifier: "pkce-1".into(),
+        next: "/transactions".into(),
+        started: Utc::now().timestamp(),
+    }
 }
 
 fn meta() -> RequestMeta {
@@ -177,7 +207,10 @@ async fn wrong_state_or_expired_login_is_rejected() {
     let err = e.svc.finish_login(&pending(), "forged", "sub-me", Lang::Ru, &meta()).await.unwrap_err();
     assert!(matches!(err, AppError::Forbidden(_)), "{err:?}");
     let old = PendingLogin { started: (Utc::now() - Duration::minutes(11)).timestamp(), ..pending() };
-    assert!(matches!(e.svc.finish_login(&old, "state-1", "sub-me", Lang::Ru, &meta()).await.unwrap_err(), AppError::Validation(_)));
+    assert!(matches!(
+        e.svc.finish_login(&old, "state-1", "sub-me", Lang::Ru, &meta()).await.unwrap_err(),
+        AppError::Validation(_)
+    ));
     let bad_nonce = PendingLogin { nonce: "other".into(), ..pending() };
     assert!(e.svc.finish_login(&bad_nonce, "state-1", "sub-me", Lang::Ru, &meta()).await.is_err());
 }
@@ -219,18 +252,31 @@ async fn idle_session_expires() {
 async fn api_tokens_are_shown_once_scoped_and_revocable() {
     let e = env();
     let (me, _, personal) = signed_up(&e, "sub-me").await;
-    let (raw, token) = e.svc.create_token(me, personal, "bot", &["transactions:write".into()], 30, false, &meta()).await.unwrap();
+    let (raw, token) =
+        e.svc.create_token(me, personal, "bot", &["transactions:write".into()], 30, false, &meta()).await.unwrap();
     assert!(raw.starts_with("fbt_") && token.token_hash != raw);
     let id = e.svc.authenticate(&Credential::ApiToken(raw.clone())).await.unwrap().unwrap();
-    assert_eq!(id.via, Via::Token { token_id: token.id, project_id: personal, scopes: vec!["transactions:write".into()] });
+    assert_eq!(
+        id.via,
+        Via::Token { token_id: token.id, project_id: personal, scopes: vec!["transactions:write".into()] }
+    );
     assert!(e.svc.authenticate(&Credential::ApiToken("fbt_nope".into())).await.unwrap().is_none());
     assert!(e.svc.authenticate(&Credential::ApiToken("not-a-token".into())).await.unwrap().is_none());
 
     // токен — только на свой проект
     let (anna, _, anna_personal) = signed_up(&e, "sub-anna").await;
-    assert!(matches!(e.svc.create_token(me, anna_personal, "x", &["read".into()], 30, false, &meta()).await.unwrap_err(), AppError::NotFound(_)));
-    assert!(matches!(e.svc.create_token(me, personal, "x", &["admin".into()], 30, false, &meta()).await.unwrap_err(), AppError::Validation(_)));
-    assert!(matches!(e.svc.revoke_token(anna, token.id, &meta()).await.unwrap_err(), AppError::NotFound(_)), "чужой токен не отозвать");
+    assert!(matches!(
+        e.svc.create_token(me, anna_personal, "x", &["read".into()], 30, false, &meta()).await.unwrap_err(),
+        AppError::NotFound(_)
+    ));
+    assert!(matches!(
+        e.svc.create_token(me, personal, "x", &["admin".into()], 30, false, &meta()).await.unwrap_err(),
+        AppError::Validation(_)
+    ));
+    assert!(
+        matches!(e.svc.revoke_token(anna, token.id, &meta()).await.unwrap_err(), AppError::NotFound(_)),
+        "чужой токен не отозвать"
+    );
 
     e.svc.revoke_token(me, token.id, &meta()).await.unwrap();
     assert!(e.svc.authenticate(&Credential::ApiToken(raw)).await.unwrap().is_none());
@@ -258,12 +304,18 @@ async fn require_2fa_is_reported_and_blocks_tokens_without_mfa() {
     let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
     let (anna, anna_raw, _) = signed_up(&e, "sub-anna").await;
     join(&e, me, family, anna, Role::Editor).await;
-    assert!(matches!(e.svc.set_require_2fa(anna, family, true, &meta()).await.unwrap_err(), AppError::Forbidden(_)), "только владелец");
+    assert!(
+        matches!(e.svc.set_require_2fa(anna, family, true, &meta()).await.unwrap_err(), AppError::Forbidden(_)),
+        "только владелец"
+    );
     e.svc.set_require_2fa(me, family, true, &meta()).await.unwrap();
     assert!(e.svc.session(me, Some(family)).await.unwrap().unwrap().require_2fa);
     // У Анны вход с кодом из письма (amr otp) — второй фактор есть.
     assert!(e.svc.authenticate(&Credential::Session(anna_raw)).await.unwrap().unwrap().mfa);
-    assert!(matches!(e.svc.create_token(me, family, "bot", &["read".into()], 30, false, &meta()).await.unwrap_err(), AppError::Forbidden(_)));
+    assert!(matches!(
+        e.svc.create_token(me, family, "bot", &["read".into()], 30, false, &meta()).await.unwrap_err(),
+        AppError::Forbidden(_)
+    ));
     assert!(e.svc.create_token(me, family, "bot", &["read".into()], 30, true, &meta()).await.is_ok());
 }
 
@@ -280,7 +332,8 @@ async fn set_role_does_not_add_strangers() {
         let err = e.svc.set_role(me, family, stranger, Role::Editor, &meta()).await.unwrap_err();
         assert!(matches!(err, AppError::NotFound(_)), "{err:?}");
     }
-    let members: Vec<Uuid> = e.svc.session(me, Some(family)).await.unwrap().unwrap().members.iter().map(|m| m.user_id).collect();
+    let members: Vec<Uuid> =
+        e.svc.session(me, Some(family)).await.unwrap().unwrap().members.iter().map(|m| m.user_id).collect();
     assert_eq!(members, vec![me], "в проекте по-прежнему только владелец");
     assert!(e.svc.session(anna, Some(family)).await.unwrap().unwrap().project_id != family, "Анне проект не открылся");
 }
@@ -297,8 +350,14 @@ async fn family_project_members_and_roles() {
     assert_eq!((s.project_id, s.role, s.members.len()), (family, Role::Viewer, 2));
     assert_ne!(e.svc.session(anna, Some(personal)).await.unwrap().unwrap().project_id, personal);
     // только владелец управляет участниками; последнего владельца не убрать
-    assert!(matches!(e.svc.set_role(anna, family, anna, Role::Owner, &meta()).await.unwrap_err(), AppError::Forbidden(_)));
-    assert!(matches!(e.svc.set_role(me, family, me, Role::Editor, &meta()).await.unwrap_err(), AppError::Validation(_)));
+    assert!(matches!(
+        e.svc.set_role(anna, family, anna, Role::Owner, &meta()).await.unwrap_err(),
+        AppError::Forbidden(_)
+    ));
+    assert!(matches!(
+        e.svc.set_role(me, family, me, Role::Editor, &meta()).await.unwrap_err(),
+        AppError::Validation(_)
+    ));
     e.svc.set_role(me, family, anna, Role::Editor, &meta()).await.unwrap();
     e.svc.remove_member(anna, family, anna, &meta()).await.unwrap();
     assert_eq!(e.svc.overview(me).await.unwrap().iter().find(|p| p.id == family).unwrap().members.len(), 1);
@@ -327,7 +386,10 @@ async fn delete_project_needs_owner_and_typed_name() {
     let (me, _, personal) = signed_up(&e, "sub-me").await;
     let family = e.svc.create_project(me, "Семья", ProjectKind::Family, "THB", &meta()).await.unwrap();
     assert!(matches!(e.svc.delete_project(me, family, "семья?", &meta()).await.unwrap_err(), AppError::Validation(_)));
-    assert!(matches!(e.svc.delete_project(me, personal, "Личный бюджет", &meta()).await.unwrap_err(), AppError::Validation(_)));
+    assert!(matches!(
+        e.svc.delete_project(me, personal, "Личный бюджет", &meta()).await.unwrap_err(),
+        AppError::Validation(_)
+    ));
     e.svc.delete_project(me, family, "Семья", &meta()).await.unwrap();
     assert_eq!(e.purge.0.lock().unwrap().as_slice(), &[family], "данные проекта удалены во всех фичах");
 }
@@ -378,7 +440,9 @@ async fn demo_guest_cannot_change_shared_account_or_projects() {
     e.svc.add_guest(me, family).await.unwrap();
     let (raw, project) = e.svc.guest_login(&meta()).await.unwrap();
     assert_eq!(project, family);
-    let Via::Session { id_hash } = e.svc.authenticate(&Credential::Session(raw)).await.unwrap().unwrap().via else { panic!() };
+    let Via::Session { id_hash } = e.svc.authenticate(&Credential::Session(raw)).await.unwrap().unwrap().via else {
+        panic!()
+    };
     let forbidden = |r: AppResult<()>| matches!(r, Err(AppError::Forbidden(_)));
     assert!(forbidden(e.svc.remove_member(guest, family, guest, &meta()).await), "выйти из демо нельзя");
     assert!(forbidden(e.svc.delete_account(guest, &meta()).await.map(|_| ())));
@@ -398,8 +462,16 @@ async fn provider_access_token_maps_to_our_user() {
     let resource = "https://budget.test/mcp";
     let ok = e.svc.verify_access_token(&format!("at:sub-me:claude:{resource}"), resource).await.unwrap();
     assert_eq!(ok, Some((me, "claude".to_string())));
-    assert_eq!(e.svc.verify_access_token("at:sub-me:claude:https://other.test/mcp", resource).await.unwrap(), None, "чужой ресурс");
-    assert_eq!(e.svc.verify_access_token(&format!("at:sub-nobody:claude:{resource}"), resource).await.unwrap(), None, "нет такого пользователя");
+    assert_eq!(
+        e.svc.verify_access_token("at:sub-me:claude:https://other.test/mcp", resource).await.unwrap(),
+        None,
+        "чужой ресурс"
+    );
+    assert_eq!(
+        e.svc.verify_access_token(&format!("at:sub-nobody:claude:{resource}"), resource).await.unwrap(),
+        None,
+        "нет такого пользователя"
+    );
     assert_eq!(e.svc.token_issuer().await.as_deref(), Some("https://auth.test/"));
 }
 
@@ -427,7 +499,10 @@ async fn invite_link_brings_a_new_user_into_the_family_budget() {
     // Anna впервые входит по приглашению — у неё нет проектов, онбординг ей не нужен
     let anna = e.svc.finish_login(&pending(), "state-1", "sub-anna", Lang::En, &meta()).await.unwrap().user_id;
     let preview = e.svc.invite_preview(&code, Some(anna)).await.unwrap();
-    assert_eq!((preview.project_name.as_str(), preview.inviter_name.as_str(), preview.role, preview.state, preview.member), ("Семья", "Имя", Role::Editor, InviteState::Active, false));
+    assert_eq!(
+        (preview.project_name.as_str(), preview.inviter_name.as_str(), preview.role, preview.state, preview.member),
+        ("Семья", "Имя", Role::Editor, InviteState::Active, false)
+    );
     assert_eq!(e.svc.accept_invite(anna, &code, &meta()).await.unwrap(), family);
     let s = e.svc.session(anna, None).await.unwrap().unwrap();
     assert_eq!((s.project_id, s.role, s.members.len()), (family, Role::Editor, 2), "сразу в семейном бюджете");
@@ -437,7 +512,10 @@ async fn invite_link_brings_a_new_user_into_the_family_budget() {
     let other = e.svc.finish_login(&pending(), "state-1", "sub-fb", Lang::Ru, &meta()).await.unwrap().user_id;
     assert!(matches!(e.svc.accept_invite(other, &code, &meta()).await.unwrap_err(), AppError::Validation(_)));
     assert_eq!(e.svc.invite_preview(&code, None).await.unwrap().state, InviteState::Used);
-    assert!(e.svc.overview(me).await.unwrap().iter().find(|p| p.id == family).unwrap().invites.is_empty(), "использованное пропадает из списка");
+    assert!(
+        e.svc.overview(me).await.unwrap().iter().find(|p| p.id == family).unwrap().invites.is_empty(),
+        "использованное пропадает из списка"
+    );
     assert!(e.repo.audit.lock().unwrap().iter().any(|a| a.action == "member_joined" && a.user_id == Some(anna)));
 }
 
@@ -465,17 +543,29 @@ async fn only_the_owner_invites_and_only_into_a_family_budget() {
     let (me, _, personal) = signed_up(&e, "sub-me").await;
     let (anna, _, _) = signed_up(&e, "sub-anna").await;
     // личный бюджет — сначала сделать семейным; название по умолчанию меняется
-    assert!(matches!(e.svc.create_invite(me, personal, Role::Editor, &meta()).await.unwrap_err(), AppError::Validation(_)));
-    assert!(matches!(e.svc.make_family(anna, personal, &meta()).await.unwrap_err(), AppError::NotFound(_)), "чужой проект");
+    assert!(matches!(
+        e.svc.create_invite(me, personal, Role::Editor, &meta()).await.unwrap_err(),
+        AppError::Validation(_)
+    ));
+    assert!(
+        matches!(e.svc.make_family(anna, personal, &meta()).await.unwrap_err(), AppError::NotFound(_)),
+        "чужой проект"
+    );
     e.svc.make_family(me, personal, &meta()).await.unwrap();
     let p = e.svc.overview(me).await.unwrap().into_iter().find(|p| p.id == personal).unwrap();
     assert_eq!((p.kind.as_str(), p.name.as_str()), ("FAMILY", "Семейный бюджет"));
     // владельцем по ссылке не стать; приглашать может только владелец
-    assert!(matches!(e.svc.create_invite(me, personal, Role::Owner, &meta()).await.unwrap_err(), AppError::Validation(_)));
+    assert!(matches!(
+        e.svc.create_invite(me, personal, Role::Owner, &meta()).await.unwrap_err(),
+        AppError::Validation(_)
+    ));
     let id = e.svc.create_invite(me, personal, Role::Editor, &meta()).await.unwrap();
     let code = invite_code(&e, me, personal, id).await;
     e.svc.accept_invite(anna, &code, &meta()).await.unwrap();
-    assert!(matches!(e.svc.create_invite(anna, personal, Role::Viewer, &meta()).await.unwrap_err(), AppError::Forbidden(_)));
+    assert!(matches!(
+        e.svc.create_invite(anna, personal, Role::Viewer, &meta()).await.unwrap_err(),
+        AppError::Forbidden(_)
+    ));
     assert!(matches!(e.svc.revoke_invite(anna, personal, id, &meta()).await.unwrap_err(), AppError::Forbidden(_)));
     assert!(e.svc.overview(anna).await.unwrap().iter().all(|p| p.invites.is_empty()), "ссылки видит только владелец");
 }
@@ -523,7 +613,11 @@ async fn demo_guest_cannot_join_by_invite() {
     let id = e.svc.create_invite(me, family, Role::Editor, &meta()).await.unwrap();
     let code = invite_code(&e, me, family, id).await;
     assert!(matches!(e.svc.accept_invite(guest, &code, &meta()).await.unwrap_err(), AppError::Forbidden(_)));
-    assert_eq!(e.svc.invite_preview(&code, None).await.unwrap().state, InviteState::Active, "приглашение не израсходовано");
+    assert_eq!(
+        e.svc.invite_preview(&code, None).await.unwrap().state,
+        InviteState::Active,
+        "приглашение не израсходовано"
+    );
 }
 
 // ---------------------------------------------------------------- страницы входа
@@ -554,7 +648,11 @@ async fn login_error_details_go_to_journal_not_to_page() {
     let failed: Vec<_> = audit.iter().filter(|a| a.action == "login_failed").collect();
     assert_eq!(failed.len(), 1);
     assert!(failed[0].user_id.is_none());
-    assert!(failed[0].details.iter().any(|(k, v)| k == "description" && v.contains("upstream github")), "{:?}", failed[0].details);
+    assert!(
+        failed[0].details.iter().any(|(k, v)| k == "description" && v.contains("upstream github")),
+        "{:?}",
+        failed[0].details
+    );
 }
 
 /// Б4: «Посмотреть демо» — только со своего сайта (без `Origin`/`Referer` — отказ), сессия гостя
@@ -618,7 +716,6 @@ async fn members_cannot_be_added_by_email() {
     assert_ne!(svc.session(anna, Some(family)).await.unwrap().unwrap().project_id, family, "Анну не добавили");
 }
 
-
 /// Справочник людей (docs/group-1.md, 5.9): запись участника — при создании проекта и вступлении по
 /// приглашению, в архив — при выходе, без имени — при удалении аккаунта; гостю демо записи нет.
 #[tokio::test]
@@ -630,7 +727,9 @@ async fn member_records_follow_membership() {
     join(&e, me, family, anna, Role::Editor).await;
     e.svc.remove_member(anna, family, anna, &meta()).await.unwrap();
     let log = e.people.0.lock().unwrap().clone();
-    let has = |ev: &str, p: Option<Uuid>, u: Uuid, name: &str| log.iter().any(|x| x.0 == ev && x.1 == p && x.2 == u && x.3 == name);
+    let has = |ev: &str, p: Option<Uuid>, u: Uuid, name: &str| {
+        log.iter().any(|x| x.0 == ev && x.1 == p && x.2 == u && x.3 == name)
+    };
     assert!(has("joined", Some(personal), me, "Имя"), "личный проект — с именем из онбординга: {log:?}");
     assert!(has("joined", Some(family), me, "Имя") && has("joined", Some(family), anna, "Имя"), "{log:?}");
     assert!(has("left", Some(family), anna, ""), "{log:?}");

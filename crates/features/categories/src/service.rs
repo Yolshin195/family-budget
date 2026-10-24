@@ -6,15 +6,15 @@ use std::sync::Arc;
 #[allow(unused_imports)]
 use kernel::code::{ensure_ref, normalize};
 use kernel::error::{AppError, AppResult, Problem};
+use kernel::i18n::Lang;
 use kernel::i18n::tr;
 use kernel::pagination::{PagedResponse, Pagination};
-use kernel::i18n::Lang;
 use kernel::web::Choice;
 use uuid::Uuid;
 
 use crate::domain::{Category, check_tree, flatten};
-use crate::dto::{CreateCategoryDto, ListQuery, UpdateCategoryDto, CategoryDto};
-use crate::ports::{Deps, CategoryRepository};
+use crate::dto::{CategoryDto, CreateCategoryDto, ListQuery, UpdateCategoryDto};
+use crate::ports::{CategoryRepository, Deps};
 
 pub struct CategoryService {
     repo: Arc<dyn CategoryRepository>,
@@ -41,7 +41,12 @@ impl CategoryService {
         Ok(self.load(project_id, code).await?.into())
     }
 
-    pub async fn list(&self, project_id: Uuid, query: ListQuery, pagination: Pagination) -> AppResult<PagedResponse<CategoryDto>> {
+    pub async fn list(
+        &self,
+        project_id: Uuid,
+        query: ListQuery,
+        pagination: Pagination,
+    ) -> AppResult<PagedResponse<CategoryDto>> {
         let all = query.include_archived;
         let items = self.repo.list(project_id, all, pagination.limit(), pagination.offset()).await?;
         let total = self.repo.count(project_id, all).await?;
@@ -123,7 +128,12 @@ impl CategoryService {
     /// Публичный контракт для других фич: тип активной категории (EXPENSE / INCOME).
     pub async fn kind_of(&self, project_id: Uuid, code: &str) -> AppResult<Option<String>> {
         let Ok(code) = kernel::code::normalize("code", code) else { return Ok(None) };
-        Ok(self.repo.find_by_code(project_id, &code).await?.filter(|c| !c.archived).map(|c| c.category_kind.as_str().to_string()))
+        Ok(self
+            .repo
+            .find_by_code(project_id, &code)
+            .await?
+            .filter(|c| !c.archived)
+            .map(|c| c.category_kind.as_str().to_string()))
     }
 
     /// Публичный контракт для других фич: активные категории деревом (tag — EXPENSE/INCOME).
@@ -132,7 +142,12 @@ impl CategoryService {
             .tree(project_id, false)
             .await?
             .into_iter()
-            .map(|(depth, c)| Choice { label: c.title(lang).to_string(), tag: c.category_kind.clone(), code: c.code, depth })
+            .map(|(depth, c)| Choice {
+                label: c.title(lang).to_string(),
+                tag: c.category_kind.clone(),
+                code: c.code,
+                depth,
+            })
             .collect())
     }
 

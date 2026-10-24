@@ -43,7 +43,12 @@ impl PersonService {
         Ok(self.load(project_id, code).await?.into())
     }
 
-    pub async fn list(&self, project_id: Uuid, query: ListQuery, pagination: Pagination) -> AppResult<PagedResponse<PersonDto>> {
+    pub async fn list(
+        &self,
+        project_id: Uuid,
+        query: ListQuery,
+        pagination: Pagination,
+    ) -> AppResult<PagedResponse<PersonDto>> {
         let all = query.include_archived;
         let items = self.repo.list(project_id, all, pagination.limit(), pagination.offset()).await?;
         let total = self.repo.count(project_id, all).await?;
@@ -145,7 +150,10 @@ impl PersonService {
 
     async fn load(&self, project_id: Uuid, code: &str) -> AppResult<Person> {
         let code = kernel::code::code("code", code)?;
-        self.repo.find_by_code(project_id, &code).await?.ok_or_else(|| AppError::NotFound(t("err.not_found", &[("code", &code)])))
+        self.repo
+            .find_by_code(project_id, &code)
+            .await?
+            .ok_or_else(|| AppError::NotFound(t("err.not_found", &[("code", &code)])))
     }
 }
 

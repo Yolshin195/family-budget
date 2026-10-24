@@ -122,12 +122,17 @@ pub trait TransactionRepository: Send + Sync {
     async fn uses_currency(&self, project_id: Uuid, currency: &str) -> AppResult<bool>;
     /// Для быстрого расхода: последний счёт пользователя в расходах и доходах и его частые категории
     /// (по числу проводок с `since`, чаще — первые) для транзакций типа `kind`.
-    async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate) -> AppResult<QuickStats>;
+    async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate)
+    -> AppResult<QuickStats>;
     /// Удалить все операции проекта и их связи с внешними записями (удаление проекта или аккаунта).
     async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
     /// Сколько пользователей внесли первую операцию за период — для воронки лендинга
     /// (начальные остатки не считаются).
-    async fn count_first(&self, from: chrono::DateTime<chrono::Utc>, to: chrono::DateTime<chrono::Utc>) -> AppResult<i64>;
+    async fn count_first(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<i64>;
 }
 
 /// Привычки пользователя в проекте — из проводок, без отдельных таблиц.
@@ -222,7 +227,13 @@ pub struct CategoryLimit {
 /// Что нужно от фичи `budget`: остатки лимитов за месяц даты и курсы к базовой валюте.
 #[async_trait]
 pub trait BudgetView: Send + Sync {
-    async fn limits(&self, project_id: Uuid, base_currency: &str, date: NaiveDate, lang: Lang) -> AppResult<Vec<CategoryLimit>>;
+    async fn limits(
+        &self,
+        project_id: Uuid,
+        base_currency: &str,
+        date: NaiveDate,
+        lang: Lang,
+    ) -> AppResult<Vec<CategoryLimit>>;
     /// Курс 1 единицы валюты к базовой на дату (ближайший предыдущий).
     async fn rates(&self, project_id: Uuid, base_currency: &str, date: NaiveDate) -> AppResult<Vec<(String, Decimal)>>;
 }

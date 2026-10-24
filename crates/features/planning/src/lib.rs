@@ -44,7 +44,15 @@ pub fn feature(api: Arc<Service>) -> Feature {
         web: Some(Web {
             pages: adapters::web::router(api),
             public: None,
-            nav: Some(NavItem { feature: NAME, href: MOUNT, label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)), icon: "calendar-days", group: NavGroup::Main, order: 30, mobile: true }),
+            nav: Some(NavItem {
+                feature: NAME,
+                href: MOUNT,
+                label: i18n::dict("nav").unwrap_or((NAME, NAME, NAME)),
+                icon: "calendar-days",
+                group: NavGroup::Main,
+                order: 30,
+                mobile: true,
+            }),
             root: None,
             account: None,
         }),

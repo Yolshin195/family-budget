@@ -7,7 +7,7 @@ use kernel::error::{AppError, AppResult};
 use uuid::Uuid;
 
 use crate::domain::Limit;
-use crate::ports::{Period, LimitRepository};
+use crate::ports::{LimitRepository, Period};
 
 #[derive(Default)]
 pub struct InMemoryLimitRepository {

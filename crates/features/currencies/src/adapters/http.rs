@@ -11,7 +11,7 @@ use kernel::error::AppResult;
 use kernel::pagination::{PagedResponse, Pagination};
 use utoipa::OpenApi;
 
-use crate::dto::{CreateCurrencyDto, ListQuery, UpdateCurrencyDto, CurrencyDto};
+use crate::dto::{CreateCurrencyDto, CurrencyDto, ListQuery, UpdateCurrencyDto};
 use crate::service::CurrencyService;
 
 type Svc = State<Arc<CurrencyService>>;

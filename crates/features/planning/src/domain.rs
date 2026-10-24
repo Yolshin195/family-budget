@@ -53,7 +53,13 @@ pub struct Name {
 
 impl Name {
     pub fn localized(&self) -> Localized<'_> {
-        Localized { original: &self.text, lang: self.lang, ru: self.ru.as_deref(), en: self.en.as_deref(), th: self.th.as_deref() }
+        Localized {
+            original: &self.text,
+            lang: self.lang,
+            ru: self.ru.as_deref(),
+            en: self.en.as_deref(),
+            th: self.th.as_deref(),
+        }
     }
 }
 
@@ -162,13 +168,22 @@ impl Plan {
         let present = |v: Option<String>| v.filter(|s| !s.trim().is_empty());
         // Перевод — счёт зачисления вместо категории; расход и доход — категория.
         let (category_code, to_account_code) = if d.tx_kind == "TRANSFER" {
-            let to = normalize("to_account_code", &present(d.to_account_code).ok_or("to_account_code: выберите счёт зачисления")?)?;
+            let to = normalize(
+                "to_account_code",
+                &present(d.to_account_code).ok_or("to_account_code: выберите счёт зачисления")?,
+            )?;
             if to == account_code {
                 return Err("to_account_code: счёт зачисления должен отличаться от счёта списания".into());
             }
             (None, Some(to))
         } else {
-            (Some(normalize("category_code", &present(d.category_code).ok_or("category_code: выберите категорию")?)?), None)
+            (
+                Some(normalize(
+                    "category_code",
+                    &present(d.category_code).ok_or("category_code: выберите категорию")?,
+                )?),
+                None,
+            )
         };
         if d.amount <= Decimal::ZERO {
             return Err("amount: сумма должна быть больше нуля".into());
@@ -224,9 +239,12 @@ impl Plan {
         // Пропускаем заведомо ранние шаги, чтобы не перебирать годы ежедневного плана.
         let mut k: u32 = match self.recurrence {
             Recurrence::Daily if from > self.start_on => ((from - self.start_on).num_days() as u32) / self.interval,
-            Recurrence::Weekly if from > self.start_on => ((from - self.start_on).num_days() as u32) / (7 * self.interval),
+            Recurrence::Weekly if from > self.start_on => {
+                ((from - self.start_on).num_days() as u32) / (7 * self.interval)
+            }
             Recurrence::Monthly if from > self.start_on => {
-                let months = (from.year() - self.start_on.year()) * 12 + from.month() as i32 - self.start_on.month() as i32;
+                let months =
+                    (from.year() - self.start_on.year()) * 12 + from.month() as i32 - self.start_on.month() as i32;
                 (months.max(1) as u32 - 1) / self.interval
             }
             _ => 0,
@@ -327,7 +345,13 @@ mod tests {
             Uuid::nil(),
             Uuid::nil(),
             PlanData {
-                name: Name { text: "Аренда".into(), lang: Lang::Ru, ru: Some("x".into()), en: Some("Rent".into()), th: None },
+                name: Name {
+                    text: "Аренда".into(),
+                    lang: Lang::Ru,
+                    ru: Some("x".into()),
+                    en: Some("Rent".into()),
+                    th: None,
+                },
                 tx_kind: "EXPENSE".into(),
                 account_code: "card".into(),
                 category_code: Some("rent".into()),
@@ -346,7 +370,10 @@ mod tests {
     #[test]
     fn monthly_on_31st_falls_back_to_last_day() {
         let p = plan(Recurrence::Monthly, 1, d(2026, 1, 31));
-        assert_eq!(p.dates(d(2026, 1, 1), d(2026, 4, 30)), vec![d(2026, 1, 31), d(2026, 2, 28), d(2026, 3, 31), d(2026, 4, 30)]);
+        assert_eq!(
+            p.dates(d(2026, 1, 1), d(2026, 4, 30)),
+            vec![d(2026, 1, 31), d(2026, 2, 28), d(2026, 3, 31), d(2026, 4, 30)]
+        );
         assert_eq!(p.name.ru, None, "перевод на язык оригинала не хранится");
     }
 
@@ -355,7 +382,10 @@ mod tests {
         let p = plan(Recurrence::Monthly, 1, d(2025, 3, 5));
         assert_eq!(p.dates(d(2026, 10, 1), d(2026, 10, 31)), vec![d(2026, 10, 5)]);
         let q = plan(Recurrence::Monthly, 3, d(2026, 1, 10));
-        assert_eq!(q.dates(d(2026, 1, 1), d(2026, 12, 31)), vec![d(2026, 1, 10), d(2026, 4, 10), d(2026, 7, 10), d(2026, 10, 10)]);
+        assert_eq!(
+            q.dates(d(2026, 1, 1), d(2026, 12, 31)),
+            vec![d(2026, 1, 10), d(2026, 4, 10), d(2026, 7, 10), d(2026, 10, 10)]
+        );
     }
 
     #[test]
@@ -368,7 +398,10 @@ mod tests {
 
     #[test]
     fn once_daily_yearly_and_end() {
-        assert_eq!(plan(Recurrence::Once, 1, d(2026, 11, 12)).dates(d(2026, 1, 1), d(2027, 12, 31)), vec![d(2026, 11, 12)]);
+        assert_eq!(
+            plan(Recurrence::Once, 1, d(2026, 11, 12)).dates(d(2026, 1, 1), d(2027, 12, 31)),
+            vec![d(2026, 11, 12)]
+        );
         let mut p = plan(Recurrence::Daily, 1, d(2026, 10, 1));
         p.end_on = Some(d(2026, 10, 3));
         assert_eq!(p.dates(d(2026, 9, 1), d(2026, 12, 1)).len(), 3);
@@ -392,8 +425,16 @@ mod tests {
         let amount = Decimal::from(150_000);
         assert_eq!(fx.convert("THB", amount, d(2026, 10, 20)), Some(amount), "базовая — как есть");
         assert_eq!(fx.convert("RUB", amount, d(2026, 10, 20)), Some(Decimal::from(57_000)), "курс на дату");
-        assert_eq!(fx.convert("RUB", amount, d(2026, 9, 20)), Some(Decimal::from(60_000)), "последний известный до даты");
-        assert_eq!(fx.convert("RUB", amount, d(2026, 1, 20)), Some(Decimal::from(60_000)), "раньше всех курсов — самый ранний");
+        assert_eq!(
+            fx.convert("RUB", amount, d(2026, 9, 20)),
+            Some(Decimal::from(60_000)),
+            "последний известный до даты"
+        );
+        assert_eq!(
+            fx.convert("RUB", amount, d(2026, 1, 20)),
+            Some(Decimal::from(60_000)),
+            "раньше всех курсов — самый ранний"
+        );
         assert_eq!(fx.convert("USD", amount, d(2026, 10, 20)), None, "курса нет");
     }
 

@@ -5,7 +5,7 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 #[allow(unused_imports)]
-use crate::domain::{CategoryNameLang, CategoryCategoryKind, NewCategory, Category, CategoryChanges};
+use crate::domain::{Category, CategoryCategoryKind, CategoryChanges, CategoryNameLang, NewCategory};
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateCategoryDto {
@@ -144,13 +144,15 @@ impl UpdateCategoryDto {
 }
 
 fn parse_name_lang(value: &str) -> Result<CategoryNameLang, String> {
-    CategoryNameLang::parse(value)
-        .ok_or_else(|| format!("name_lang: недопустимое значение '{value}', ожидается одно из {:?}", CategoryNameLang::VALUES))
+    CategoryNameLang::parse(value).ok_or_else(|| {
+        format!("name_lang: недопустимое значение '{value}', ожидается одно из {:?}", CategoryNameLang::VALUES)
+    })
 }
 
 fn parse_category_kind(value: &str) -> Result<CategoryCategoryKind, String> {
-    CategoryCategoryKind::parse(value)
-        .ok_or_else(|| format!("category_kind: недопустимое значение '{value}', ожидается одно из {:?}", CategoryCategoryKind::VALUES))
+    CategoryCategoryKind::parse(value).ok_or_else(|| {
+        format!("category_kind: недопустимое значение '{value}', ожидается одно из {:?}", CategoryCategoryKind::VALUES)
+    })
 }
 
 impl CategoryDto {

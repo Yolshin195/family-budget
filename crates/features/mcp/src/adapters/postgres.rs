@@ -53,19 +53,21 @@ impl From<Row> for Grant {
 #[async_trait]
 impl GrantRepository for PostgresGrantRepository {
     async fn grant(&self, user_id: Uuid, client_id: &str) -> AppResult<Option<Grant>> {
-        let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLUMNS} FROM fb_mcp_grants WHERE user_id = $1 AND client_id = $2"))
-            .bind(user_id)
-            .bind(client_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row: Option<Row> =
+            sqlx::query_as(&format!("SELECT {COLUMNS} FROM fb_mcp_grants WHERE user_id = $1 AND client_id = $2"))
+                .bind(user_id)
+                .bind(client_id)
+                .fetch_optional(&self.pool)
+                .await?;
         Ok(row.map(Into::into))
     }
 
     async fn grants_of(&self, user_id: Uuid) -> AppResult<Vec<Grant>> {
-        let rows: Vec<Row> = sqlx::query_as(&format!("SELECT {COLUMNS} FROM fb_mcp_grants WHERE user_id = $1 ORDER BY created_at"))
-            .bind(user_id)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows: Vec<Row> =
+            sqlx::query_as(&format!("SELECT {COLUMNS} FROM fb_mcp_grants WHERE user_id = $1 ORDER BY created_at"))
+                .bind(user_id)
+                .fetch_all(&self.pool)
+                .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
@@ -90,17 +92,26 @@ impl GrantRepository for PostgresGrantRepository {
     }
 
     async fn delete(&self, user_id: Uuid, client_id: &str) -> AppResult<bool> {
-        let r = sqlx::query("DELETE FROM fb_mcp_grants WHERE user_id = $1 AND client_id = $2").bind(user_id).bind(client_id).execute(&self.pool).await?;
+        let r = sqlx::query("DELETE FROM fb_mcp_grants WHERE user_id = $1 AND client_id = $2")
+            .bind(user_id)
+            .bind(client_id)
+            .execute(&self.pool)
+            .await?;
         Ok(r.rows_affected() > 0)
     }
 
     async fn touch(&self, id: Uuid, at: DateTime<Utc>) -> AppResult<()> {
-        sqlx::query("UPDATE fb_mcp_grants SET last_used_at = $2 WHERE id = $1").bind(id).bind(at).execute(&self.pool).await?;
+        sqlx::query("UPDATE fb_mcp_grants SET last_used_at = $2 WHERE id = $1")
+            .bind(id)
+            .bind(at)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
     async fn delete_project(&self, project_id: Uuid) -> AppResult<u64> {
-        let r = sqlx::query("DELETE FROM fb_mcp_grants WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        let r =
+            sqlx::query("DELETE FROM fb_mcp_grants WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
         Ok(r.rows_affected())
     }
 }

@@ -31,7 +31,9 @@ impl PlaceService {
         let item = Place::create(project_id, &dto.code, dto.data.into_domain()?)?;
         self.check_refs(project_id, &item).await?;
         if self.repo.find_by_code(project_id, &item.code).await?.is_some() {
-            return Err(AppError::Conflict(Problem::validation("code", t("err.code_taken", &[("code", &item.code)])).to_string()));
+            return Err(AppError::Conflict(
+                Problem::validation("code", t("err.code_taken", &[("code", &item.code)])).to_string(),
+            ));
         }
         check_tree(&self.repo.all(project_id).await?, &item)?;
         self.repo.insert(&item).await?;
@@ -40,11 +42,20 @@ impl PlaceService {
 
     pub async fn get(&self, project_id: Uuid, code: &str) -> AppResult<PlaceDto> {
         let code = kernel::code::code("code", code)?;
-        self.all(project_id, true).await?.into_iter().find(|p| p.code == code).ok_or_else(|| AppError::NotFound(t("err.not_found", &[("code", &code)])))
+        self.all(project_id, true)
+            .await?
+            .into_iter()
+            .find(|p| p.code == code)
+            .ok_or_else(|| AppError::NotFound(t("err.not_found", &[("code", &code)])))
     }
 
     /// Страница списка деревом: родитель, затем его места.
-    pub async fn list(&self, project_id: Uuid, query: ListQuery, pagination: Pagination) -> AppResult<PagedResponse<PlaceDto>> {
+    pub async fn list(
+        &self,
+        project_id: Uuid,
+        query: ListQuery,
+        pagination: Pagination,
+    ) -> AppResult<PagedResponse<PlaceDto>> {
         let all = self.all(project_id, query.include_archived).await?;
         let total = all.len() as i64;
         let page = all.into_iter().skip(pagination.offset() as usize).take(pagination.limit() as usize).collect();
@@ -83,7 +94,11 @@ impl PlaceService {
         item.archived = false;
         let all = self.repo.all(project_id).await?;
         if let Some(parent) = all.iter().find(|p| p.archived && item.parent_code.as_deref() == Some(p.code.as_str())) {
-            return Err(Problem::validation("", t("err.restore_parent", &[("name", &item.name), ("parent", &parent.name)])).into());
+            return Err(Problem::validation(
+                "",
+                t("err.restore_parent", &[("name", &item.name), ("parent", &parent.name)]),
+            )
+            .into());
         }
         check_tree(&all, &item)?;
         self.repo.update(&item).await
@@ -102,12 +117,18 @@ impl PlaceService {
 
     /// Категории и счета для формы места (активные).
     pub async fn choices(&self, project_id: Uuid, lang: Lang) -> AppResult<(Vec<Choice>, Vec<Choice>)> {
-        Ok((self.deps.directories.categories(project_id, lang).await?, self.deps.directories.accounts(project_id, lang).await?))
+        Ok((
+            self.deps.directories.categories(project_id, lang).await?,
+            self.deps.directories.accounts(project_id, lang).await?,
+        ))
     }
 
     async fn load(&self, project_id: Uuid, code: &str) -> AppResult<Place> {
         let code = kernel::code::code("code", code)?;
-        self.repo.find_by_code(project_id, &code).await?.ok_or_else(|| AppError::NotFound(t("err.not_found", &[("code", &code)])))
+        self.repo
+            .find_by_code(project_id, &code)
+            .await?
+            .ok_or_else(|| AppError::NotFound(t("err.not_found", &[("code", &code)])))
     }
 
     /// Категория и счёт по умолчанию — активные записи проекта. Старое значение, которое с тех пор
@@ -119,13 +140,17 @@ impl PlaceService {
             && !kept(&item.default_category_code, old.as_ref().map(|o| &o.default_category_code))
             && !self.deps.directories.categories(project_id, Lang::default()).await?.iter().any(|x| x.code == *c)
         {
-            return Err(Problem::validation("default_category_code", tr(None, "err.ref_not_found", &[("code", c)])).into());
+            return Err(
+                Problem::validation("default_category_code", tr(None, "err.ref_not_found", &[("code", c)])).into()
+            );
         }
         if let Some(a) = &item.default_account_code
             && !kept(&item.default_account_code, old.as_ref().map(|o| &o.default_account_code))
             && !self.deps.directories.accounts(project_id, Lang::default()).await?.iter().any(|x| x.code == *a)
         {
-            return Err(Problem::validation("default_account_code", tr(None, "err.ref_not_found", &[("code", a)])).into());
+            return Err(
+                Problem::validation("default_account_code", tr(None, "err.ref_not_found", &[("code", a)])).into()
+            );
         }
         Ok(())
     }

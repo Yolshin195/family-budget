@@ -104,10 +104,9 @@ impl Public {
 /// Явно выбранный язык запоминаем — дальше в приложении он же.
 fn with_lang_cookie(cfg: &Config, lang: Lang, explicit: bool, resp: PageResult) -> PageResult {
     let mut r = resp?;
-    if explicit
-        && let Ok(v) = set_cookie(cfg, LANG_COOKIE, lang.code(), 365 * 24 * 3600).1.parse() {
-            r.headers_mut().append(axum::http::header::SET_COOKIE, v);
-        }
+    if explicit && let Ok(v) = set_cookie(cfg, LANG_COOKIE, lang.code(), 365 * 24 * 3600).1.parse() {
+        r.headers_mut().append(axum::http::header::SET_COOKIE, v);
+    }
     // Публичные страницы кэшируются ненадолго: язык зависит от URL и cookie.
     r.headers_mut().insert(axum::http::header::VARY, axum::http::HeaderValue::from_static("Cookie, Accept-Language"));
     Ok(r)
@@ -136,7 +135,12 @@ impl LandingPage {
 }
 
 /// `/`: гостю — лендинг на его языке, вошедшему — сразу «Обзор».
-async fn landing(State(st): St, Extension(user): Extension<MaybeUser>, headers: HeaderMap, Query(q): Query<LangQuery>) -> PageResult {
+async fn landing(
+    State(st): St,
+    Extension(user): Extension<MaybeUser>,
+    headers: HeaderMap,
+    Query(q): Query<LangQuery>,
+) -> PageResult {
     if user.0.is_some() {
         return Ok(Redirect::to("/budget").into_response());
     }
@@ -175,7 +179,14 @@ impl LegalPage {
     }
 }
 
-fn legal(st: &SiteState, headers: &HeaderMap, q: &LangQuery, kind: &'static str, path: &'static str, notice: Option<String>) -> PageResult {
+fn legal(
+    st: &SiteState,
+    headers: &HeaderMap,
+    q: &LangQuery,
+    kind: &'static str,
+    path: &'static str,
+    notice: Option<String>,
+) -> PageResult {
     let (lang, explicit) = page_lang(q, headers);
     let p = Public::new(&st.config, lang, path);
     let sections = (1..=5)

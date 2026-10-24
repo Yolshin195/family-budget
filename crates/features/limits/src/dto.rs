@@ -5,7 +5,7 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 #[allow(unused_imports)]
-use crate::domain::{LimitLimitPeriod, Limit, LimitData};
+use crate::domain::{Limit, LimitData, LimitLimitPeriod};
 
 /// Тело запроса на создание и изменение.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -69,7 +69,9 @@ impl LimitInput {
         let amount = match (self.removed, self.amount) {
             (true, Some(_)) => return Err("amount: у снятого лимита суммы нет".into()),
             (true, None) => None,
-            (false, None) => return Err("amount: укажите сумму лимита (0 — тратить нельзя совсем) или снимите лимит".into()),
+            (false, None) => {
+                return Err("amount: укажите сумму лимита (0 — тратить нельзя совсем) или снимите лимит".into());
+            }
             (false, Some(a)) => Some(a),
         };
         Ok(LimitData {
@@ -82,6 +84,7 @@ impl LimitInput {
 }
 
 fn parse_limit_period(value: &str) -> Result<LimitLimitPeriod, String> {
-    LimitLimitPeriod::parse(value)
-        .ok_or_else(|| format!("limit_period: недопустимое значение '{value}', ожидается одно из {:?}", LimitLimitPeriod::VALUES))
+    LimitLimitPeriod::parse(value).ok_or_else(|| {
+        format!("limit_period: недопустимое значение '{value}', ожидается одно из {:?}", LimitLimitPeriod::VALUES)
+    })
 }

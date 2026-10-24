@@ -33,9 +33,11 @@ pub fn dict(key: &str) -> Option<Tr> {
         "planned_exp" => ("Ещё к оплате", "Still to pay", "ยังต้องจ่าย"),
         "paid_exp" => ("Оплачено по планам", "Paid from plans", "จ่ายตามแผนแล้ว"),
         "planned_inc" => ("Ожидаемые доходы", "Expected income", "รายรับที่คาด"),
-        "pay_hint" => ("«Оплатил» откроет форму операции, заполненную из плана, — сумму и счёт можно поправить.",
-                       "“Mark as paid” opens a transaction form prefilled from the plan — adjust amount and account if needed.",
-                       "“ชำระแล้ว” จะเปิดแบบฟอร์มที่กรอกจากแผนไว้แล้ว — แก้ไขจำนวนเงินและบัญชีได้"),
+        "pay_hint" => (
+            "«Оплатил» откроет форму операции, заполненную из плана, — сумму и счёт можно поправить.",
+            "“Mark as paid” opens a transaction form prefilled from the plan — adjust amount and account if needed.",
+            "“ชำระแล้ว” จะเปิดแบบฟอร์มที่กรอกจากแผนไว้แล้ว — แก้ไขจำนวนเงินและบัญชีได้",
+        ),
         "manage" => ("Плановые операции", "Planned items", "รายการตามแผน"),
         "skipped_toast" => ("Вхождение пропущено", "Occurrence skipped", "ข้ามรายการแล้ว"),
         "series_toast" => (
@@ -43,24 +45,34 @@ pub fn dict(key: &str) -> Option<Tr> {
             "The new rule applies from {date}; past payments stay in the plan's history",
             "กฎใหม่มีผลตั้งแต่ {date} การชำระที่ผ่านมายังอยู่ในประวัติของแผน",
         ),
-        "unskipped_toast" => ("Пропуск снят — снова ожидается", "Skip removed — expected again", "ยกเลิกการข้าม — รอชำระอีกครั้ง"),
+        "unskipped_toast" => {
+            ("Пропуск снят — снова ожидается", "Skip removed — expected again", "ยกเลิกการข้าม — รอชำระอีกครั้ง")
+        }
         "stop" => ("Остановить", "Stop", "หยุด"),
         "resume" => ("Возобновить", "Resume", "เริ่มใหม่"),
         "stopped_toast" => ("План остановлен", "Plan stopped", "หยุดแผนแล้ว"),
         "resumed_toast" => ("План возобновлён", "Plan resumed", "เริ่มแผนใหม่แล้ว"),
         "legend" => ("Обозначения", "Legend", "คำอธิบาย"),
-        "nothing_month" => ("В этом месяце плановых операций нет", "No planned items this month", "เดือนนี้ไม่มีรายการตามแผน"),
+        "nothing_month" => {
+            ("В этом месяце плановых операций нет", "No planned items this month", "เดือนนี้ไม่มีรายการตามแผน")
+        }
         "empty_title" => ("Плановых операций пока нет", "No planned items yet", "ยังไม่มีรายการตามแผน"),
-        "empty_text" => ("Заведите аренду, коммуналку и зарплату один раз — месяц будет виден целиком ещё до первой оплаты.", "Add rent, utilities and salary once — the whole month becomes visible before the first payment.", "เพิ่มค่าเช่า ค่าน้ำไฟ และเงินเดือนครั้งเดียว จะเห็นทั้งเดือนล่วงหน้า"),
+        "empty_text" => (
+            "Заведите аренду, коммуналку и зарплату один раз — месяц будет виден целиком ещё до первой оплаты.",
+            "Add rent, utilities and salary once — the whole month becomes visible before the first payment.",
+            "เพิ่มค่าเช่า ค่าน้ำไฟ และเงินเดือนครั้งเดียว จะเห็นทั้งเดือนล่วงหน้า",
+        ),
         "every" => ("каждые", "every", "ทุก"),
         "interval_hint" => ("Например, 2 — каждую вторую неделю.", "E.g. 2 — every other week.", "เช่น 2 — ทุกสองสัปดาห์"),
         "month_nav" => ("Выбор месяца", "Month navigation", "เลือกเดือน"),
         "prev_month" => ("Предыдущий месяц", "Previous month", "เดือนก่อน"),
         "next_month" => ("Следующий месяц", "Next month", "เดือนถัดไป"),
         "to_account" => ("Счёт зачисления", "To account", "บัญชีปลายทาง"),
-        "transfer_plan_hint" => ("Например, в копилку каждый месяц. Перевод не меняет доходы и расходы бюджета.",
-                                 "E.g. to savings every month. A transfer doesn't change the budget's income or expenses.",
-                                 "เช่น โอนเข้าบัญชีออมทุกเดือน การโอนไม่เปลี่ยนรายรับรายจ่ายของงบประมาณ"),
+        "transfer_plan_hint" => (
+            "Например, в копилку каждый месяц. Перевод не меняет доходы и расходы бюджета.",
+            "E.g. to savings every month. A transfer doesn't change the budget's income or expenses.",
+            "เช่น โอนเข้าบัญชีออมทุกเดือน การโอนไม่เปลี่ยนรายรับรายจ่ายของงบประมาณ",
+        ),
         "missing_rates" => (
             "Нет курса к базовой валюте — эти суммы не вошли в итоги месяца:",
             "No rate to the base currency — these amounts are left out of the month's totals:",

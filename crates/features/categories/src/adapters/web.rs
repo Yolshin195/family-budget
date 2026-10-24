@@ -7,7 +7,7 @@ use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use kernel::error::AppError;
-use kernel::web::{Flash, see_other_flash, Choice, PageCtx, PageError, PageResult, render, see_other};
+use kernel::web::{Choice, Flash, PageCtx, PageError, PageResult, render, see_other, see_other_flash};
 use serde::Deserialize;
 
 use crate::dto::{CategoryDto, CreateCategoryDto, UpdateCategoryDto};
@@ -102,7 +102,13 @@ impl CategoryForm {
     }
 }
 
-async fn form_page(svc: &CategoryService, page: PageCtx, is_new: bool, f: CategoryForm, error: Option<String>) -> PageResult {
+async fn form_page(
+    svc: &CategoryService,
+    page: PageCtx,
+    is_new: bool,
+    f: CategoryForm,
+    error: Option<String>,
+) -> PageResult {
     let parents = svc.choices(page.session.project_id, page.lang).await?;
     render(&FormPage { page: form_ctx(page), is_new, f, parents, error })
 }
@@ -151,7 +157,12 @@ async fn edit_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(co
     form_page(&svc, page, false, CategoryForm::from_dto(c), None).await
 }
 
-async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>, Form(mut f): Form<CategoryForm>) -> PageResult {
+async fn update(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Path(code): Path<String>,
+    Form(mut f): Form<CategoryForm>,
+) -> PageResult {
     f.code = code.clone();
     let result = async {
         let archived = svc.get(page.session.project_id, &code).await?.archived;
@@ -180,7 +191,10 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
 async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
     match svc.archive(page.session.project_id, &code).await {
         Ok(()) => {
-            let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("/categories/{}/restore", kernel::web::url_segment(&code)));
+            let flash = Flash::with_undo(
+                format!("{} · {code}", page.t("toast.archived")),
+                format!("/categories/{}/restore", kernel::web::url_segment(&code)),
+            );
             Ok(see_other_flash(&page.config, "/categories", flash))
         }
         // Не рисуем форму в ответ: она открылась бы на адресе /archive, и «Сохранить» снова архивировал бы.
@@ -195,8 +209,14 @@ async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code
 
 async fn restore(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
     match svc.restore(page.session.project_id, &code).await {
-        Ok(()) => Ok(see_other_flash(&page.config, "/categories", Flash::ok(format!("{} · {code}", page.t("toast.restored"))))),
-        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => Ok(see_other_flash(&page.config, "/categories", Flash::error(e.to_string()))),
+        Ok(()) => Ok(see_other_flash(
+            &page.config,
+            "/categories",
+            Flash::ok(format!("{} · {code}", page.t("toast.restored"))),
+        )),
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => {
+            Ok(see_other_flash(&page.config, "/categories", Flash::error(e.to_string())))
+        }
         Err(e) => Err(PageError(e)),
     }
 }

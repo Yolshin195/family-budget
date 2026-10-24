@@ -44,4 +44,3 @@ pub trait CurrenciesLookup: Send + Sync {
         Ok(Vec::new())
     }
 }
-

@@ -7,7 +7,7 @@ use axum::extract::{Path, State};
 use axum::routing::{get, post};
 use axum::{Extension, Form, Router};
 use kernel::error::AppError;
-use kernel::web::{Flash, see_other_flash, Choice, PageCtx, PageError, PageResult, render, see_other};
+use kernel::web::{Choice, Flash, PageCtx, PageError, PageResult, render, see_other, see_other_flash};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -19,8 +19,10 @@ type Svc = State<Arc<RateService>>;
 
 pub fn router(service: Arc<RateService>) -> Router {
     Router::new()
-        .route("/", get(list).post(create)).route("/{id}/delete", post(delete))
-        .route("/undo/{token}", post(undo)).with_state(service)
+        .route("/", get(list).post(create))
+        .route("/{id}/delete", post(delete))
+        .route("/undo/{token}", post(undo))
+        .with_state(service)
 }
 
 #[derive(Template)]
@@ -52,7 +54,18 @@ impl ListPage {
 
     /// Последний курс в выбранном направлении: число как ввели или пересчитанное.
     fn last_value(&self) -> String {
-        self.last.as_ref().map(|l| if l.inverted == self.inverted { l.entered.clone() } else if self.inverted { l.inverse.clone() } else { l.rate.clone() }).unwrap_or_default()
+        self.last
+            .as_ref()
+            .map(|l| {
+                if l.inverted == self.inverted {
+                    l.entered.clone()
+                } else if self.inverted {
+                    l.inverse.clone()
+                } else {
+                    l.rate.clone()
+                }
+            })
+            .unwrap_or_default()
     }
 }
 
@@ -119,7 +132,11 @@ fn row(r: &RateDto, cur: &str, base: &str) -> RateRow {
 
 /// Курс из формы: пробелы и запятая допускаются, выражения — нет.
 fn parse_rate(value: &str) -> Result<Decimal, String> {
-    let cleaned: String = value.chars().filter(|c| !c.is_whitespace() && *c != '\u{202F}' && *c != '\u{00A0}').collect::<String>().replace(',', ".");
+    let cleaned: String = value
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '\u{202F}' && *c != '\u{00A0}')
+        .collect::<String>()
+        .replace(',', ".");
     if cleaned.is_empty() {
         return Err("rate: введите курс".into());
     }
@@ -147,13 +164,29 @@ async fn show(svc: &RateService, page: PageCtx, error: Option<String>, form: Rat
             CurrencyOption { code: c.code, label: c.label, last }
         })
         .collect();
-    let currency = currencies.iter().find(|c| c.code == form.currency_code).or(currencies.first()).map(|c| c.code.clone()).unwrap_or_default();
+    let currency = currencies
+        .iter()
+        .find(|c| c.code == form.currency_code)
+        .or(currencies.first())
+        .map(|c| c.code.clone())
+        .unwrap_or_default();
     // После ошибки — направление, в котором вводили; иначе — как у прошлого курса валюты.
-    let inverted = if form.currency_code.is_empty() { svc.default_inverted(p, &currency).await? } else { form.inverted == "true" };
+    let inverted =
+        if form.currency_code.is_empty() { svc.default_inverted(p, &currency).await? } else { form.inverted == "true" };
     let last = currencies.iter().find(|c| c.code == currency).and_then(|c| c.last.clone());
     let rows = all.iter().map(|r| row(r, page.cur(&r.currency_code), page.cur(&base))).collect();
     let page = page.for_feature(crate::NAME, crate::i18n::dict);
-    render(&ListPage { page, rows, currencies, today: chrono::Local::now().date_naive(), error, form, inverted, currency, last })
+    render(&ListPage {
+        page,
+        rows,
+        currencies,
+        today: chrono::Local::now().date_naive(),
+        error,
+        form,
+        inverted,
+        currency,
+        last,
+    })
 }
 
 async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
@@ -181,7 +214,11 @@ async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): F
 /// Удаление без «Вы уверены?»: тост с «Отменить» на 5 секунд.
 async fn delete(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(id): Path<Uuid>) -> PageResult {
     let token = svc.delete_with_undo(page.session.project_id, id).await?;
-    Ok(see_other_flash(&page.config, "/rates", Flash::with_undo(page.t("toast.deleted"), format!("/rates/undo/{token}"))))
+    Ok(see_other_flash(
+        &page.config,
+        "/rates",
+        Flash::with_undo(page.t("toast.deleted"), format!("/rates/undo/{token}")),
+    ))
 }
 
 async fn undo(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(token): Path<Uuid>) -> PageResult {

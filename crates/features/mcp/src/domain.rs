@@ -42,7 +42,8 @@ pub const GRANT_SCOPES: [&str; 10] = [
 /// Отмечены по умолчанию: просмотр всего и операции.
 pub const DEFAULT_GRANT_SCOPES: [&str; 2] = ["read", "transactions:write"];
 /// Справочники: их разом отмечает флажок «Справочники».
-pub const DIRECTORY_SCOPES: [&str; 6] = ["currencies:write", "accounts:write", "categories:write", "places:write", "people:write", "rates:write"];
+pub const DIRECTORY_SCOPES: [&str; 6] =
+    ["currencies:write", "accounts:write", "categories:write", "places:write", "people:write", "rates:write"];
 /// Значение флажка «Справочники» в форме — все права из `DIRECTORY_SCOPES` (форма работает и без JS).
 pub const ALL_DIRECTORIES: &str = "directories";
 
@@ -358,7 +359,14 @@ impl Tx {
             Lang::En => self.description_en.as_deref(),
             Lang::Th => self.description_th.as_deref(),
         };
-        Some(if lang == self.description_lang { original } else { t.filter(|s| !s.trim().is_empty()).unwrap_or(original) }.to_string())
+        Some(
+            if lang == self.description_lang {
+                original
+            } else {
+                t.filter(|s| !s.trim().is_empty()).unwrap_or(original)
+            }
+            .to_string(),
+        )
     }
 }
 
@@ -435,17 +443,38 @@ pub struct Name {
 }
 
 impl Name {
-    pub fn new(field: &str, text: &str, lang: Lang, ru: Option<String>, en: Option<String>, th: Option<String>) -> Result<Name, String> {
+    pub fn new(
+        field: &str,
+        text: &str,
+        lang: Lang,
+        ru: Option<String>,
+        en: Option<String>,
+        th: Option<String>,
+    ) -> Result<Name, String> {
         let text = text.trim();
         if text.is_empty() {
             return Err(format!("{field}: empty"));
         }
-        Ok(Name { text: text.to_string(), lang, ru: kernel::i18n::clean(ru), en: kernel::i18n::clean(en), th: kernel::i18n::clean(th) })
+        Ok(Name {
+            text: text.to_string(),
+            lang,
+            ru: kernel::i18n::clean(ru),
+            en: kernel::i18n::clean(en),
+            th: kernel::i18n::clean(th),
+        })
     }
 
     /// Частичное изменение. Новый текст — переводы только переданные (старые описывали прежний
     /// текст); без нового текста переданные переводы заменяют старые по языкам (пустой — убрать).
-    pub fn changed(&self, field: &str, text: Option<&str>, lang: Option<Lang>, ru: Option<String>, en: Option<String>, th: Option<String>) -> Result<Name, String> {
+    pub fn changed(
+        &self,
+        field: &str,
+        text: Option<&str>,
+        lang: Option<Lang>,
+        ru: Option<String>,
+        en: Option<String>,
+        th: Option<String>,
+    ) -> Result<Name, String> {
         let lang = lang.unwrap_or(self.lang);
         match text {
             Some(t) => Name::new(field, t, lang, ru, en, th),
@@ -454,7 +483,13 @@ impl Name {
                     Some(v) => kernel::i18n::clean(Some(v)),
                     None => old.clone(),
                 };
-                Ok(Name { text: self.text.clone(), lang, ru: keep(ru, &self.ru), en: keep(en, &self.en), th: keep(th, &self.th) })
+                Ok(Name {
+                    text: self.text.clone(),
+                    lang,
+                    ru: keep(ru, &self.ru),
+                    en: keep(en, &self.en),
+                    th: keep(th, &self.th),
+                })
             }
         }
     }
@@ -466,7 +501,11 @@ impl Name {
 
     /// Оригинал и переводы через `kernel::search::SEP` — для поиска по названию на любом языке (`resolve`).
     pub fn search(&self) -> String {
-        kernel::search::join([Some(self.text.as_str()), self.ru.as_deref(), self.en.as_deref(), self.th.as_deref()].into_iter().flatten())
+        kernel::search::join(
+            [Some(self.text.as_str()), self.ru.as_deref(), self.en.as_deref(), self.th.as_deref()]
+                .into_iter()
+                .flatten(),
+        )
     }
 }
 
@@ -756,7 +795,11 @@ pub fn parse_choice(field: &str, value: &str, allowed: &[&str]) -> Result<String
     if allowed.contains(&v.as_str()) {
         Ok(v)
     } else {
-        Err(format!("{field}: expected one of {}, got '{}'", allowed.iter().map(|a| a.to_lowercase()).collect::<Vec<_>>().join(" | "), value.trim()))
+        Err(format!(
+            "{field}: expected one of {}, got '{}'",
+            allowed.iter().map(|a| a.to_lowercase()).collect::<Vec<_>>().join(" | "),
+            value.trim()
+        ))
     }
 }
 
@@ -790,12 +833,19 @@ pub fn parse_date(field: &str, value: Option<&str>, today: NaiveDate) -> Result<
         None => Ok(today),
         Some("today") => Ok(today),
         Some("yesterday") => Ok(today.pred_opt().unwrap_or(today)),
-        Some(v) => NaiveDate::parse_from_str(v, "%Y-%m-%d").map_err(|_| format!("{field}: expected date YYYY-MM-DD, got '{v}'")),
+        Some(v) => NaiveDate::parse_from_str(v, "%Y-%m-%d")
+            .map_err(|_| format!("{field}: expected date YYYY-MM-DD, got '{v}'")),
     }
 }
 
 /// Найти код по коду или названию на любом языке (`kernel::search`). Ошибка — с вариантами, чтобы ассистент уточнил.
-pub fn resolve<'a, T>(field: &str, query: &str, items: &'a [T], code: impl Fn(&T) -> &str, names: impl Fn(&T) -> String) -> Result<&'a T, String> {
+pub fn resolve<'a, T>(
+    field: &str,
+    query: &str,
+    items: &'a [T],
+    code: impl Fn(&T) -> &str,
+    names: impl Fn(&T) -> String,
+) -> Result<&'a T, String> {
     let q = query.trim();
     if q.is_empty() {
         return Err(format!("{field}: empty"));

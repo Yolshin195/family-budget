@@ -11,7 +11,7 @@ use kernel::error::AppResult;
 use kernel::pagination::{PagedResponse, Pagination};
 use utoipa::OpenApi;
 
-use crate::dto::{CreateAccountDto, ListQuery, UpdateAccountDto, AccountDto};
+use crate::dto::{AccountDto, CreateAccountDto, ListQuery, UpdateAccountDto};
 use crate::service::AccountService;
 
 type Svc = State<Arc<AccountService>>;

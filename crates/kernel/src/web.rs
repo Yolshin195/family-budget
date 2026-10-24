@@ -272,7 +272,10 @@ pub async fn attach_page(State(state): State<WebState>, mut req: Request, next: 
     let exempt = ["/projects", "/api/projects", "/profile", "/auth", "/onboarding"].iter().any(|p| path.starts_with(p));
     if page.session.mfa_blocked() && !exempt {
         if path.starts_with("/api") {
-            return AppError::Forbidden("проект требует второй фактор (2FA): войдите с кодом из письма или passkey".into()).into_response();
+            return AppError::Forbidden(
+                "проект требует второй фактор (2FA): войдите с кодом из письма или passkey".into(),
+            )
+            .into_response();
         }
         return match render(&MfaRequiredPage { page }) {
             Ok(mut r) => {
@@ -285,12 +288,17 @@ pub async fn attach_page(State(state): State<WebState>, mut req: Request, next: 
     req.extensions_mut().insert(page);
     let mut resp = next.run(req).await;
     // Тост показан на этой странице — снять cookie (если ответ не ставит новый тост).
-    let sets_flash = resp.headers().get_all(SET_COOKIE).iter().any(|v| v.to_str().is_ok_and(|s| s.starts_with(FLASH_COOKIE)));
-    let is_page = resp.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/html"));
-    if flash.is_some() && !sets_flash && is_page
-        && let Ok(v) = crate::auth::set_cookie(&state.config, FLASH_COOKIE, "", 0).1.parse() {
-            resp.headers_mut().append(SET_COOKIE, v);
-        }
+    let sets_flash =
+        resp.headers().get_all(SET_COOKIE).iter().any(|v| v.to_str().is_ok_and(|s| s.starts_with(FLASH_COOKIE)));
+    let is_page =
+        resp.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/html"));
+    if flash.is_some()
+        && !sets_flash
+        && is_page
+        && let Ok(v) = crate::auth::set_cookie(&state.config, FLASH_COOKIE, "", 0).1.parse()
+    {
+        resp.headers_mut().append(SET_COOKIE, v);
+    }
     resp
 }
 
@@ -416,14 +424,24 @@ pub async fn error_pages(State(config): State<Arc<Config>>, req: Request, next: 
     let path = req.uri().path().to_string();
     let resp = next.run(req).await;
     let status = resp.status();
-    if !(status.is_client_error() || status.is_server_error()) || path.starts_with("/api") || path.starts_with("/static") {
+    if !(status.is_client_error() || status.is_server_error())
+        || path.starts_with("/api")
+        || path.starts_with("/static")
+    {
         return resp;
     }
     let info = resp.extensions().get::<ErrorInfo>().cloned();
-    let json_error = resp.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("application/json"));
+    let json_error = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/json"));
     if info.is_none() {
         // Ошибки из middleware (JSON) и 404/405 роутера оформляем только для браузера.
-        let wants_html = headers.get(axum::http::header::ACCEPT).and_then(|v| v.to_str().ok()).is_some_and(|v| v.contains("text/html"));
+        let wants_html = headers
+            .get(axum::http::header::ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.contains("text/html"));
         let routing = status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED;
         if !wants_html || !(json_error || routing) {
             return resp;
@@ -433,7 +451,10 @@ pub async fn error_pages(State(config): State<Arc<Config>>, req: Request, next: 
         Some(i) => i.message,
         None if json_error => {
             let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024).await.unwrap_or_default();
-            serde_json::from_slice::<serde_json::Value>(&bytes).ok().and_then(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_string)).unwrap_or_default()
+            serde_json::from_slice::<serde_json::Value>(&bytes)
+                .ok()
+                .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_string))
+                .unwrap_or_default()
         }
         None => String::new(),
     };
@@ -538,7 +559,11 @@ pub async fn security_headers(State(config): State<Arc<Config>>, req: Request, n
     };
     // Swagger UI (только в разработке) живёт на встроенных скриптах — ему CSP мягче.
     if path.starts_with("/docs") && config.swagger {
-        set(h, "content-security-policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'");
+        set(
+            h,
+            "content-security-policy",
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
+        );
     } else {
         set(h, "content-security-policy", &content_security_policy(&config));
     }
@@ -567,7 +592,12 @@ pub async fn no_index(req: Request, next: Next) -> Response {
 
 /// Инициалы для аватара: «Anna Petrova» → «AP».
 pub fn initials(name: &str) -> String {
-    name.split_whitespace().filter_map(|w| w.chars().next()).filter(|c| c.is_alphanumeric()).take(2).collect::<String>().to_uppercase()
+    name.split_whitespace()
+        .filter_map(|w| w.chars().next())
+        .filter(|c| c.is_alphanumeric())
+        .take(2)
+        .collect::<String>()
+        .to_uppercase()
 }
 
 /// Экранирование для текста, собранного вне шаблона.
@@ -660,12 +690,21 @@ pub fn parse_money(field: &str, value: &str) -> Result<Decimal, String> {
 
 /// [`parse_money`] без округления до 4 знаков — для количества и цены (до 6 знаков, проверяет домен).
 pub fn parse_number(field: &str, value: &str) -> Result<Decimal, String> {
-    let bad = || crate::error::Problem::validation(field, crate::i18n::tr(None, "err.not_a_number", &[("value", &value)])).to_string();
+    let bad = || {
+        crate::error::Problem::validation(field, crate::i18n::tr(None, "err.not_a_number", &[("value", &value)]))
+            .to_string()
+    };
     // Переполнение `Decimal` — ошибка ввода, а не паника (техдолг #20).
     let too_big = || crate::error::Problem::validation(field, crate::i18n::tr(None, "err.too_big", &[])).to_string();
-    let cleaned: String = value.chars().filter(|c| !c.is_whitespace() && *c != '\u{202F}' && *c != '\u{00A0}').collect::<String>().replace(',', ".");
+    let cleaned: String = value
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '\u{202F}' && *c != '\u{00A0}')
+        .collect::<String>()
+        .replace(',', ".");
     if cleaned.is_empty() {
-        return Err(crate::error::Problem::validation(field, crate::i18n::tr(None, "err.enter_amount", &[])).to_string());
+        return Err(
+            crate::error::Problem::validation(field, crate::i18n::tr(None, "err.enter_amount", &[])).to_string()
+        );
     }
     // Сумма слагаемых, каждое — произведение/частное множителей.
     let mut total = Decimal::ZERO;
@@ -737,7 +776,9 @@ pub struct FormError {
 
 impl FormError {
     pub fn parse(message: &str) -> Self {
-        let field_like = |f: &str| !f.is_empty() && f.len() <= 40 && f.chars().all(|c| c.is_ascii_alphanumeric() || "_[].".contains(c));
+        let field_like = |f: &str| {
+            !f.is_empty() && f.len() <= 40 && f.chars().all(|c| c.is_ascii_alphanumeric() || "_[].".contains(c))
+        };
         match message.split_once(": ") {
             Some((f, m)) if field_like(f) => {
                 // lines[2].amount → line_amount: имя поля формы позиций.
@@ -766,7 +807,11 @@ pub fn field_error(error: &Option<String>, name: &str) -> Option<String> {
 /// показать общим блоком над формой.
 pub fn general_error(error: &Option<String>, fields: &str) -> Option<String> {
     let e = FormError::parse(error.as_deref()?);
-    if fields.split(',').map(str::trim).filter(|f| !f.is_empty()).any(|f| e.is(f)) { None } else { Some(error.clone().unwrap_or_default()) }
+    if fields.split(',').map(str::trim).filter(|f| !f.is_empty()).any(|f| e.is(f)) {
+        None
+    } else {
+        Some(error.clone().unwrap_or_default())
+    }
 }
 
 /// CSRF-токен запроса для страниц без `PageCtx` (онбординг).
@@ -841,10 +886,17 @@ mod tests {
 
     #[test]
     fn unavailable_page_is_friendly_and_hides_details() {
-        let status = PageError(AppError::Unavailable(anyhow::anyhow!("Rauthy недоступен: connection refused"))).into_response().status();
+        let status = PageError(AppError::Unavailable(anyhow::anyhow!("Rauthy недоступен: connection refused")))
+            .into_response()
+            .status();
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         for lang in Lang::ALL {
-            let page = ErrorPage { lang, status: status.as_u16(), message: "Rauthy недоступен: connection refused".into(), signed_in: false };
+            let page = ErrorPage {
+                lang,
+                status: status.as_u16(),
+                message: "Rauthy недоступен: connection refused".into(),
+                signed_in: false,
+            };
             let html = page.render().unwrap();
             assert!(html.contains(&crate::i18n::t(lang, None, "error.503")), "{lang:?}");
             assert!(!html.contains(&crate::i18n::t(lang, None, "error.500")), "{lang:?}: не «что-то пошло не так»");

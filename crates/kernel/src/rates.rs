@@ -25,11 +25,18 @@ mod tests {
 
     #[test]
     fn latest_rate_not_after_date() {
-        let r = vec![("RUB".to_string(), d(10, 16), Decimal::new(383083, 6)), ("RUB".to_string(), d(10, 18), Decimal::new(379435, 6))];
+        let r = vec![
+            ("RUB".to_string(), d(10, 16), Decimal::new(383083, 6)),
+            ("RUB".to_string(), d(10, 18), Decimal::new(379435, 6)),
+        ];
         assert_eq!(rate_on(&r, "THB", "THB", d(10, 1)), Some(Decimal::ONE));
         assert_eq!(rate_on(&r, "RUB", "THB", d(10, 17)), Some(Decimal::new(383083, 6)));
         assert_eq!(rate_on(&r, "RUB", "THB", d(10, 19)), Some(Decimal::new(379435, 6)));
-        assert_eq!(rate_on(&r, "RUB", "THB", d(10, 15)), Some(Decimal::new(383083, 6)), "до первого курса — самый ранний");
+        assert_eq!(
+            rate_on(&r, "RUB", "THB", d(10, 15)),
+            Some(Decimal::new(383083, 6)),
+            "до первого курса — самый ранний"
+        );
         assert_eq!(rate_on(&r, "USD", "THB", d(10, 17)), None, "курса нет — суммы нет");
     }
 }

@@ -39,7 +39,11 @@ pub struct ApiDoc;
         (status = 201, body = PlanDto, description = "План создан"),
         (status = 422, description = "Ошибка валидации"),
     ), security(("bearer_auth" = [])))]
-pub async fn create(State(svc): Svc, Extension(s): Extension<Scope>, Json(body): Json<PlanInput>) -> AppResult<(StatusCode, Json<PlanDto>)> {
+pub async fn create(
+    State(svc): Svc,
+    Extension(s): Extension<Scope>,
+    Json(body): Json<PlanInput>,
+) -> AppResult<(StatusCode, Json<PlanDto>)> {
     Ok((StatusCode::CREATED, Json(svc.create(s.project_id, s.user_id, body).await?)))
 }
 
@@ -51,7 +55,11 @@ pub async fn list(State(svc): Svc, Extension(s): Extension<Scope>) -> AppResult<
 
 #[utoipa::path(get, path = "/api/planning/plans/{id}", tag = "Планирование", params(("id" = Uuid, Path)),
     responses((status = 200, body = PlanDto, description = "План"), (status = 404, description = "Не найден")), security(("bearer_auth" = [])))]
-pub async fn get_one(State(svc): Svc, Extension(s): Extension<Scope>, Path(id): Path<Uuid>) -> AppResult<Json<PlanDto>> {
+pub async fn get_one(
+    State(svc): Svc,
+    Extension(s): Extension<Scope>,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<PlanDto>> {
     Ok(Json(svc.get(s.project_id, id).await?))
 }
 
@@ -61,7 +69,12 @@ pub async fn get_one(State(svc): Svc, Extension(s): Extension<Scope>, Path(id): 
         (status = 404, description = "Не найден"),
         (status = 422, description = "Ошибка валидации"),
     ), security(("bearer_auth" = [])))]
-pub async fn update(State(svc): Svc, Extension(s): Extension<Scope>, Path(id): Path<Uuid>, Json(body): Json<PlanInput>) -> AppResult<Json<PlanDto>> {
+pub async fn update(
+    State(svc): Svc,
+    Extension(s): Extension<Scope>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PlanInput>,
+) -> AppResult<Json<PlanDto>> {
     Ok(Json(svc.update(s.project_id, id, body).await?))
 }
 
@@ -74,7 +87,11 @@ pub async fn delete(State(svc): Svc, Extension(s): Extension<Scope>, Path(id): P
 
 #[utoipa::path(get, path = "/api/planning/occurrences", tag = "Планирование", params(RangeQuery),
     responses((status = 200, body = Vec<OccurrenceDto>, description = "Вхождения планов за период")), security(("bearer_auth" = [])))]
-pub async fn occurrences(State(svc): Svc, Extension(s): Extension<Scope>, Query(q): Query<RangeQuery>) -> AppResult<Json<Vec<OccurrenceDto>>> {
+pub async fn occurrences(
+    State(svc): Svc,
+    Extension(s): Extension<Scope>,
+    Query(q): Query<RangeQuery>,
+) -> AppResult<Json<Vec<OccurrenceDto>>> {
     Ok(Json(svc.occurrences(s.project_id, q.from, q.to, chrono::Local::now().date_naive()).await?))
 }
 
@@ -85,7 +102,11 @@ pub async fn occurrences(State(svc): Svc, Extension(s): Extension<Scope>, Query(
         (status = 404, description = "Не найден"),
         (status = 409, description = "Вхождение уже оплачено"),
     ), security(("bearer_auth" = [])))]
-pub async fn skip(State(svc): Svc, Extension(s): Extension<Scope>, Path((id, date)): Path<(Uuid, NaiveDate)>) -> AppResult<StatusCode> {
+pub async fn skip(
+    State(svc): Svc,
+    Extension(s): Extension<Scope>,
+    Path((id, date)): Path<(Uuid, NaiveDate)>,
+) -> AppResult<StatusCode> {
     svc.skip(s.project_id, s.user_id, id, date).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -93,7 +114,11 @@ pub async fn skip(State(svc): Svc, Extension(s): Extension<Scope>, Path((id, dat
 #[utoipa::path(delete, path = "/api/planning/plans/{id}/skips/{date}", tag = "Планирование",
     params(("id" = Uuid, Path), ("date" = NaiveDate, Path)),
     responses((status = 204, description = "Пропуск отменён")), security(("bearer_auth" = [])))]
-pub async fn unskip(State(svc): Svc, Extension(s): Extension<Scope>, Path((id, date)): Path<(Uuid, NaiveDate)>) -> AppResult<StatusCode> {
+pub async fn unskip(
+    State(svc): Svc,
+    Extension(s): Extension<Scope>,
+    Path((id, date)): Path<(Uuid, NaiveDate)>,
+) -> AppResult<StatusCode> {
     svc.unskip(s.project_id, id, date).await?;
     Ok(StatusCode::NO_CONTENT)
 }

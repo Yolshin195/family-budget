@@ -7,7 +7,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 #[allow(unused_imports)]
-use crate::domain::{CategoryNameLang, CategoryCategoryKind, Category};
+use crate::domain::{Category, CategoryCategoryKind, CategoryNameLang};
 use crate::ports::CategoryRepository;
 
 const COLUMNS: &str = "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, category_kind, parent_code, sort_order";
@@ -52,7 +52,8 @@ impl TryFrom<Row> for Category {
             name_ru: r.name_ru,
             name_en: r.name_en,
             name_th: r.name_th,
-            category_kind: CategoryCategoryKind::parse(&r.category_kind).ok_or_else(|| bad_value("category_kind", &r.category_kind))?,
+            category_kind: CategoryCategoryKind::parse(&r.category_kind)
+                .ok_or_else(|| bad_value("category_kind", &r.category_kind))?,
             parent_code: r.parent_code,
             sort_order: r.sort_order,
         })
@@ -119,7 +120,13 @@ impl CategoryRepository for PostgresCategoryRepository {
         row.map(Category::try_from).transpose()
     }
 
-    async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Category>> {
+    async fn list(
+        &self,
+        project_id: Uuid,
+        include_archived: bool,
+        limit: i64,
+        offset: i64,
+    ) -> AppResult<Vec<Category>> {
         let sql = format!(
             "SELECT {COLUMNS} FROM fb_categories WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY code LIMIT $3 OFFSET $4"
         );
@@ -134,16 +141,18 @@ impl CategoryRepository for PostgresCategoryRepository {
     }
 
     async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64> {
-        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM fb_categories WHERE project_id = $1 AND ($2 OR NOT archived)")
-            .bind(project_id)
-            .bind(include_archived)
-            .fetch_one(&self.pool)
-            .await?;
+        let (n,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM fb_categories WHERE project_id = $1 AND ($2 OR NOT archived)")
+                .bind(project_id)
+                .bind(include_archived)
+                .fetch_one(&self.pool)
+                .await?;
         Ok(n)
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
-        let r = sqlx::query("DELETE FROM fb_categories WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        let r =
+            sqlx::query("DELETE FROM fb_categories WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
         Ok(r.rows_affected())
     }
 }

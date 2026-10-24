@@ -11,7 +11,7 @@ use kernel::error::AppResult;
 use kernel::pagination::{PagedResponse, Pagination};
 use utoipa::OpenApi;
 
-use crate::dto::{CreateCategoryDto, ListQuery, UpdateCategoryDto, CategoryDto};
+use crate::dto::{CategoryDto, CreateCategoryDto, ListQuery, UpdateCategoryDto};
 use crate::service::CategoryService;
 
 type Svc = State<Arc<CategoryService>>;

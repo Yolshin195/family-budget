@@ -37,7 +37,12 @@ impl RateService {
         Ok(self.load(project_id, id).await?.into())
     }
 
-    pub async fn list(&self, project_id: Uuid, query: PeriodQuery, pagination: Pagination) -> AppResult<PagedResponse<RateDto>> {
+    pub async fn list(
+        &self,
+        project_id: Uuid,
+        query: PeriodQuery,
+        pagination: Pagination,
+    ) -> AppResult<PagedResponse<RateDto>> {
         let period = Period { from: query.from, to: query.to };
         let items = self.repo.list(project_id, period, pagination.limit(), pagination.offset()).await?;
         let total = self.repo.count(project_id, period).await?;
@@ -95,7 +100,12 @@ impl RateService {
     /// («1 валюта = x базовой»). Других правил нет: направление выбирает пользователь.
     pub async fn default_inverted(&self, project_id: Uuid, currency_code: &str) -> AppResult<bool> {
         let code = currency_code.trim().to_uppercase();
-        Ok(self.latest_by_currency(project_id).await?.into_iter().find(|r| r.currency_code == code).is_some_and(|r| r.inverted))
+        Ok(self
+            .latest_by_currency(project_id)
+            .await?
+            .into_iter()
+            .find(|r| r.currency_code == code)
+            .is_some_and(|r| r.inverted))
     }
 
     /// Варианты для поля-ссылки в форме.
@@ -109,7 +119,11 @@ impl RateService {
 
     #[allow(unused_variables)]
     async fn check_refs(&self, project_id: Uuid, item: &Rate) -> AppResult<()> {
-        ensure_ref(self.deps.currencies.exists(project_id, &item.currency_code).await?, "currency_code", &item.currency_code)?;
+        ensure_ref(
+            self.deps.currencies.exists(project_id, &item.currency_code).await?,
+            "currency_code",
+            &item.currency_code,
+        )?;
         Ok(())
     }
 }

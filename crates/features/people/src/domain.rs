@@ -44,7 +44,10 @@ impl Person {
     pub fn create(project_id: Uuid, code: &str, data: PersonData) -> Result<Self, Problem> {
         let code = kernel::code::fresh_code("code", code)?;
         if RESERVED.contains(&code.as_str()) {
-            return Err(Problem::validation("code", tr(Some(crate::i18n::dict), "err.code_reserved", &[("code", &code)])));
+            return Err(Problem::validation(
+                "code",
+                tr(Some(crate::i18n::dict), "err.code_reserved", &[("code", &code)]),
+            ));
         }
         let mut person = Self::blank(project_id, code);
         person.change(data)?;
@@ -60,7 +63,16 @@ impl Person {
     }
 
     fn blank(project_id: Uuid, code: String) -> Self {
-        Self { id: Uuid::new_v4(), project_id, code, name: String::new(), aliases: Vec::new(), user_id: None, former_member: false, archived: false }
+        Self {
+            id: Uuid::new_v4(),
+            project_id,
+            code,
+            name: String::new(),
+            aliases: Vec::new(),
+            user_id: None,
+            former_member: false,
+            archived: false,
+        }
     }
 
     /// Новые имя и другие имена. Имя обязательно; у удалённого участника пустое имя оставляет «Удалённый
@@ -133,7 +145,10 @@ fn aliases(name: &str, list: &[String]) -> Result<Vec<String>, Problem> {
         }
     }
     if out.len() > MAX_ALIASES {
-        return Err(Problem::validation("aliases", tr(Some(crate::i18n::dict), "err.too_many_aliases", &[("max", &MAX_ALIASES)])));
+        return Err(Problem::validation(
+            "aliases",
+            tr(Some(crate::i18n::dict), "err.too_many_aliases", &[("max", &MAX_ALIASES)]),
+        ));
     }
     Ok(out)
 }

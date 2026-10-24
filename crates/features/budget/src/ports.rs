@@ -79,7 +79,14 @@ pub trait FactsSource: Send + Sync {
 
 #[async_trait]
 pub trait PlansSource: Send + Sync {
-    async fn open(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate, today: NaiveDate, lang: Lang) -> AppResult<Vec<PlannedRec>>;
+    async fn open(
+        &self,
+        project_id: Uuid,
+        from: NaiveDate,
+        to: NaiveDate,
+        today: NaiveDate,
+        lang: Lang,
+    ) -> AppResult<Vec<PlannedRec>>;
 }
 
 #[async_trait]

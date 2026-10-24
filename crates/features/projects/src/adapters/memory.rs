@@ -33,7 +33,13 @@ impl ProjectRepository for InMemoryProjectRepository {
         u.push(user.clone());
         Ok(())
     }
-    async fn update_user_identity(&self, user_id: Uuid, email: &str, name: &str, avatar_url: Option<&str>) -> AppResult<()> {
+    async fn update_user_identity(
+        &self,
+        user_id: Uuid,
+        email: &str,
+        name: &str,
+        avatar_url: Option<&str>,
+    ) -> AppResult<()> {
         for u in self.users.lock().unwrap().iter_mut().filter(|u| u.id == user_id) {
             u.email = email.into();
             u.display_name = name.into();
@@ -115,8 +121,11 @@ impl ProjectRepository for InMemoryProjectRepository {
     async fn projects_of(&self, user_id: Uuid) -> AppResult<Vec<(Project, Member)>> {
         let ms = self.members.lock().unwrap();
         let ps = self.projects.lock().unwrap();
-        let mut out: Vec<(Project, Member)> =
-            ms.iter().filter(|m| m.user_id == user_id).filter_map(|m| ps.iter().find(|p| p.id == m.project_id).map(|p| (p.clone(), m.clone()))).collect();
+        let mut out: Vec<(Project, Member)> = ms
+            .iter()
+            .filter(|m| m.user_id == user_id)
+            .filter_map(|m| ps.iter().find(|p| p.id == m.project_id).map(|p| (p.clone(), m.clone())))
+            .collect();
         out.sort_by_key(|(p, _)| p.kind != ProjectKind::Personal);
         Ok(out)
     }
@@ -133,7 +142,13 @@ impl ProjectRepository for InMemoryProjectRepository {
     }
     async fn all_members(&self) -> AppResult<Vec<(Member, User)>> {
         let us = self.users.lock().unwrap();
-        Ok(self.members.lock().unwrap().iter().filter_map(|m| us.iter().find(|u| u.id == m.user_id).map(|u| (m.clone(), u.clone()))).collect())
+        Ok(self
+            .members
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|m| us.iter().find(|u| u.id == m.user_id).map(|u| (m.clone(), u.clone())))
+            .collect())
     }
     async fn upsert_member(&self, member: &Member) -> AppResult<()> {
         let mut ms = self.members.lock().unwrap();
@@ -162,20 +177,31 @@ impl ProjectRepository for InMemoryProjectRepository {
         Ok(self.invites.lock().unwrap().iter().find(|i| i.id == id).cloned())
     }
     async fn invites_of(&self, project_id: Uuid) -> AppResult<Vec<Invite>> {
-        let mut out: Vec<Invite> = self.invites.lock().unwrap().iter().filter(|i| i.project_id == project_id).cloned().collect();
+        let mut out: Vec<Invite> =
+            self.invites.lock().unwrap().iter().filter(|i| i.project_id == project_id).cloned().collect();
         out.sort_by_key(|i| std::cmp::Reverse(i.created_at));
         Ok(out)
     }
     async fn revoke_invite(&self, project_id: Uuid, id: Uuid, at: DateTime<Utc>) -> AppResult<bool> {
         let mut is = self.invites.lock().unwrap();
-        let Some(i) = is.iter_mut().find(|i| i.id == id && i.project_id == project_id && i.used_at.is_none() && i.revoked_at.is_none()) else { return Ok(false) };
+        let Some(i) = is
+            .iter_mut()
+            .find(|i| i.id == id && i.project_id == project_id && i.used_at.is_none() && i.revoked_at.is_none())
+        else {
+            return Ok(false);
+        };
         i.revoked_at = Some(at);
         Ok(true)
     }
     async fn accept_invite(&self, id: Uuid, member: &Member, at: DateTime<Utc>) -> AppResult<bool> {
         {
             let mut is = self.invites.lock().unwrap();
-            let Some(i) = is.iter_mut().find(|i| i.id == id && i.project_id == member.project_id && i.state(at) == InviteState::Active) else { return Ok(false) };
+            let Some(i) = is
+                .iter_mut()
+                .find(|i| i.id == id && i.project_id == member.project_id && i.state(at) == InviteState::Active)
+            else {
+                return Ok(false);
+            };
             i.used_by = Some(member.user_id);
             i.used_at = Some(at);
         }
@@ -216,7 +242,13 @@ impl AccessRepository for InMemoryProjectRepository {
     }
     async fn revoke_session(&self, user_id: Uuid, id_hash: &str, at: DateTime<Utc>) -> AppResult<bool> {
         let mut n = false;
-        for s in self.sessions.lock().unwrap().iter_mut().filter(|s| s.user_id == user_id && s.id_hash == id_hash && s.revoked_at.is_none()) {
+        for s in self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .filter(|s| s.user_id == user_id && s.id_hash == id_hash && s.revoked_at.is_none())
+        {
             s.revoked_at = Some(at);
             n = true;
         }
@@ -224,7 +256,13 @@ impl AccessRepository for InMemoryProjectRepository {
     }
     async fn revoke_sessions(&self, user_id: Uuid, keep: Option<&str>, at: DateTime<Utc>) -> AppResult<u64> {
         let mut n = 0;
-        for s in self.sessions.lock().unwrap().iter_mut().filter(|s| s.user_id == user_id && s.revoked_at.is_none() && Some(s.id_hash.as_str()) != keep) {
+        for s in self
+            .sessions
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .filter(|s| s.user_id == user_id && s.revoked_at.is_none() && Some(s.id_hash.as_str()) != keep)
+        {
             s.revoked_at = Some(at);
             n += 1;
         }
@@ -254,14 +292,26 @@ impl AccessRepository for InMemoryProjectRepository {
     }
     async fn revoke_token(&self, user_id: Uuid, id: Uuid, at: DateTime<Utc>) -> AppResult<bool> {
         let mut n = false;
-        for t in self.tokens.lock().unwrap().iter_mut().filter(|t| t.user_id == user_id && t.id == id && t.revoked_at.is_none()) {
+        for t in self
+            .tokens
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .filter(|t| t.user_id == user_id && t.id == id && t.revoked_at.is_none())
+        {
             t.revoked_at = Some(at);
             n = true;
         }
         Ok(n)
     }
     async fn revoke_project_tokens(&self, user_id: Uuid, project_id: Uuid, at: DateTime<Utc>) -> AppResult<()> {
-        for t in self.tokens.lock().unwrap().iter_mut().filter(|t| t.user_id == user_id && t.project_id == project_id && t.revoked_at.is_none()) {
+        for t in self
+            .tokens
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .filter(|t| t.user_id == user_id && t.project_id == project_id && t.revoked_at.is_none())
+        {
             t.revoked_at = Some(at);
         }
         Ok(())
@@ -271,7 +321,16 @@ impl AccessRepository for InMemoryProjectRepository {
         Ok(())
     }
     async fn audit_of(&self, user_id: Uuid, limit: i64) -> AppResult<Vec<AuditEvent>> {
-        Ok(self.audit.lock().unwrap().iter().rev().filter(|e| e.user_id == Some(user_id)).take(limit as usize).cloned().collect())
+        Ok(self
+            .audit
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .filter(|e| e.user_id == Some(user_id))
+            .take(limit as usize)
+            .cloned()
+            .collect())
     }
     async fn anonymize_audit(&self, user_id: Uuid) -> AppResult<()> {
         for e in self.audit.lock().unwrap().iter_mut().filter(|e| e.user_id == Some(user_id)) {

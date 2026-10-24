@@ -17,7 +17,8 @@ async fn app_starts_on_clean_database() {
     let ctx = AppContext { pool: db.pool.clone(), config: Arc::new(Config::test()) };
     for start in 1..=2 {
         let wired = wiring::features(&ctx);
-        let feats = kernel::feature::assemble(&ctx, wired.features).await.unwrap_or_else(|e| panic!("старт {start}: {e}"));
+        let feats =
+            kernel::feature::assemble(&ctx, wired.features).await.unwrap_or_else(|e| panic!("старт {start}: {e}"));
         assert!(feats.names.contains(&"transactions"));
         #[cfg(feature = "seed")]
         {

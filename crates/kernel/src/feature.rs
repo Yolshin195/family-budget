@@ -48,10 +48,7 @@ pub async fn assemble(ctx: &AppContext, features: Vec<Feature>) -> anyhow::Resul
         let mut migrator = f.migrator;
         // Все фичи пишут в общую _sqlx_migrations — чужие версии игнорируем.
         migrator.set_ignore_missing(true);
-        migrator
-            .run(&ctx.pool)
-            .await
-            .map_err(|e| anyhow::anyhow!("миграции фичи '{}': {e}", f.name))?;
+        migrator.run(&ctx.pool).await.map_err(|e| anyhow::anyhow!("миграции фичи '{}': {e}", f.name))?;
         router = router.nest(f.mount, f.router);
         if let Some(web) = f.web {
             pages = pages.nest(f.mount, web.pages);

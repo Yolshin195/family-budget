@@ -5,7 +5,7 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 #[allow(unused_imports)]
-use crate::domain::{AccountNameLang, AccountAccountKind, NewAccount, Account, AccountChanges};
+use crate::domain::{Account, AccountAccountKind, AccountChanges, AccountNameLang, NewAccount};
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateAccountDto {
@@ -144,13 +144,15 @@ impl UpdateAccountDto {
 }
 
 fn parse_name_lang(value: &str) -> Result<AccountNameLang, String> {
-    AccountNameLang::parse(value)
-        .ok_or_else(|| format!("name_lang: недопустимое значение '{value}', ожидается одно из {:?}", AccountNameLang::VALUES))
+    AccountNameLang::parse(value).ok_or_else(|| {
+        format!("name_lang: недопустимое значение '{value}', ожидается одно из {:?}", AccountNameLang::VALUES)
+    })
 }
 
 fn parse_account_kind(value: &str) -> Result<AccountAccountKind, String> {
-    AccountAccountKind::parse(value)
-        .ok_or_else(|| format!("account_kind: недопустимое значение '{value}', ожидается одно из {:?}", AccountAccountKind::VALUES))
+    AccountAccountKind::parse(value).ok_or_else(|| {
+        format!("account_kind: недопустимое значение '{value}', ожидается одно из {:?}", AccountAccountKind::VALUES)
+    })
 }
 
 impl AccountDto {

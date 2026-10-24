@@ -10,11 +10,12 @@ use kernel::config::Oidc;
 use kernel::error::{AppError, AppResult};
 use kernel::i18n::Lang;
 use openidconnect::core::{
-    CoreAuthenticationFlow, CoreClient, CoreIdToken, CoreIdTokenVerifier, CoreJsonWebKeySet, CoreJsonWebKeyUse, CoreJwsSigningAlgorithm, CoreProviderMetadata,
+    CoreAuthenticationFlow, CoreClient, CoreIdToken, CoreIdTokenVerifier, CoreJsonWebKeySet, CoreJsonWebKeyUse,
+    CoreJwsSigningAlgorithm, CoreProviderMetadata,
 };
 use openidconnect::{
-    AsyncHttpClient, AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpRequest, IssuerUrl, JsonWebKey, JsonWebKeyAlgorithm, Nonce, PkceCodeChallenge,
-    PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, reqwest,
+    AsyncHttpClient, AuthorizationCode, ClientId, ClientSecret, CsrfToken, HttpRequest, IssuerUrl, JsonWebKey,
+    JsonWebKeyAlgorithm, Nonce, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, reqwest,
 };
 use serde::Deserialize;
 use tokio::sync::RwLock;
@@ -61,9 +62,10 @@ impl<'c> AsyncHttpClient<'c> for RewritingHttp {
 
     fn call(&'c self, mut request: HttpRequest) -> Self::Future {
         if self.internal.is_some()
-            && let Ok(uri) = self.map(&request.uri().to_string()).parse() {
-                *request.uri_mut() = uri;
-            }
+            && let Ok(uri) = self.map(&request.uri().to_string()).parse()
+        {
+            *request.uri_mut() = uri;
+        }
         self.inner.call(request)
     }
 }
@@ -97,10 +99,9 @@ impl RauthyProvider {
 
     /// Discovery + JWKS из кэша; `force` — перечитать (например, Rauthy сменил ключи подписи).
     async fn discovered(&self, force: bool) -> AppResult<(CoreProviderMetadata, Option<String>)> {
-        if !force
-            && let Some(d) = self.cache.read().await.as_ref().filter(|d| d.at.elapsed() < REFRESH) {
-                return Ok((d.metadata.clone(), d.end_session.clone()));
-            }
+        if !force && let Some(d) = self.cache.read().await.as_ref().filter(|d| d.at.elapsed() < REFRESH) {
+            return Ok((d.metadata.clone(), d.end_session.clone()));
+        }
         let issuer = IssuerUrl::new(self.cfg.issuer.clone()).map_err(misconfigured)?;
         let metadata = CoreProviderMetadata::discover_async(issuer, &self.oidc_http).await.map_err(unavailable)?;
         // end_session_endpoint нет в стандартных метаданных крейта — читаем из того же документа.
@@ -120,7 +121,8 @@ impl RauthyProvider {
                 .and_then(|v| v.get("end_session_endpoint").and_then(|e| e.as_str()).map(str::to_string)),
             None => None,
         };
-        *self.cache.write().await = Some(Discovered { at: Instant::now(), metadata: metadata.clone(), end_session: end_session.clone() });
+        *self.cache.write().await =
+            Some(Discovered { at: Instant::now(), metadata: metadata.clone(), end_session: end_session.clone() });
         Ok((metadata, end_session))
     }
 
@@ -166,7 +168,13 @@ struct AccessClaims {
 /// Проверить JWT access-токен: подпись ключом из JWKS (по `kid`, только асимметричные алгоритмы),
 /// `iss`, `exp`/`nbf` (запас 60 с), `aud` содержит ресурс, это именно access-токен (не ID и не
 /// refresh), без привязки DPoP. Отдельно от провайдера — чтобы покрыть тестами.
-pub fn verify_access_jwt(token: &str, jwks: &CoreJsonWebKeySet, issuer: &str, audience: &str, now: i64) -> Result<AccessToken, String> {
+pub fn verify_access_jwt(
+    token: &str,
+    jwks: &CoreJsonWebKeySet,
+    issuer: &str,
+    audience: &str,
+    now: i64,
+) -> Result<AccessToken, String> {
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let b64 = |part: &str| URL_SAFE_NO_PAD.decode(part).map_err(|_| "токен: неверный base64".to_string());
@@ -175,7 +183,10 @@ pub fn verify_access_jwt(token: &str, jwks: &CoreJsonWebKeySet, issuer: &str, au
     let header: JwsHeader = serde_json::from_slice(&b64(header_b64)?).map_err(|e| format!("токен: заголовок: {e}"))?;
     if matches!(
         header.alg,
-        CoreJwsSigningAlgorithm::HmacSha256 | CoreJwsSigningAlgorithm::HmacSha384 | CoreJwsSigningAlgorithm::HmacSha512 | CoreJwsSigningAlgorithm::None
+        CoreJwsSigningAlgorithm::HmacSha256
+            | CoreJwsSigningAlgorithm::HmacSha384
+            | CoreJwsSigningAlgorithm::HmacSha512
+            | CoreJwsSigningAlgorithm::None
     ) {
         return Err("токен: алгоритм подписи не разрешён".into());
     }
@@ -229,9 +240,16 @@ pub fn verify_access_jwt(token: &str, jwks: &CoreJsonWebKeySet, issuer: &str, au
 }
 
 /// Проверить ID-токен и достать из него пользователя. Отдельно — чтобы покрыть тестами.
-pub fn verify_id_token(token: &CoreIdToken, verifier: &CoreIdTokenVerifier<'_>, nonce: &str) -> Result<VerifiedLogin, String> {
+pub fn verify_id_token(
+    token: &CoreIdToken,
+    verifier: &CoreIdTokenVerifier<'_>,
+    nonce: &str,
+) -> Result<VerifiedLogin, String> {
     let claims = token.claims(verifier, &Nonce::new(nonce.to_string())).map_err(|e| e.to_string())?;
-    let email = claims.email().map(|e| e.as_str().to_string()).ok_or_else(|| "в ID-токене нет email (scope email)".to_string())?;
+    let email = claims
+        .email()
+        .map(|e| e.as_str().to_string())
+        .ok_or_else(|| "в ID-токене нет email (scope email)".to_string())?;
     Ok(VerifiedLogin {
         sub: claims.subject().as_str().to_string(),
         email,
@@ -260,8 +278,12 @@ impl IdentityProvider for RauthyProvider {
 
     async fn authorize(&self, lang: Lang) -> AppResult<AuthRequest> {
         let (metadata, _) = self.discovered(false).await?;
-        let client = CoreClient::from_provider_metadata(metadata, ClientId::new(self.cfg.client_id.clone()), Some(ClientSecret::new(self.cfg.client_secret.clone())))
-            .set_redirect_uri(RedirectUrl::new(self.cfg.redirect_url.clone()).map_err(misconfigured)?);
+        let client = CoreClient::from_provider_metadata(
+            metadata,
+            ClientId::new(self.cfg.client_id.clone()),
+            Some(ClientSecret::new(self.cfg.client_secret.clone())),
+        )
+        .set_redirect_uri(RedirectUrl::new(self.cfg.redirect_url.clone()).map_err(misconfigured)?);
         let (challenge, verifier) = PkceCodeChallenge::new_random_sha256();
         let (url, state, nonce) = client
             .authorize_url(CoreAuthenticationFlow::AuthorizationCode, CsrfToken::new_random, Nonce::new_random)
@@ -270,13 +292,22 @@ impl IdentityProvider for RauthyProvider {
             .set_pkce_challenge(challenge)
             .add_extra_param("ui_locales", lang.code())
             .url();
-        Ok(AuthRequest { url: url.to_string(), state: state.secret().clone(), nonce: nonce.secret().clone(), pkce_verifier: verifier.secret().clone() })
+        Ok(AuthRequest {
+            url: url.to_string(),
+            state: state.secret().clone(),
+            nonce: nonce.secret().clone(),
+            pkce_verifier: verifier.secret().clone(),
+        })
     }
 
     async fn exchange(&self, code: &str, pkce_verifier: &str, nonce: &str) -> AppResult<VerifiedLogin> {
         let (metadata, _) = self.discovered(false).await?;
-        let client = CoreClient::from_provider_metadata(metadata.clone(), ClientId::new(self.cfg.client_id.clone()), Some(ClientSecret::new(self.cfg.client_secret.clone())))
-            .set_redirect_uri(RedirectUrl::new(self.cfg.redirect_url.clone()).map_err(misconfigured)?);
+        let client = CoreClient::from_provider_metadata(
+            metadata.clone(),
+            ClientId::new(self.cfg.client_id.clone()),
+            Some(ClientSecret::new(self.cfg.client_secret.clone())),
+        )
+        .set_redirect_uri(RedirectUrl::new(self.cfg.redirect_url.clone()).map_err(misconfigured)?);
         let response = client
             .exchange_code(AuthorizationCode::new(code.to_string()))
             .map_err(unavailable)?
@@ -290,7 +321,8 @@ impl IdentityProvider for RauthyProvider {
             Err(first) => {
                 // Возможно, Rauthy сменил ключ подписи: перечитать JWKS и проверить ещё раз.
                 let (fresh, _) = self.discovered(true).await?;
-                verify_id_token(id_token, &self.verifier(fresh)?, nonce).map_err(|e| AppError::Forbidden(format!("ID-токен не прошёл проверку: {e} ({first})")))
+                verify_id_token(id_token, &self.verifier(fresh)?, nonce)
+                    .map_err(|e| AppError::Forbidden(format!("ID-токен не прошёл проверку: {e} ({first})")))
             }
         }
     }
@@ -309,7 +341,13 @@ impl IdentityProvider for RauthyProvider {
     async fn delete_user(&self, sub: &str) -> AppResult<bool> {
         let Some(key) = &self.cfg.admin_api_key else { return Ok(false) };
         let url = self.internal(&format!("{}/users/{}", self.cfg.base(), kernel::web::url_encode(sub)));
-        let resp = self.http.delete(url).header("Authorization", format!("API-Key {key}")).send().await.map_err(unavailable)?;
+        let resp = self
+            .http
+            .delete(url)
+            .header("Authorization", format!("API-Key {key}"))
+            .send()
+            .await
+            .map_err(unavailable)?;
         if resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND {
             Ok(true)
         } else {
@@ -379,8 +417,13 @@ mod tests {
     //! Проверка ID-токена (раздел 13 ТЗ): неверный nonce, чужой aud, чужой iss, истёкший срок,
     //! чужой ключ подписи → отказ. Ключи в testdata — только для тестов.
     use chrono::{Duration as ChronoDuration, Utc};
-    use openidconnect::core::{CoreIdTokenClaims, CoreJsonWebKeySet, CoreJwsSigningAlgorithm, CoreRsaPrivateSigningKey};
-    use openidconnect::{Audience, AuthenticationMethodReference, EmptyAdditionalClaims, EndUserEmail, JsonWebKeyId, PrivateSigningKey, StandardClaims, SubjectIdentifier};
+    use openidconnect::core::{
+        CoreIdTokenClaims, CoreJsonWebKeySet, CoreJwsSigningAlgorithm, CoreRsaPrivateSigningKey,
+    };
+    use openidconnect::{
+        Audience, AuthenticationMethodReference, EmptyAdditionalClaims, EndUserEmail, JsonWebKeyId, PrivateSigningKey,
+        StandardClaims, SubjectIdentifier,
+    };
 
     use super::*;
 
@@ -409,11 +452,15 @@ mod tests {
             vec![Audience::new(aud.into())],
             now + expires_in,
             now - ChronoDuration::minutes(1),
-            StandardClaims::new(SubjectIdentifier::new("rauthy-user-1".into())).set_email(Some(EndUserEmail::new("anna@example.test".into()))),
+            StandardClaims::new(SubjectIdentifier::new("rauthy-user-1".into()))
+                .set_email(Some(EndUserEmail::new("anna@example.test".into()))),
             EmptyAdditionalClaims {},
         )
         .set_nonce(Some(Nonce::new(nonce.into())))
-        .set_auth_method_refs(Some(vec![AuthenticationMethodReference::new("pwd".into()), AuthenticationMethodReference::new("otp".into())]));
+        .set_auth_method_refs(Some(vec![
+            AuthenticationMethodReference::new("pwd".into()),
+            AuthenticationMethodReference::new("otp".into()),
+        ]));
         CoreIdToken::new(claims, &key(signing), CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256, None, None).unwrap()
     }
 
@@ -466,7 +513,8 @@ mod tests {
     fn jws(header: serde_json::Value, claims: serde_json::Value, signing: &str) -> String {
         use base64::Engine;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-        let msg = format!("{}.{}", URL_SAFE_NO_PAD.encode(header.to_string()), URL_SAFE_NO_PAD.encode(claims.to_string()));
+        let msg =
+            format!("{}.{}", URL_SAFE_NO_PAD.encode(header.to_string()), URL_SAFE_NO_PAD.encode(claims.to_string()));
         let sig = key(signing).sign(&CoreJwsSigningAlgorithm::RsaSsaPkcs1V15Sha256, msg.as_bytes()).unwrap();
         format!("{msg}.{}", URL_SAFE_NO_PAD.encode(sig))
     }
@@ -504,8 +552,13 @@ mod tests {
     #[test]
     fn access_token_checks_issuer_expiry_and_signature() {
         let now = Utc::now().timestamp();
-        let check = |c: serde_json::Value, signing: &str| verify_access_jwt(&jws(header(), c, signing), &jwks(), ISSUER, RESOURCE, now);
-        assert!(check(with(now, "iss", serde_json::json!("https://evil.example.test/auth/v1")), KEY).is_err(), "чужой издатель");
+        let check = |c: serde_json::Value, signing: &str| {
+            verify_access_jwt(&jws(header(), c, signing), &jwks(), ISSUER, RESOURCE, now)
+        };
+        assert!(
+            check(with(now, "iss", serde_json::json!("https://evil.example.test/auth/v1")), KEY).is_err(),
+            "чужой издатель"
+        );
         assert!(check(with(now, "exp", serde_json::json!(now - 120)), KEY).is_err(), "истёк");
         assert!(check(with(now, "nbf", serde_json::json!(now + 600)), KEY).is_err(), "ещё не действует");
         assert!(check(claims(now), OTHER_KEY).is_err(), "чужой ключ");
@@ -527,7 +580,11 @@ mod tests {
         let now = Utc::now().timestamp();
         for alg in ["HS256", "none"] {
             let h = serde_json::json!({"alg": alg, "kid": "k1"});
-            let unsigned = format!("{}.{}.", URL_SAFE_NO_PAD.encode(h.to_string()), URL_SAFE_NO_PAD.encode(claims(now).to_string()));
+            let unsigned = format!(
+                "{}.{}.",
+                URL_SAFE_NO_PAD.encode(h.to_string()),
+                URL_SAFE_NO_PAD.encode(claims(now).to_string())
+            );
             assert!(verify_access_jwt(&unsigned, &jwks(), ISSUER, RESOURCE, now).is_err(), "{alg}");
         }
         let unknown_kid = serde_json::json!({"alg": "RS256", "kid": "other"});

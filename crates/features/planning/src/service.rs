@@ -35,7 +35,8 @@ impl PlanningService {
     }
 
     pub async fn create(&self, project_id: Uuid, user_id: Uuid, input: PlanInput) -> AppResult<PlanDto> {
-        let plan = Plan::create(project_id, user_id, input.into_domain().map_err(AppError::Validation)?).map_err(AppError::Validation)?;
+        let plan = Plan::create(project_id, user_id, input.into_domain().map_err(AppError::Validation)?)
+            .map_err(AppError::Validation)?;
         self.check_refs(project_id, &plan).await?;
         self.repo.insert(&plan).await?;
         Ok(plan.into())
@@ -61,7 +62,13 @@ impl PlanningService {
     }
 
     /// [`Self::update`] с явным «сегодня».
-    pub async fn update_on(&self, project_id: Uuid, id: Uuid, input: PlanInput, today: NaiveDate) -> AppResult<PlanDto> {
+    pub async fn update_on(
+        &self,
+        project_id: Uuid,
+        id: Uuid,
+        input: PlanInput,
+        today: NaiveDate,
+    ) -> AppResult<PlanDto> {
         let before = self.load(project_id, id).await?;
         let mut plan = before.clone();
         plan.change(input.into_domain().map_err(AppError::Validation)?).map_err(AppError::Validation)?;
@@ -72,8 +79,16 @@ impl PlanningService {
         }
         // Оплаченное или пропущенное заранее (с сегодняшнего дня) тоже остаётся у прежнего плана.
         let (_, far) = all_dates();
-        let paid = self.deps.payments.paid(project_id, today, far).await?.into_iter().filter(|p| p.plan_id == id).map(|p| p.plan_date);
-        let skipped = self.repo.skips(project_id, today, far).await?.into_iter().filter(|(p, _)| *p == id).map(|(_, d)| d);
+        let paid = self
+            .deps
+            .payments
+            .paid(project_id, today, far)
+            .await?
+            .into_iter()
+            .filter(|p| p.plan_id == id)
+            .map(|p| p.plan_date);
+        let skipped =
+            self.repo.skips(project_id, today, far).await?.into_iter().filter(|(p, _)| *p == id).map(|(_, d)| d);
         let yesterday = today.pred_opt().unwrap_or(today);
         let last = paid.chain(skipped).max().map_or(yesterday, |d| d.max(yesterday));
         let (old, next) = before.split(plan, last).map_err(AppError::Validation)?;
@@ -90,14 +105,22 @@ impl PlanningService {
     pub async fn delete_with_undo(&self, project_id: Uuid, id: Uuid) -> AppResult<Uuid> {
         let plan = self.load(project_id, id).await?;
         let (from, to) = all_dates();
-        let skips = self.repo.skips(project_id, from, to).await?.into_iter().filter(|(p, _)| *p == id).map(|(_, d)| d).collect();
+        let skips = self
+            .repo
+            .skips(project_id, from, to)
+            .await?
+            .into_iter()
+            .filter(|(p, _)| *p == id)
+            .map(|(_, d)| d)
+            .collect();
         self.delete(project_id, id).await?;
         Ok(self.undo.put(project_id, (plan, skips)))
     }
 
     /// «Отменить»: вернуть план с тем же id и его пропуски.
     pub async fn undo_delete(&self, project_id: Uuid, user_id: Uuid, token: Uuid) -> AppResult<()> {
-        let (plan, skips) = self.undo.take(project_id, token).ok_or_else(|| AppError::NotFound("отменить уже нельзя".into()))?;
+        let (plan, skips) =
+            self.undo.take(project_id, token).ok_or_else(|| AppError::NotFound("отменить уже нельзя".into()))?;
         self.repo.insert(&plan).await?;
         for d in skips {
             self.repo.add_skip(project_id, plan.id, d, user_id).await?;
@@ -118,12 +141,19 @@ impl PlanningService {
     }
 
     /// Вхождения всех активных планов в периоде со статусами, по дате.
-    pub async fn occurrences(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate, today: NaiveDate) -> AppResult<Vec<OccurrenceDto>> {
+    pub async fn occurrences(
+        &self,
+        project_id: Uuid,
+        from: NaiveDate,
+        to: NaiveDate,
+        today: NaiveDate,
+    ) -> AppResult<Vec<OccurrenceDto>> {
         if to < from || (to - from).num_days() > MAX_RANGE_DAYS {
             return Err(AppError::Validation(format!("период: от 1 дня до {MAX_RANGE_DAYS} дней")));
         }
         let plans = self.repo.list(project_id).await?;
-        let currency_of: HashMap<String, String> = self.deps.accounts.currencies(project_id).await?.into_iter().collect();
+        let currency_of: HashMap<String, String> =
+            self.deps.accounts.currencies(project_id).await?.into_iter().collect();
         let mut paid_currency = HashMap::new();
         let mut paid = HashMap::new();
         for p in self.deps.payments.paid(project_id, from, to).await? {
@@ -141,7 +171,9 @@ impl PlanningService {
                 }
                 let st = status(date, today, p, skips.contains(&(plan.id, date)));
                 let (transaction_id, paid_amount, paid_on) = match &st {
-                    crate::domain::Status::Paid { transaction_id, amount, paid_on } => (Some(*transaction_id), Some(*amount), Some(*paid_on)),
+                    crate::domain::Status::Paid { transaction_id, amount, paid_on } => {
+                        (Some(*transaction_id), Some(*amount), Some(*paid_on))
+                    }
                     _ => (None, None, None),
                 };
                 out.push(OccurrenceDto {
@@ -161,7 +193,13 @@ impl PlanningService {
     }
 
     /// Одно вхождение (для страницы подтверждения).
-    pub async fn occurrence(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate, today: NaiveDate) -> AppResult<OccurrenceDto> {
+    pub async fn occurrence(
+        &self,
+        project_id: Uuid,
+        plan_id: Uuid,
+        date: NaiveDate,
+        today: NaiveDate,
+    ) -> AppResult<OccurrenceDto> {
         let plan = self.load(project_id, plan_id).await?;
         if !plan.occurs_on(date) {
             return Err(AppError::NotFound(format!("план {plan_id} не приходится на {date}")));
@@ -175,7 +213,12 @@ impl PlanningService {
 
     /// Публичный контракт для операций: тип плана и пропущено ли его вхождение `date`.
     /// `None` — плана нет в проекте или дата не из его правила (в т. ч. после `end_on`).
-    pub async fn occurrence_kind(&self, project_id: Uuid, plan_id: Uuid, date: NaiveDate) -> AppResult<Option<(String, bool)>> {
+    pub async fn occurrence_kind(
+        &self,
+        project_id: Uuid,
+        plan_id: Uuid,
+        date: NaiveDate,
+    ) -> AppResult<Option<(String, bool)>> {
         let Some(plan) = self.repo.find(project_id, plan_id).await? else { return Ok(None) };
         if !plan.occurs_on(date) {
             return Ok(None);
@@ -234,14 +277,20 @@ impl PlanningService {
     }
 
     async fn check_refs(&self, project_id: Uuid, plan: &Plan) -> AppResult<()> {
-        ensure_ref(self.deps.accounts.exists(project_id, &plan.account_code).await?, "account_code", &plan.account_code)?;
+        ensure_ref(
+            self.deps.accounts.exists(project_id, &plan.account_code).await?,
+            "account_code",
+            &plan.account_code,
+        )?;
         if let Some(to) = &plan.to_account_code {
             ensure_ref(self.deps.accounts.exists(project_id, to).await?, "to_account_code", to)?;
         }
         let Some(code) = &plan.category_code else { return Ok(()) };
         match self.deps.categories.kind_of(project_id, code).await? {
             None => ensure_ref(false, "category_code", code),
-            Some(k) if k != plan.tx_kind => Err(AppError::Validation(format!("category_code: категория '{code}' — {k}, а план — {}", plan.tx_kind))),
+            Some(k) if k != plan.tx_kind => {
+                Err(AppError::Validation(format!("category_code: категория '{code}' — {k}, а план — {}", plan.tx_kind)))
+            }
             Some(_) => Ok(()),
         }
     }

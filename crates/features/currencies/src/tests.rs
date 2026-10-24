@@ -10,7 +10,6 @@ use crate::adapters::memory::InMemoryCurrencyRepository;
 use crate::dto::{CreateCurrencyDto, ListQuery, UpdateCurrencyDto};
 use crate::service::CurrencyService;
 
-
 /// Базовая валюта — THB; в RUB есть проводки и счёт `CARD_TBANK`.
 struct FakeUsage;
 
@@ -172,7 +171,8 @@ async fn archive_can_be_undone_and_project_purged() {
 #[test]
 fn templates_are_translated() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let missing = kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
 
@@ -183,8 +183,14 @@ async fn minor_units_are_bounded() {
     let svc = service();
     let p = Uuid::new_v4();
     let is = |e: AppError| matches!(e, AppError::Validation(m) if m.starts_with("minor_units"));
-    assert!(is(svc.create(p, CreateCurrencyDto { minor_units: 7, ..create_dto("XXX") }).await.unwrap_err()), "7 знаков");
-    assert!(is(svc.create(p, CreateCurrencyDto { minor_units: -1, ..create_dto("YYY") }).await.unwrap_err()), "−1 знак");
+    assert!(
+        is(svc.create(p, CreateCurrencyDto { minor_units: 7, ..create_dto("XXX") }).await.unwrap_err()),
+        "7 знаков"
+    );
+    assert!(
+        is(svc.create(p, CreateCurrencyDto { minor_units: -1, ..create_dto("YYY") }).await.unwrap_err()),
+        "−1 знак"
+    );
     svc.create(p, CreateCurrencyDto { minor_units: 2, ..create_dto("RUB") }).await.unwrap();
     svc.create(p, CreateCurrencyDto { minor_units: 2, ..create_dto("USD") }).await.unwrap();
     let minor = |n: i32| UpdateCurrencyDto { minor_units: n, ..update_dto("Рубль") };
@@ -204,7 +210,10 @@ async fn currency_in_use_is_not_archived() {
     let conflict = |e: AppError, what: &str| matches!(e, AppError::Conflict(m) if m.contains(what));
     assert!(conflict(svc.archive(p, "THB").await.unwrap_err(), "базовая"));
     assert!(conflict(svc.archive(p, "RUB").await.unwrap_err(), "CARD_TBANK"));
-    assert!(conflict(svc.update(p, "RUB", UpdateCurrencyDto { archived: true, ..update_dto("Рубль") }).await.unwrap_err(), "CARD_TBANK"));
+    assert!(conflict(
+        svc.update(p, "RUB", UpdateCurrencyDto { archived: true, ..update_dto("Рубль") }).await.unwrap_err(),
+        "CARD_TBANK"
+    ));
     svc.archive(p, "USD").await.unwrap();
     assert!(svc.get(p, "USD").await.unwrap().archived);
 }

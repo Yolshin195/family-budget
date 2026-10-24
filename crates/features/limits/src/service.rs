@@ -9,8 +9,8 @@ use kernel::pagination::{PagedResponse, Pagination};
 use uuid::Uuid;
 
 use crate::domain::Limit;
-use crate::dto::{PeriodQuery, LimitDto, LimitInput};
-use crate::ports::{Deps, Period, LimitRepository};
+use crate::dto::{LimitDto, LimitInput, PeriodQuery};
+use crate::ports::{Deps, LimitRepository, Period};
 
 pub struct LimitService {
     repo: Arc<dyn LimitRepository>,
@@ -37,7 +37,12 @@ impl LimitService {
         Ok(self.load(project_id, id).await?.into())
     }
 
-    pub async fn list(&self, project_id: Uuid, query: PeriodQuery, pagination: Pagination) -> AppResult<PagedResponse<LimitDto>> {
+    pub async fn list(
+        &self,
+        project_id: Uuid,
+        query: PeriodQuery,
+        pagination: Pagination,
+    ) -> AppResult<PagedResponse<LimitDto>> {
         let period = Period { from: query.from, to: query.to };
         let items = self.repo.list(project_id, period, pagination.limit(), pagination.offset()).await?;
         let total = self.repo.count(project_id, period).await?;
@@ -91,7 +96,11 @@ impl LimitService {
 
     #[allow(unused_variables)]
     async fn check_refs(&self, project_id: Uuid, item: &Limit) -> AppResult<()> {
-        ensure_ref(self.deps.categories.exists(project_id, &item.category_code).await?, "category_code", &item.category_code)?;
+        ensure_ref(
+            self.deps.categories.exists(project_id, &item.category_code).await?,
+            "category_code",
+            &item.category_code,
+        )?;
         Ok(())
     }
 }

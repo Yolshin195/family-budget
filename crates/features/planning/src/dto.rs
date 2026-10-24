@@ -115,7 +115,8 @@ impl PlanInput {
         Ok(PlanData {
             name: Name {
                 text: self.name,
-                lang: Lang::parse(&self.name_lang).ok_or_else(|| format!("name_lang: '{}' — ожидается RU, EN или TH", self.name_lang))?,
+                lang: Lang::parse(&self.name_lang)
+                    .ok_or_else(|| format!("name_lang: '{}' — ожидается RU, EN или TH", self.name_lang))?,
                 ru: self.name_ru,
                 en: self.name_en,
                 th: self.name_th,
@@ -125,8 +126,9 @@ impl PlanInput {
             category_code: self.category_code,
             to_account_code: self.to_account_code,
             amount: self.amount,
-            recurrence: Recurrence::parse(&self.recurrence)
-                .ok_or_else(|| format!("recurrence: '{}' — ожидается одно из {:?}", self.recurrence, Recurrence::VALUES))?,
+            recurrence: Recurrence::parse(&self.recurrence).ok_or_else(|| {
+                format!("recurrence: '{}' — ожидается одно из {:?}", self.recurrence, Recurrence::VALUES)
+            })?,
             interval: self.interval,
             start_on: self.start_on,
             end_on: self.end_on,
@@ -183,7 +185,11 @@ impl PlanDto {
     /// Текст названия для языка `lang` и его фактический язык (для описания транзакции при оплате).
     pub fn title_with_lang(&self, lang: Lang) -> (String, Lang) {
         let l = self.localized();
-        if lang != l.lang && l.translation(lang).is_some() { (l.show(lang).to_string(), lang) } else { (self.name.clone(), l.lang) }
+        if lang != l.lang && l.translation(lang).is_some() {
+            (l.show(lang).to_string(), lang)
+        } else {
+            (self.name.clone(), l.lang)
+        }
     }
 
     pub fn is_expense(&self) -> bool {

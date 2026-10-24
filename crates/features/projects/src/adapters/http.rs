@@ -62,7 +62,16 @@ pub async fn list(State(svc): Svc, Extension(s): Extension<Session>) -> AppResul
                 base_currency: p.base_currency,
                 role: p.role.as_str().into(),
                 require_2fa: p.require_2fa,
-                members: p.members.into_iter().map(|m| MemberDto { user_id: m.user_id, name: m.name, email: m.email, role: m.role.as_str().into() }).collect(),
+                members: p
+                    .members
+                    .into_iter()
+                    .map(|m| MemberDto {
+                        user_id: m.user_id,
+                        name: m.name,
+                        email: m.email,
+                        role: m.role.as_str().into(),
+                    })
+                    .collect(),
             })
             .collect(),
     ))

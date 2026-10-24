@@ -73,9 +73,18 @@ pub const KNOWN_CURRENCIES: &[(&str, &str, &str, &str, &str)] = &[
 ];
 
 /// Текст на языке `lang` + переводы на два других (перевод на язык оригинала не хранится).
-pub fn localized(lang: Lang, ru: &str, en: &str, th: &str) -> (String, String, Option<String>, Option<String>, Option<String>) {
+pub fn localized(
+    lang: Lang,
+    ru: &str,
+    en: &str,
+    th: &str,
+) -> (String, String, Option<String>, Option<String>, Option<String>) {
     let other = |l: Lang, v: &str| (l != lang).then(|| v.to_string());
-    let text = match lang { Lang::Ru => ru, Lang::En => en, Lang::Th => th };
+    let text = match lang {
+        Lang::Ru => ru,
+        Lang::En => en,
+        Lang::Th => th,
+    };
     (text.to_string(), lang.upper().to_string(), other(Lang::Ru, ru), other(Lang::En, en), other(Lang::Th, th))
 }
 
@@ -86,7 +95,16 @@ pub async fn ensure_currency(svc: &::currencies::Service, project_id: Uuid, code
     let known = KNOWN_CURRENCIES.iter().find(|c| c.0 == code);
     let (symbol, ru, en, th) = known.map(|c| (c.1, c.2, c.3, c.4)).unwrap_or((code, code, code, code));
     let (name, name_lang, name_ru, name_en, name_th) = localized(lang, ru, en, th);
-    let dto = ::currencies::dto::CreateCurrencyDto { code: code.into(), name, name_lang, name_ru, name_en, name_th, symbol: symbol.into(), minor_units: 2 };
+    let dto = ::currencies::dto::CreateCurrencyDto {
+        code: code.into(),
+        name,
+        name_lang,
+        name_ru,
+        name_en,
+        name_th,
+        symbol: symbol.into(),
+        minor_units: 2,
+    };
     match svc.create(project_id, dto).await {
         Ok(_) | Err(AppError::Conflict(_)) => Ok(()),
         Err(e) => Err(e),

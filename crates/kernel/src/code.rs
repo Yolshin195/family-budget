@@ -53,7 +53,9 @@ pub fn ensure_ref(exists: bool, field: &str, code: &str) -> AppResult<()> {
     if exists {
         Ok(())
     } else {
-        Err(AppError::Validation(Problem::validation(field, tr(None, "err.ref_not_found", &[("code", &code)])).to_string()))
+        Err(AppError::Validation(
+            Problem::validation(field, tr(None, "err.ref_not_found", &[("code", &code)])).to_string(),
+        ))
     }
 }
 

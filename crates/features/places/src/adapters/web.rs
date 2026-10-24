@@ -51,14 +51,20 @@ impl ListPage {
     /// «Продукты · Наличные» — что место подставит (своё или от сети); код, если записи уже нет среди активных.
     fn fills(&self, p: &PlaceDto) -> String {
         let label = |list: &[Choice], code: &Option<String>| {
-            code.as_ref().map(|c| list.iter().find(|x| x.code == *c).map(|x| x.label.clone()).unwrap_or_else(|| c.clone()))
+            code.as_ref()
+                .map(|c| list.iter().find(|x| x.code == *c).map(|x| x.label.clone()).unwrap_or_else(|| c.clone()))
         };
-        [label(&self.categories, &p.effective_category_code), label(&self.accounts, &p.effective_account_code)].into_iter().flatten().collect::<Vec<_>>().join(" · ")
+        [label(&self.categories, &p.effective_category_code), label(&self.accounts, &p.effective_account_code)]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
 
     /// Подставляемое взято у сети, а не задано у самого места.
     fn inherited(&self, p: &PlaceDto) -> bool {
-        (p.default_category_code.is_none() && p.effective_category_code.is_some()) || (p.default_account_code.is_none() && p.effective_account_code.is_some())
+        (p.default_category_code.is_none() && p.effective_category_code.is_some())
+            || (p.default_account_code.is_none() && p.effective_account_code.is_some())
     }
 }
 
@@ -133,9 +139,19 @@ impl PlaceForm {
 
 async fn form_page(svc: &PlaceService, page: PageCtx, is_new: bool, f: PlaceForm, error: Option<String>) -> PageResult {
     let (categories, accounts) = svc.choices(page.session.project_id, page.lang).await?;
-    let categories = categories.into_iter().filter(|c| c.tag == "EXPENSE" || c.code == f.default_category_code).collect();
+    let categories =
+        categories.into_iter().filter(|c| c.tag == "EXPENSE" || c.code == f.default_category_code).collect();
     let parents = parent_choices(svc.all(page.session.project_id, false).await?, &f.code);
-    render(&FormPage { page: form_ctx(page), is_new, f, kinds: PlaceKind::VALUES, parents, categories, accounts, error })
+    render(&FormPage {
+        page: form_ctx(page),
+        is_new,
+        f,
+        kinds: PlaceKind::VALUES,
+        parents,
+        categories,
+        accounts,
+        error,
+    })
 }
 
 /// Активные места, в которые можно вложить место `code`: не оно само, не его потомки и не нижний уровень дерева.
@@ -181,7 +197,9 @@ async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
 async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): Form<PlaceForm>) -> PageResult {
     match svc.create(page.session.project_id, CreatePlaceDto { code: f.code.clone(), data: f.fields() }).await {
         Ok(_) => Ok(see_other(crate::MOUNT)),
-        Err(e @ (AppError::Validation(_) | AppError::Invalid(_) | AppError::Conflict(_))) => form_page(&svc, page, true, f, Some(e.to_string())).await,
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_) | AppError::Conflict(_))) => {
+            form_page(&svc, page, true, f, Some(e.to_string())).await
+        }
         Err(e) => Err(PageError(e)),
     }
 }
@@ -191,11 +209,18 @@ async fn edit_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(co
     form_page(&svc, page, false, PlaceForm::from_dto(p), None).await
 }
 
-async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>, Form(mut f): Form<PlaceForm>) -> PageResult {
+async fn update(
+    State(svc): Svc,
+    Extension(page): Extension<PageCtx>,
+    Path(code): Path<String>,
+    Form(mut f): Form<PlaceForm>,
+) -> PageResult {
     f.code = code.clone();
     match svc.update(page.session.project_id, &code, f.fields()).await {
         Ok(_) => Ok(see_other(crate::MOUNT)),
-        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => form_page(&svc, page, false, f, Some(e.to_string())).await,
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => {
+            form_page(&svc, page, false, f, Some(e.to_string())).await
+        }
         Err(e) => Err(PageError(e)),
     }
 }
@@ -205,7 +230,10 @@ async fn update(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code)
 async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
     match svc.archive(page.session.project_id, &code).await {
         Ok(()) => {
-            let flash = Flash::with_undo(format!("{} · {code}", page.t("toast.archived")), format!("{}/{}/restore", crate::MOUNT, url_segment(&code)));
+            let flash = Flash::with_undo(
+                format!("{} · {code}", page.t("toast.archived")),
+                format!("{}/{}/restore", crate::MOUNT, url_segment(&code)),
+            );
             Ok(see_other_flash(&page.config, crate::MOUNT, flash))
         }
         Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => {
@@ -218,8 +246,12 @@ async fn archive(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code
 
 async fn restore(State(svc): Svc, Extension(page): Extension<PageCtx>, Path(code): Path<String>) -> PageResult {
     match svc.restore(page.session.project_id, &code).await {
-        Ok(()) => Ok(see_other_flash(&page.config, crate::MOUNT, Flash::ok(format!("{} · {code}", page.t("toast.restored"))))),
-        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => Ok(see_other_flash(&page.config, crate::MOUNT, Flash::error(e.to_string()))),
+        Ok(()) => {
+            Ok(see_other_flash(&page.config, crate::MOUNT, Flash::ok(format!("{} · {code}", page.t("toast.restored")))))
+        }
+        Err(e @ (AppError::Validation(_) | AppError::Invalid(_))) => {
+            Ok(see_other_flash(&page.config, crate::MOUNT, Flash::error(e.to_string())))
+        }
         Err(e) => Err(PageError(e)),
     }
 }

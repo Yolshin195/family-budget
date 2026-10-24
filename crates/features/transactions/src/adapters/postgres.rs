@@ -43,7 +43,8 @@ const FILTER: &str = concat!(
     AND ($10::text IS NULL OR EXISTS (SELECT 1 FROM fb_external_refs r \
          WHERE r.project_id = fb_transactions.project_id AND r.transaction_id = fb_transactions.id AND r.provider = $10))"
 );
-const REF_COLUMNS: &str = "id, project_id, provider, external_id, transaction_id, link, received_at, created_at, created_by";
+const REF_COLUMNS: &str =
+    "id, project_id, provider, external_id, transaction_id, link, received_at, created_at, created_by";
 
 pub struct PostgresTransactionRepository {
     pool: PgPool,
@@ -118,7 +119,8 @@ struct PostingRow {
 impl PostingRow {
     fn to_domain(&self) -> AppResult<Posting> {
         Ok(Posting {
-            ref_kind: RefKind::parse(&self.ref_kind).ok_or_else(|| bad_value("fb_postings.ref_kind", &self.ref_kind))?,
+            ref_kind: RefKind::parse(&self.ref_kind)
+                .ok_or_else(|| bad_value("fb_postings.ref_kind", &self.ref_kind))?,
             ref_code: self.ref_code.clone(),
             currency: self.currency_code.clone(),
             amount: self.amount,
@@ -198,7 +200,8 @@ impl Row {
             tx_kind: TxKind::parse(&self.tx_kind).ok_or_else(|| bad_value("fb_transactions.tx_kind", &self.tx_kind))?,
             description: Description {
                 text: self.description,
-                lang: Lang::parse(&self.description_lang).ok_or_else(|| bad_value("fb_transactions.description_lang", &self.description_lang))?,
+                lang: Lang::parse(&self.description_lang)
+                    .ok_or_else(|| bad_value("fb_transactions.description_lang", &self.description_lang))?,
                 ru: self.description_ru,
                 en: self.description_en,
                 th: self.description_th,
@@ -365,13 +368,18 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn find_ref(&self, project_id: Uuid, provider: &str, external_id: &str) -> AppResult<Option<ExternalRef>> {
-        let sql = format!("SELECT {REF_COLUMNS} FROM fb_external_refs WHERE project_id = $1 AND provider = $2 AND external_id = $3");
-        let row: Option<RefRow> = sqlx::query_as(&sql).bind(project_id).bind(provider).bind(external_id).fetch_optional(&self.pool).await?;
+        let sql = format!(
+            "SELECT {REF_COLUMNS} FROM fb_external_refs WHERE project_id = $1 AND provider = $2 AND external_id = $3"
+        );
+        let row: Option<RefRow> =
+            sqlx::query_as(&sql).bind(project_id).bind(provider).bind(external_id).fetch_optional(&self.pool).await?;
         row.map(RefRow::into_domain).transpose()
     }
 
     async fn refs_of(&self, project_id: Uuid, ids: &[Uuid]) -> AppResult<Vec<ExternalRef>> {
-        let sql = format!("SELECT {REF_COLUMNS} FROM fb_external_refs WHERE project_id = $1 AND transaction_id = ANY($2) ORDER BY created_at, id");
+        let sql = format!(
+            "SELECT {REF_COLUMNS} FROM fb_external_refs WHERE project_id = $1 AND transaction_id = ANY($2) ORDER BY created_at, id"
+        );
         let rows: Vec<RefRow> = sqlx::query_as(&sql).bind(project_id).bind(ids).fetch_all(&self.pool).await?;
         rows.into_iter().map(RefRow::into_domain).collect()
     }
@@ -423,7 +431,11 @@ impl TransactionRepository for PostgresTransactionRepository {
         let sql = format!(
             "SELECT {COLUMNS} FROM fb_transactions WHERE {FILTER} ORDER BY occurred_on DESC, created_at DESC, id LIMIT $11 OFFSET $12"
         );
-        let rows: Vec<Row> = bind_filter(sqlx::query_as(&sql), project_id, filter).bind(limit).bind(offset).fetch_all(&self.pool).await?;
+        let rows: Vec<Row> = bind_filter(sqlx::query_as(&sql), project_id, filter)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
         self.with_postings(rows).await
     }
 
@@ -459,7 +471,11 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool> {
-        let res = sqlx::query("DELETE FROM fb_transactions WHERE project_id = $1 AND id = $2").bind(project_id).bind(id).execute(&self.pool).await?;
+        let res = sqlx::query("DELETE FROM fb_transactions WHERE project_id = $1 AND id = $2")
+            .bind(project_id)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -475,7 +491,12 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(to)
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows.into_iter().map(|(transaction_id, occurred_on, currency, tx_kind, category_code, amount, created_by)| fact(transaction_id, occurred_on, currency, &tx_kind, category_code, amount, created_by)).collect())
+        Ok(rows
+            .into_iter()
+            .map(|(transaction_id, occurred_on, currency, tx_kind, category_code, amount, created_by)| {
+                fact(transaction_id, occurred_on, currency, &tx_kind, category_code, amount, created_by)
+            })
+            .collect())
     }
 
     async fn exchange(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<ExchangeLine>> {
@@ -493,12 +514,20 @@ impl TransactionRepository for PostgresTransactionRepository {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|(transaction_id, occurred_on, currency, amount, created_by)| ExchangeLine { transaction_id, occurred_on, currency, amount, created_by })
+            .map(|(transaction_id, occurred_on, currency, amount, created_by)| ExchangeLine {
+                transaction_id,
+                occurred_on,
+                currency,
+                amount,
+                created_by,
+            })
             .collect())
     }
 
     async fn payments(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<Payment>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_transactions WHERE project_id = $1 AND plan_id IS NOT NULL AND plan_date BETWEEN $2 AND $3");
+        let sql = format!(
+            "SELECT {COLUMNS} FROM fb_transactions WHERE project_id = $1 AND plan_id IS NOT NULL AND plan_date BETWEEN $2 AND $3"
+        );
         let rows: Vec<Row> = sqlx::query_as(&sql).bind(project_id).bind(from).bind(to).fetch_all(&self.pool).await?;
         Ok(self
             .with_postings(rows)
@@ -506,7 +535,14 @@ impl TransactionRepository for PostgresTransactionRepository {
             .into_iter()
             .filter_map(|t| {
                 let (plan_id, plan_date) = t.plan?;
-                Some(Payment { plan_id, plan_date, transaction_id: t.id, occurred_on: t.occurred_on, amount: t.total(), currency: t.currency().to_string() })
+                Some(Payment {
+                    plan_id,
+                    plan_date,
+                    transaction_id: t.id,
+                    occurred_on: t.occurred_on,
+                    amount: t.total(),
+                    currency: t.currency().to_string(),
+                })
             })
             .collect())
     }
@@ -563,14 +599,21 @@ impl TransactionRepository for PostgresTransactionRepository {
             "SELECT {COLUMNS} FROM fb_transactions WHERE project_id = $1 AND tx_kind = 'OPENING' AND {} ORDER BY occurred_on LIMIT 1",
             touches!("2")
         );
-        let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(account_code).fetch_optional(&self.pool).await?;
+        let row: Option<Row> =
+            sqlx::query_as(&sql).bind(project_id).bind(account_code).fetch_optional(&self.pool).await?;
         match row {
             None => Ok(None),
             Some(r) => Ok(self.with_postings(vec![r]).await?.pop()),
         }
     }
 
-    async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate) -> AppResult<QuickStats> {
+    async fn quick_stats(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        kind: &str,
+        since: NaiveDate,
+    ) -> AppResult<QuickStats> {
         // Переводы и начальные остатки не сбивают «последний счёт» быстрого расхода.
         let last: Option<(String,)> = sqlx::query_as(
             "SELECT p.ref_code FROM fb_transactions t JOIN fb_postings p ON p.transaction_id = t.id \
@@ -603,19 +646,28 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(since)
         .fetch_all(&self.pool)
         .await?;
-        Ok(QuickStats { last_account: last.map(|r| r.0), frequent: frequent.into_iter().map(|r| r.0).collect(), places: places.into_iter().map(|r| r.0).collect() })
+        Ok(QuickStats {
+            last_account: last.map(|r| r.0),
+            frequent: frequent.into_iter().map(|r| r.0).collect(),
+            places: places.into_iter().map(|r| r.0).collect(),
+        })
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
         // Проводки удаляются каскадом (FK внутри фичи); у связей с внешними записями FK нет — отдельно.
         let mut tx = self.pool.begin().await?;
         sqlx::query("DELETE FROM fb_external_refs WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
-        let r = sqlx::query("DELETE FROM fb_transactions WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
+        let r =
+            sqlx::query("DELETE FROM fb_transactions WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(r.rows_affected())
     }
 
-    async fn count_first(&self, from: chrono::DateTime<chrono::Utc>, to: chrono::DateTime<chrono::Utc>) -> AppResult<i64> {
+    async fn count_first(
+        &self,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<i64> {
         let (n,): (i64,) = sqlx::query_as(
             "SELECT count(*) FROM (SELECT created_by, min(created_at) AS first FROM fb_transactions \
              WHERE tx_kind <> 'OPENING' GROUP BY created_by) x WHERE x.first >= $1 AND x.first < $2",
@@ -629,7 +681,15 @@ impl TransactionRepository for PostgresTransactionRepository {
 }
 
 /// Проводка на категорию → факт бюджета: доходы с плюсом, возвраты с минусом.
-pub(crate) fn fact(transaction_id: Uuid, occurred_on: NaiveDate, currency: String, tx_kind: &str, category_code: String, amount: Decimal, created_by: Uuid) -> FactLine {
+pub(crate) fn fact(
+    transaction_id: Uuid,
+    occurred_on: NaiveDate,
+    currency: String,
+    tx_kind: &str,
+    category_code: String,
+    amount: Decimal,
+    created_by: Uuid,
+) -> FactLine {
     let income = tx_kind == TxKind::Income.as_str();
     FactLine {
         transaction_id,

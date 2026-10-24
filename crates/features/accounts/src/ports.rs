@@ -41,7 +41,14 @@ pub trait Ledger: Send + Sync {
     /// Начальный остаток счёта и его дата.
     async fn opening(&self, project_id: Uuid, code: &str) -> AppResult<Option<(Decimal, NaiveDate)>>;
     /// Задать начальный остаток (нулевой — удалить).
-    async fn set_opening(&self, project_id: Uuid, user_id: Uuid, code: &str, amount: Decimal, date: NaiveDate) -> AppResult<()>;
+    async fn set_opening(
+        &self,
+        project_id: Uuid,
+        user_id: Uuid,
+        code: &str,
+        amount: Decimal,
+        date: NaiveDate,
+    ) -> AppResult<()>;
     /// Есть ли по счёту проводки.
     async fn has_postings(&self, project_id: Uuid, code: &str) -> AppResult<bool>;
 }
@@ -55,4 +62,3 @@ pub trait CurrenciesLookup: Send + Sync {
         Ok(Vec::new())
     }
 }
-
