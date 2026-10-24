@@ -17,7 +17,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use ::mcp::{
-    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Person, Place, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem,
+    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Person, Place, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem, TxRef,
 };
 
 pub struct LedgerAdapter(pub Arc<::transactions::Service>);
@@ -63,6 +63,7 @@ fn tx_from(d: ::transactions::dto::TransactionDto) -> Tx {
         place_code: d.place_code,
         for_person_code: d.for_person_code,
         recipients_differ: d.recipients_differ,
+        external_refs: d.external_refs.into_iter().map(|r| TxRef { provider: r.provider, link: r.link, received_at: r.received_at, created_at: r.created_at }).collect(),
     }
 }
 
@@ -111,6 +112,8 @@ fn input_from(d: TxDraft) -> ::transactions::dto::TransactionInput {
         plan_date: d.plan_date,
         place_code: d.place_code,
         for_person_code: recipient_into(d.for_person),
+        // Через MCP связи с внешними записями не создаются.
+        external_ref: None,
     }
 }
 
@@ -139,7 +142,17 @@ impl ::mcp::Ledger for LedgerAdapter {
 
     async fn list(&self, project_id: Uuid, filter: TxFilter, limit: i64, offset: i64) -> AppResult<(Vec<Tx>, i64)> {
         let size = limit.max(1);
-        let query = ::transactions::dto::ListQuery { from: filter.from, to: filter.to, account_code: filter.account_code, tx_kind: filter.kind, created_by: None, untranslated: None, place_code: filter.place_code, for_person_code: recipient_into(filter.for_person) };
+        let query = ::transactions::dto::ListQuery {
+            from: filter.from,
+            to: filter.to,
+            account_code: filter.account_code,
+            tx_kind: filter.kind,
+            created_by: None,
+            untranslated: None,
+            place_code: filter.place_code,
+            for_person_code: recipient_into(filter.for_person),
+            external_provider: filter.external_provider,
+        };
         let page = self.0.list(project_id, query, Pagination { page: offset / size, size }).await?;
         Ok((page.content.into_iter().map(tx_from).collect(), page.page.total_elements))
     }

@@ -47,7 +47,7 @@
 | 1 | Время и часовые пояса (Ц6 / #21): `occurred_at`, `occurred_tz`, пояс пользователя, лента по времени | 1 |
 | 2 | Позиции чека: таблица, правила суммы, «× цена», скидка на чек, правка по `id`, лента по категориям | 1 |
 | 3 | Курсы со временем и источником, курсы из переводов, округление по `minor_units` | 1 |
-| 4 | Дубли, `client_id`, `external_ref`, пакетное создание, лимит тела 2 МБ | 1 |
+| 4 | Дубли, `client_id`, связи с внешними записями (сделаны — `docs/external-refs.md`), пакетное создание, лимит тела 2 МБ | 1 |
 | 5 | Справочник мест: поле в карточке, поиск мест в быстром вводе | 2 |
 | 6 | Справочник людей и «Для кого» | 3 |
 
@@ -184,11 +184,13 @@
 | `account_code` | `TEXT NULL` | 2 | Расход и доход — счёт; перевод — счёт списания; начальный остаток — счёт. Удалена миграцией `double_entry`, возвращается как служебная |
 | `total` | `NUMERIC(18,4) NULL` | 2 | Сумма позиций; у перевода — списано всего |
 | `refund` | `BOOLEAN NOT NULL DEFAULT false` | 2 | **Решение:** хранится, чтобы возврат не считался дублем покупки. Сейчас выводится из знака проводки |
-| `external_ref` | `TEXT NULL` | 4 | Номер операции банка, id SMS, строки выписки |
 | `place_code` | `TEXT NULL` | 5 | Место; у перевода всегда пусто |
 
-Индексы: `(project_id, account_code, total, occurred_on)` (шаг 4) и уникальный
-`(project_id, account_code, external_ref) WHERE external_ref IS NOT NULL` (шаг 4).
+Индекс: `(project_id, account_code, total, occurred_on)` (шаг 4).
+
+**Решение (docs/external-refs.md):** колонки `external_ref` в шапке нет. Связи с внешними записями (SMS банка, позже
+строки выписки) — таблица `fb_external_refs` с ключом `(project_id, provider, external_id)`, без счёта: у одной
+операции бывает несколько записей (SMS списания и зачисления у перевода), а связь переживает удаление операции.
 
 «Для кого» и `discount_total` в шапке **не хранятся** (раздел 5.6).
 
@@ -223,6 +225,7 @@
 | `fb_users` | `timezone TEXT NOT NULL DEFAULT 'UTC'`, `timezone_auto BOOLEAN NOT NULL DEFAULT true` | 1 |
 | `fb_rates` | `effective_at TIMESTAMPTZ`, `source TEXT` (`transfer`/`reference`), `source_name TEXT NULL`, `transaction_id UUID NULL`; уникальность `(project_id, currency_code, effective_at, source)` и `(transaction_id)`. `rate_date` остаётся до следующего релиза | 3 |
 | `fb_client_ids` | новая: `project_id`, `client_id`, `body_hash`, `transaction_id NULL` (`ON DELETE SET NULL`), `created_at`; ключ `(project_id, client_id)` | 4 |
+| `fb_external_refs` | новая, сделана: связи операций с внешними записями, ключ `(project_id, provider, external_id)` — `docs/external-refs.md` | 4 |
 | `fb_projects` | `duplicate_window_minutes INTEGER NOT NULL DEFAULT 10`, от 0 до 1440 | 4 |
 | `fb_places` | новая, раздел 5.8 | 5 |
 | `fb_people` | новая, раздел 5.9 | 6 |
@@ -315,7 +318,8 @@
 - **Точный дубль** — операция не создаётся, возвращается существующая (`status: existing`):
   - `client_id` (уникален в проекте): тот же хеш тела → существующая операция; другой хеш или операция удалена →
     `409 client_id_conflict`;
-  - `external_ref` по `(project_id, account_code, external_ref)`; у перевода — счёт списания.
+  - внешняя запись (`external_ref` в запросе) — по `(project_id, provider, external_id)` в `fb_external_refs`;
+    операция по ней удалена → `409 EXTERNAL_REF_DELETED`. Сделано, `docs/external-refs.md`.
 - **Возможный дубль** — совпало всё:
   - тот же тип и признак возврата (**Решение**, в спеке не было);
   - тот же счёт (у перевода — оба);
@@ -330,8 +334,8 @@
   - `skip` — пропускаются только дубли, остальное сохраняется;
   - `allow` — сохраняется всё;
   - `allow_duplicate: true` у операции — сохранить её при любом режиме.
-- **`external_ref` через MCP:** Claude заполняет его со скриншота банка или из SMS, если номер виден; иначе поле
-  пустое.
+- **Внешние записи через MCP** не создаются (`docs/external-refs.md`, раздел 4): операции из SMS банка Claude видит
+  по полю `sms` и дополняет их, а не создаёт вторую.
 
 ### 5.6. Правка
 
@@ -345,7 +349,8 @@
 
 ### 5.7. Перевод
 
-- Время, пояс и `external_ref` — как у расхода; `account_code` — счёт списания, `total` — списано всего.
+- Время и пояс — как у расхода; `account_code` — счёт списания, `total` — списано всего. Внешних записей у
+  перевода может быть две (SMS списания и зачисления) — обе в `fb_external_refs`.
 - **Решение:** у перевода нет позиций, места, получателя и скидки на чек.
 - Комиссия — проводка без `item_id`. Комиссия, которую банк списал отдельной операцией, — отдельный расход.
 
@@ -418,8 +423,8 @@
 
 | Что | Шаг | Изменение |
 | --- | --- | --- |
-| `POST /api/transactions`, `add_expense`, `add_income` | 1, 2, 4–6 | `occurred_at`, `occurred_tz`, `items` (поля позиции), `discount_total`, `external_ref`, `client_id`, `allow_duplicate`, `place`, `for`. Внутри — тот же путь, что пакет из одной операции |
-| `add_transfer` | 1, 4 | время, `external_ref` |
+| `POST /api/transactions`, `add_expense`, `add_income` | 1, 2, 4–6 | `occurred_at`, `occurred_tz`, `items` (поля позиции), `discount_total`, `external_ref` (только REST, сделано — `docs/external-refs.md`), `client_id`, `allow_duplicate`, `place`, `for`. Внутри — тот же путь, что пакет из одной операции |
+| `add_transfer` | 1, 4 | время |
 | `PUT /api/transactions/{id}`, `update_transaction` | 1, 2 | позиции по `id`, `remove_item_ids`, время |
 | `GET /api/transactions`, `list_transactions` | 2, 4–6 | позиции в ответе; фильтры `place`, `for` (`all` — только «Для всех»); пагинация `offset/size` (#4) |
 | `POST /api/transactions/batch`, `add_transactions` | 4 | до 100 операций любых типов и 1 000 позиций; `atomic`, `on_duplicate` |

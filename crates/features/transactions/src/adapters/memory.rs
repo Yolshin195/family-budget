@@ -9,15 +9,31 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::adapters::postgres::fact;
-use crate::domain::{Posting, RefKind, Transaction, TxKind, check_balanced, system};
+use crate::domain::{ExternalRef, Posting, RefKind, Transaction, TxKind, check_balanced, system};
 use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
 #[derive(Default)]
 pub struct InMemoryTransactionRepository {
     rows: Mutex<Vec<Transaction>>,
+    /// Связи с внешними записями: как в БД, без внешнего ключа на операции. Блокируется после `rows`.
+    refs: Mutex<Vec<ExternalRef>>,
 }
 
-fn matches(r: &Transaction, project_id: Uuid, f: &Filter) -> bool {
+impl InMemoryTransactionRepository {
+    fn refs(&self) -> Vec<ExternalRef> {
+        self.refs.lock().unwrap().clone()
+    }
+}
+
+/// Уникальный ключ связи `(project_id, provider, external_id)`.
+fn check_ref(refs: &[ExternalRef], r: &ExternalRef) -> AppResult<()> {
+    if refs.iter().any(|x| x.project_id == r.project_id && x.provider == r.provider && x.external_id == r.external_id) {
+        return Err(AppError::Conflict(taken::EXTERNAL_REF.into()));
+    }
+    Ok(())
+}
+
+fn matches(r: &Transaction, project_id: Uuid, f: &Filter, refs: &[ExternalRef]) -> bool {
     r.project_id == project_id
         && f.from.is_none_or(|from| r.occurred_on >= from)
         && f.to.is_none_or(|to| r.occurred_on <= to)
@@ -27,6 +43,7 @@ fn matches(r: &Transaction, project_id: Uuid, f: &Filter) -> bool {
         && f.untranslated.is_none_or(|l| r.description.localized().is_some_and(|d| d.missing(l)))
         && f.place_code.as_deref().is_none_or(|p| r.place_code.as_deref() == Some(p))
         && f.for_person.as_ref().is_none_or(|who| r.items.iter().any(|x| x.for_person == *who))
+        && f.external_provider.as_deref().is_none_or(|p| refs.iter().any(|x| x.project_id == r.project_id && x.transaction_id == r.id && x.provider == p))
 }
 
 /// Проводка относится к позиции получателя из фильтра (без фильтра — любая).
@@ -63,6 +80,34 @@ impl TransactionRepository for InMemoryTransactionRepository {
         Ok(())
     }
 
+    async fn insert_with_ref(&self, item: &Transaction, r: &ExternalRef) -> AppResult<()> {
+        balanced(item)?;
+        let mut rows = self.rows.lock().unwrap();
+        let mut refs = self.refs.lock().unwrap();
+        check_unique(&rows, item)?;
+        check_ref(&refs, r)?;
+        rows.push(item.clone());
+        refs.push(r.clone());
+        Ok(())
+    }
+
+    async fn insert_ref(&self, r: &ExternalRef) -> AppResult<()> {
+        let mut refs = self.refs.lock().unwrap();
+        check_ref(&refs, r)?;
+        refs.push(r.clone());
+        Ok(())
+    }
+
+    async fn find_ref(&self, project_id: Uuid, provider: &str, external_id: &str) -> AppResult<Option<ExternalRef>> {
+        Ok(self.refs().into_iter().find(|x| x.project_id == project_id && x.provider == provider && x.external_id == external_id))
+    }
+
+    async fn refs_of(&self, project_id: Uuid, ids: &[Uuid]) -> AppResult<Vec<ExternalRef>> {
+        let mut out: Vec<ExternalRef> = self.refs().into_iter().filter(|x| x.project_id == project_id && ids.contains(&x.transaction_id)).collect();
+        out.sort_by_key(|x| x.created_at);
+        Ok(out)
+    }
+
     async fn update(&self, item: &Transaction) -> AppResult<()> {
         balanced(item)?;
         let mut rows = self.rows.lock().unwrap();
@@ -77,21 +122,24 @@ impl TransactionRepository for InMemoryTransactionRepository {
     }
 
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>> {
+        let refs = self.refs();
         let rows = self.rows.lock().unwrap();
         // Новые сначала: при одной дате — позже добавленные.
-        let mut items: Vec<_> = rows.iter().enumerate().filter(|(_, r)| matches(r, project_id, filter)).collect();
+        let mut items: Vec<_> = rows.iter().enumerate().filter(|(_, r)| matches(r, project_id, filter, &refs)).collect();
         items.sort_by(|a, b| b.1.occurred_on.cmp(&a.1.occurred_on).then(b.0.cmp(&a.0)));
         Ok(items.into_iter().skip(offset as usize).take(limit as usize).map(|(_, r)| r.clone()).collect())
     }
 
     async fn count(&self, project_id: Uuid, filter: &Filter) -> AppResult<i64> {
-        Ok(self.rows.lock().unwrap().iter().filter(|r| matches(r, project_id, filter)).count() as i64)
+        let refs = self.refs();
+        Ok(self.rows.lock().unwrap().iter().filter(|r| matches(r, project_id, filter, &refs)).count() as i64)
     }
 
     async fn category_totals(&self, project_id: Uuid, filter: &Filter) -> AppResult<Vec<(String, Decimal, Decimal)>> {
+        let refs = self.refs();
         let rows = self.rows.lock().unwrap();
         let mut sums: Vec<(String, Decimal, Decimal)> = Vec::new();
-        for r in rows.iter().filter(|r| matches(r, project_id, filter)) {
+        for r in rows.iter().filter(|r| matches(r, project_id, filter, &refs)) {
             // С фильтром «Для кого» — только позиции этого получателя.
             let mine = |p: &&Posting| of_recipient(filter, r, p);
             for p in r.postings.iter().filter(|p| p.ref_kind == RefKind::Category).filter(mine) {
@@ -110,8 +158,9 @@ impl TransactionRepository for InMemoryTransactionRepository {
     }
 
     async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)> {
+        let refs = self.refs();
         let rows = self.rows.lock().unwrap();
-        let amounts = rows.iter().filter(|r| matches(r, project_id, filter)).map(|r| r.amount_on(account));
+        let amounts = rows.iter().filter(|r| matches(r, project_id, filter, &refs)).map(|r| r.amount_on(account));
         Ok(amounts.fold((Decimal::ZERO, Decimal::ZERO), |(i, o), v| if v > Decimal::ZERO { (i + v, o) } else { (i, o + v) }))
     }
 
@@ -235,6 +284,7 @@ impl TransactionRepository for InMemoryTransactionRepository {
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
         let mut rows = self.rows.lock().unwrap();
+        self.refs.lock().unwrap().retain(|x| x.project_id != project_id);
         let n = rows.len();
         rows.retain(|r| r.project_id != project_id);
         Ok((n - rows.len()) as u64)

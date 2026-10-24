@@ -16,7 +16,7 @@ use kernel::testing::TestDb;
 
 use crate::adapters::memory::InMemoryTransactionRepository;
 use crate::adapters::postgres::PostgresTransactionRepository;
-use crate::dto::{ItemInput, LineDto, ListQuery, TransactionInput, TranslationInput};
+use crate::dto::{ExternalRefInput, ItemInput, LineDto, ListQuery, TransactionInput, TranslationInput};
 use crate::domain::{AccountCurrency, Description, Draft, ItemDraft, ItemsDraft, Transaction, TransactionData};
 use crate::ports::{
     AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, Deps, PeopleLookup, PersonInfo, PlaceInfo, PlacesLookup, PlanOccurrence,
@@ -516,7 +516,7 @@ fn templates_are_translated() {
     let dynamic = [
         "balance_start", "balance_end", "inflow", "outflow", "income_total", "expense_total", "net", "transfer", "opening", "refund", "rate",
         "fee_short", "kinds.EXPENSE", "kinds.INCOME", "kinds.TRANSFER", "kinds.OPENING", "sys.EXCHANGE", "sys.OPENING", "reconcile_done",
-        "reconcile_same", "reconcile_desc", "nav_accounts",
+        "reconcile_same", "reconcile_desc", "nav_accounts", "tx.sms_created", "tx.sms_matched",
     ];
     let absent: Vec<&str> = dynamic.into_iter().filter(|k| crate::i18n::dict(k).is_none()).collect();
     assert!(absent.is_empty(), "нет перевода для ключей: {absent:?}");
@@ -968,4 +968,312 @@ on_each_repo! {
         assert_eq!(st.running.first().map(|r| r.0), Some(newest));
         assert_eq!(st.running.last().map(|r| r.1), Some(d("650")), "после самой старой: 1000 − 350");
     }
+}
+
+// ---------------------------------------------------------------- связи с внешними записями (docs/external-refs.md, раздел 6)
+
+/// SMS банка с id `guid`, пришло 03.10 в 10:51 по Бангкоку.
+fn sms(guid: &str) -> ExternalRefInput {
+    ExternalRefInput { provider: "imessage".into(), external_id: guid.into(), received_at: Some("2026-10-03T10:51:07+07:00".into()) }
+}
+
+/// Расход из SMS: сумма на «Еду» — заглушка категории до уточнения.
+fn from_sms(guid: &str, amount: &str) -> TransactionInput {
+    TransactionInput { external_ref: Some(sms(guid)), ..receipt(&[("food", amount)]) }
+}
+
+fn conflict_code(e: AppError) -> &'static str {
+    match e {
+        AppError::ConflictWith(p) => p.code,
+        other => panic!("ожидался конфликт с кодом, а пришёл {other:?}"),
+    }
+}
+
+async fn count_all(svc: &TransactionService, p: Uuid) -> i64 {
+    svc.list(p, ListQuery::default(), Pagination { page: 0, size: 50 }).await.unwrap().page.total_elements
+}
+
+on_each_repo! {
+    /// Т1–Т4: запись создаёт операцию со связью CREATED; повтор (даже с другой суммой) возвращает её же; тот же id у
+    /// другого источника и в другом проекте — новые операции.
+    async fn external_ref_creates_once(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let (t, created) = svc.create_once(p, u, from_sms("p:0/A", "250")).await.unwrap();
+        assert!(created);
+        assert_eq!(t.external_refs.len(), 1);
+        let r = &t.external_refs[0];
+        assert_eq!((r.provider.as_str(), r.external_id.as_str(), r.link.as_str(), r.transaction_id), ("imessage", "p:0/A", "CREATED", t.id));
+        assert_eq!(r.received_at.map(|x| x.to_rfc3339()), Some("2026-10-03T03:51:07+00:00".into()));
+        assert_eq!(svc.get(p, t.id).await.unwrap().external_refs, t.external_refs, "связь читается из хранилища такой же");
+
+        let (again, created) = svc.create_once(p, u, from_sms(" p:0/A ", "999")).await.unwrap();
+        assert!(!created);
+        assert_eq!((again.id, again.total), (t.id, d("250")), "тело повтора не сравнивается — прежняя операция");
+        assert_eq!(count_all(svc, p).await, 1);
+
+        let other_source = TransactionInput { external_ref: Some(ExternalRefInput { provider: "telegram".into(), ..sms("p:0/A") }), ..receipt(&[("food", "250")]) };
+        let (t3, created) = svc.create_once(p, u, other_source).await.unwrap();
+        assert!(created && t3.id != t.id, "тот же id у другого источника — другая запись");
+        let (t4, created) = svc.create_once(Uuid::new_v4(), u, from_sms("p:0/A", "250")).await.unwrap();
+        assert!(created && t4.id != t.id, "проекты не видят связей друг друга");
+        assert_eq!(count_all(svc, p).await, 2);
+    }
+}
+
+on_each_repo! {
+    /// Т5, Т6, Т13: удалённую операцию запись не создаёт снова; «Отменить» возвращает её, и повтор снова отдаёт её же;
+    /// поиск связи знает, есть ли операция.
+    async fn deleted_transaction_is_not_created_again(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let t = svc.create(p, u, from_sms("g1", "100")).await.unwrap();
+        assert!(svc.find_ref(p, "IMESSAGE", " g1 ").await.unwrap().transaction_exists);
+
+        let token = svc.delete_with_undo(p, t.id).await.unwrap();
+        let found = svc.find_ref(p, "imessage", "g1").await.unwrap();
+        assert_eq!((found.external_ref.transaction_id, found.transaction_exists), (t.id, false));
+        assert_eq!(conflict_code(svc.create_once(p, u, from_sms("g1", "100")).await.unwrap_err()), "EXTERNAL_REF_DELETED");
+        assert_eq!(count_all(svc, p).await, 0);
+
+        let back = svc.undo_delete(p, token).await.unwrap();
+        assert_eq!(back.external_refs.len(), 1, "после «Отменить» связь снова указывает на операцию");
+        let (again, created) = svc.create_once(p, u, from_sms("g1", "100")).await.unwrap();
+        assert_eq!((again.id, created), (t.id, false));
+
+        svc.delete(p, t.id).await.unwrap();
+        assert_eq!(conflict_code(svc.create_once(p, u, from_sms("g1", "1")).await.unwrap_err()), "EXTERNAL_REF_DELETED", "DELETE тоже оставляет связь");
+        assert!(matches!(svc.find_ref(p, "imessage", "nope").await.unwrap_err(), AppError::NotFound(_)));
+        assert_eq!(problem(svc.find_ref(p, "", "g1").await.unwrap_err()).1, "provider");
+        assert_eq!(problem(svc.find_ref(p, "imessage", " ").await.unwrap_err()).1, "external_id");
+    }
+}
+
+on_each_repo! {
+    /// Т7 и проверка полей: ошибка операции или записи — ни операции, ни связи; начальный остаток — без связей.
+    async fn invalid_request_leaves_no_ref(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let bad = TransactionInput { external_ref: Some(sms("g7")), ..receipt(&[("nope", "10")]) };
+        assert_eq!(problem(svc.create_once(p, u, bad).await.unwrap_err()), ("NOT_FOUND", "items[1].category_code".into()));
+        assert!(matches!(svc.find_ref(p, "imessage", "g7").await.unwrap_err(), AppError::NotFound(_)), "связь не записана");
+        assert_eq!(count_all(svc, p).await, 0);
+        assert!(svc.create_once(p, u, from_sms("g7", "10")).await.unwrap().1, "исправленный запрос создаёт операцию");
+
+        let with = |r: ExternalRefInput| TransactionInput { external_ref: Some(r), ..receipt(&[("food", "1")]) };
+        for (r, field) in [
+            (ExternalRefInput { provider: "bank sms".into(), ..sms("x") }, "external_ref.provider"),
+            (ExternalRefInput { external_id: "x".repeat(201), ..sms("x") }, "external_ref.external_id"),
+            (ExternalRefInput { received_at: Some("2026-10-03 10:51".into()), ..sms("x") }, "external_ref.received_at"),
+            (ExternalRefInput { received_at: Some("2026-10-03T10:51:07".into()), ..sms("x") }, "external_ref.received_at"),
+        ] {
+            assert_eq!(problem(svc.create_once(p, u, with(r)).await.unwrap_err()), ("VALIDATION", field.into()));
+        }
+        let opening = TransactionInput { amount: Some(d("100")), external_ref: Some(sms("g8")), ..input("OPENING", "card") };
+        assert_eq!(problem(svc.create_once(p, u, opening).await.unwrap_err()), ("VALIDATION", "external_ref".into()));
+        assert_eq!(count_all(svc, p).await, 1);
+    }
+}
+
+on_each_repo! {
+    /// Т8–Т10: прикрепление к ручной операции — MATCHED, повтор без новой связи, к другой операции — TAKEN;
+    /// к начальному остатку нельзя, чужая операция — 404; у перевода две связи (списание и зачисление).
+    async fn attach_to_existing(svc) {
+        let (p, u, anna) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let manual = svc.create(p, u, receipt(&[("cafe", "45")])).await.unwrap();
+        let (r, created) = svc.attach(p, anna, manual.id, sms("m1")).await.unwrap();
+        assert!(created);
+        assert_eq!((r.link.as_str(), r.transaction_id), ("MATCHED", manual.id));
+        let (again, created) = svc.attach(p, anna, manual.id, sms(" m1 ")).await.unwrap();
+        assert!(!created);
+        assert_eq!(again, r);
+        assert_eq!(svc.get(p, manual.id).await.unwrap().external_refs.len(), 1, "повтор не добавляет связь");
+        assert_eq!(svc.get(p, manual.id).await.unwrap().total, d("45"), "операция не меняется");
+
+        let other = svc.create(p, u, receipt(&[("food", "45")])).await.unwrap();
+        assert_eq!(conflict_code(svc.attach(p, u, other.id, sms("m1")).await.unwrap_err()), "EXTERNAL_REF_TAKEN");
+        let created_from = svc.create(p, u, from_sms("c1", "5")).await.unwrap();
+        assert_eq!(conflict_code(svc.attach(p, u, other.id, sms("c1")).await.unwrap_err()), "EXTERNAL_REF_TAKEN", "запись, создавшая другую операцию");
+        svc.delete(p, created_from.id).await.unwrap();
+        assert_eq!(conflict_code(svc.attach(p, u, other.id, sms("c1")).await.unwrap_err()), "EXTERNAL_REF_TAKEN", "в том числе удалённую");
+        // Ручной операции та же запись больше не создаст — POST с ней вернёт подтверждённую операцию.
+        let (same, created) = svc.create_once(p, u, from_sms("m1", "45")).await.unwrap();
+        assert_eq!((same.id, created), (manual.id, false));
+
+        svc.set_opening(p, u, "card", d("1000"), day(1)).await.unwrap();
+        let opening = svc.list(p, ListQuery { tx_kind: Some("OPENING".into()), ..Default::default() }, Pagination { page: 0, size: 5 }).await.unwrap().content.remove(0);
+        assert_eq!(problem(svc.attach(p, u, opening.id, sms("o1")).await.unwrap_err()), ("VALIDATION", String::new()));
+        assert!(matches!(svc.attach(Uuid::new_v4(), u, manual.id, sms("x1")).await.unwrap_err(), AppError::NotFound(_)), "чужая операция");
+        assert_eq!(problem(svc.attach(p, u, manual.id, ExternalRefInput { provider: String::new(), ..sms("x2") }).await.unwrap_err()).1, "provider");
+
+        let tr = svc.create(p, u, TransactionInput { external_ref: Some(sms("out")), ..transfer("card", "cash", "500", None, None) }).await.unwrap();
+        svc.attach(p, u, tr.id, sms("in")).await.unwrap();
+        let refs = svc.get(p, tr.id).await.unwrap().external_refs;
+        assert_eq!(refs.iter().map(|r| (r.external_id.as_str(), r.link.as_str())).collect::<Vec<_>>(), vec![("out", "CREATED"), ("in", "MATCHED")]);
+    }
+}
+
+on_each_repo! {
+    /// Т11, Т12: правка формой и по `id` связей не трогает; фильтр по источнику — только связанные операции.
+    async fn refs_survive_edits_and_filter_feed(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let t = svc.create(p, u, from_sms("e1", "120")).await.unwrap();
+        let form = TransactionInput { items: vec![ItemInput { id: Some(t.items[0].id), category_code: Some("cafe".into()), amount: Some(d("120")), ..Default::default() }], replace_items: true, ..input("EXPENSE", "card") };
+        assert_eq!(svc.update(p, t.id, form).await.unwrap().external_refs, t.external_refs, "правка формой");
+        let patch = TransactionInput { items: vec![ItemInput { id: Some(t.items[0].id), name: Some("Латте".into()), ..Default::default() }], ..input("EXPENSE", "card") };
+        assert_eq!(svc.update(p, t.id, patch).await.unwrap().external_refs, t.external_refs, "правка по id");
+        let tr = TranslationInput { description_ru: Some("Биг Си".into()), description_en: None, description_th: None };
+        assert_eq!(svc.translate(p, t.id, tr).await.unwrap().external_refs.len(), 1);
+
+        let manual = svc.create(p, u, receipt(&[("food", "10")])).await.unwrap();
+        let matched = svc.create(p, u, receipt(&[("food", "20")])).await.unwrap();
+        svc.attach(p, u, matched.id, sms("e2")).await.unwrap();
+        let other = svc.create(p, u, TransactionInput { external_ref: Some(ExternalRefInput { provider: "bank_statement".into(), ..sms("e3") }), ..receipt(&[("food", "30")]) }).await.unwrap();
+        let q = |provider: &str| ListQuery { external_provider: Some(provider.into()), ..Default::default() };
+        let page = svc.list(p, q(" IMESSAGE "), Pagination { page: 0, size: 50 }).await.unwrap();
+        let mut ids: Vec<Uuid> = page.content.iter().map(|x| x.id).collect();
+        ids.sort();
+        let mut want = vec![t.id, matched.id];
+        want.sort();
+        assert_eq!((ids, page.page.total_elements), (want, 2));
+        assert_eq!(svc.list(p, q("bank_statement"), Pagination { page: 0, size: 50 }).await.unwrap().content.iter().map(|x| x.id).collect::<Vec<_>>(), vec![other.id]);
+        let feed = svc.feed(p, q("imessage")).await.unwrap();
+        assert_eq!((feed.items.len(), feed.totals[0].2), (2, d("140")), "итоги — по отфильтрованным");
+        assert!(feed.items.iter().all(|x| !x.external_refs.is_empty()));
+        let all = svc.feed(p, ListQuery::default()).await.unwrap();
+        assert!(all.items.iter().find(|x| x.id == manual.id).unwrap().external_refs.is_empty());
+        assert_eq!(svc.list(p, q(""), Pagination { page: 0, size: 50 }).await.unwrap().page.total_elements, 4, "пустой параметр — без фильтра");
+    }
+}
+
+on_each_repo! {
+    /// Т14: удаление проекта стирает его связи, чужие остаются.
+    async fn purge_removes_project_refs(svc) {
+        let (mine, other, u) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let t = svc.create(mine, u, from_sms("same", "10")).await.unwrap();
+        svc.attach(mine, u, t.id, sms("second")).await.unwrap();
+        svc.create(other, u, from_sms("same", "10")).await.unwrap();
+        assert_eq!(svc.purge_project(mine).await.unwrap(), 1);
+        for guid in ["same", "second"] {
+            assert!(matches!(svc.find_ref(mine, "imessage", guid).await.unwrap_err(), AppError::NotFound(_)), "{guid}");
+        }
+        assert!(svc.find_ref(other, "imessage", "same").await.unwrap().transaction_exists);
+        assert!(svc.create_once(mine, u, from_sms("same", "10")).await.unwrap().1, "после удаления проекта запись снова создаёт операцию");
+    }
+}
+
+on_each_repo! {
+    /// Т15: два одинаковых запроса одновременно — одна операция, оба получают её.
+    async fn parallel_requests_create_one(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        for round in 0..5 {
+            let guid = format!("race-{round}");
+            let (a, b) = tokio::join!(svc.create_once(p, u, from_sms(&guid, "77")), svc.create_once(p, u, from_sms(&guid, "77")));
+            let (a, b) = (a.unwrap(), b.unwrap());
+            assert_eq!(a.0.id, b.0.id, "раунд {round}");
+            assert!(a.1 != b.1, "создал один из двух: {} {}", a.1, b.1);
+        }
+        assert_eq!(count_all(svc, p).await, 5);
+    }
+}
+
+on_each_repo! {
+    /// Т16, Б2: форма не присылает заметки — позиция с тем же `id` её сохраняет, новая позиция — без заметки.
+    async fn form_keeps_item_notes(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let t = svc.create(p, u, items(vec![ItemInput { note: Some("из чека: 2 × 60".into()), ..item("food", "120", None) }])).await.unwrap();
+        assert_eq!(t.items[0].note.as_deref(), Some("из чека: 2 × 60"));
+        let form = TransactionInput {
+            items: vec![ItemInput { id: Some(t.items[0].id), ..item("cafe", "125", None) }, item("home", "5", None)],
+            replace_items: true,
+            ..input("EXPENSE", "card")
+        };
+        let t = svc.update(p, t.id, form).await.unwrap();
+        assert_eq!(t.items.iter().map(|x| (x.category_code.as_str(), x.amount, x.note.as_deref())).collect::<Vec<_>>(), vec![("CAFE", d("125"), Some("из чека: 2 × 60")), ("HOME", d("5"), None)]);
+        let patch = TransactionInput { items: vec![ItemInput { id: Some(t.items[0].id), note: Some(String::new()), ..Default::default() }], ..input("EXPENSE", "card") };
+        assert_eq!(svc.update(p, t.id, patch).await.unwrap().items[0].note, None, "по id через API заметку можно стереть");
+    }
+}
+
+/// HTTP (2.2–2.4): 201 → 200 с тем же id → 409 `EXTERNAL_REF_DELETED`; прикрепление 201/200/409/404; поиск 200/404/422.
+#[tokio::test]
+async fn external_refs_over_http() {
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, StatusCode};
+    use serde_json::{Value, json};
+    use tower::ServiceExt;
+
+    let scope = kernel::auth::Scope { user_id: Uuid::new_v4(), project_id: Uuid::new_v4(), role: kernel::auth::Role::Editor };
+    let app = crate::adapters::http::router(Arc::new(service())).layer(axum::Extension(scope));
+    let call = |method: &str, uri: String, body: Option<Value>| {
+        let app = app.clone();
+        let req = Request::builder().method(method).uri(uri).header("content-type", "application/json");
+        let req = req.body(body.map(|b| Body::from(b.to_string())).unwrap_or_else(Body::empty)).unwrap();
+        async move {
+            let resp = app.oneshot(req).await.unwrap();
+            let status = resp.status();
+            let bytes = to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+            (status, serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null))
+        }
+    };
+    let expense = |guid: &str, amount: &str| {
+        json!({
+            "occurred_on": "2026-10-03", "tx_kind": "EXPENSE", "account_code": "CARD", "description_lang": "EN",
+            "items": [{"category_code": "FOOD", "amount": amount}],
+            "external_ref": {"provider": "imessage", "external_id": guid, "received_at": "2026-10-03T10:51:07+07:00"}
+        })
+    };
+    let (status, first) = call("POST", "/".into(), Some(expense("h1", "250"))).await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    assert_eq!(first["external_refs"][0]["link"], "CREATED");
+    assert_eq!(first["external_refs"][0]["received_at"], "2026-10-03T03:51:07Z");
+    let (status, again) = call("POST", "/".into(), Some(expense("h1", "999"))).await;
+    assert_eq!((status, &again["id"], &again["total"]), (StatusCode::OK, &first["id"], &first["total"]));
+    let id = first["id"].as_str().unwrap().to_string();
+
+    let (status, found) = call("GET", "/external-refs?provider=imessage&external_id=h1".into(), None).await;
+    assert_eq!((status, &found["transaction_id"], &found["transaction_exists"]), (StatusCode::OK, &first["id"], &json!(true)));
+    assert_eq!(call("GET", "/external-refs?provider=imessage&external_id=none".into(), None).await.0, StatusCode::NOT_FOUND);
+    let (status, e) = call("GET", "/external-refs?provider=imessage".into(), None).await;
+    assert_eq!((status, &e["field"]), (StatusCode::UNPROCESSABLE_ENTITY, &json!("external_id")));
+
+    let (status, list) = call("GET", "/?external_provider=imessage".into(), None).await;
+    assert_eq!((status, list["content"].as_array().map(Vec::len)), (StatusCode::OK, Some(1)));
+
+    // Прикрепление: к ручной операции 201, повтор 200, к другой 409, чужая операция 404, неверное поле 422.
+    let (_, manual) = call("POST", "/".into(), Some(json!({"occurred_on": "2026-10-03", "tx_kind": "EXPENSE", "account_code": "CARD", "description_lang": "EN", "items": [{"category_code": "CAFE", "amount": "45"}]}))).await;
+    let manual_id = manual["id"].as_str().unwrap().to_string();
+    assert_eq!(manual["external_refs"], json!([]), "поле всегда есть");
+    let body = json!({"provider": "imessage", "external_id": "h2"});
+    let (status, r) = call("POST", format!("/{manual_id}/external-refs"), Some(body.clone())).await;
+    assert_eq!((status, &r["link"]), (StatusCode::CREATED, &json!("MATCHED")));
+    assert_eq!(call("POST", format!("/{manual_id}/external-refs"), Some(body.clone())).await.0, StatusCode::OK);
+    let (status, e) = call("POST", format!("/{id}/external-refs"), Some(body)).await;
+    assert_eq!((status, &e["error"]), (StatusCode::CONFLICT, &json!("EXTERNAL_REF_TAKEN")));
+    assert!(e["message"].as_str().is_some_and(|m| !m.is_empty()));
+    assert_eq!(call("POST", format!("/{}/external-refs", Uuid::new_v4()), Some(json!({"provider": "imessage", "external_id": "h3"}))).await.0, StatusCode::NOT_FOUND);
+    let (status, e) = call("POST", format!("/{manual_id}/external-refs"), Some(json!({"provider": "Bad Name", "external_id": "h3"}))).await;
+    assert_eq!((status, &e["error"], &e["field"]), (StatusCode::UNPROCESSABLE_ENTITY, &json!("VALIDATION"), &json!("provider")));
+
+    // Удалить → повтор с той же записью 409 с кодом, полем и текстом.
+    assert_eq!(call("DELETE", format!("/{id}"), None).await.0, StatusCode::NO_CONTENT);
+    let (status, e) = call("POST", "/".into(), Some(expense("h1", "250"))).await;
+    assert_eq!((status, &e["error"], &e["field"]), (StatusCode::CONFLICT, &json!("EXTERNAL_REF_DELETED"), &json!("external_ref")));
+    assert_eq!(e["message"], crate::i18n::dict("err.external_ref_deleted").unwrap().0);
+    let (_, found) = call("GET", "/external-refs?provider=imessage&external_id=h1".into(), None).await;
+    assert_eq!(found["transaction_exists"], json!(false));
+}
+
+/// Контракты 2.1–2.5 описаны в OpenAPI (`/api/docs`).
+#[test]
+fn external_refs_are_in_openapi() {
+    use utoipa::OpenApi;
+    let doc = serde_json::to_value(crate::adapters::http::ApiDoc::openapi()).unwrap();
+    for path in ["/api/transactions/{id}/external-refs", "/api/transactions/external-refs"] {
+        assert!(doc["paths"][path].is_object(), "нет пути {path}");
+    }
+    let schemas = &doc["components"]["schemas"];
+    for name in ["ExternalRefInput", "ExternalRefDto", "ExternalRefFoundDto"] {
+        assert!(schemas[name].is_object(), "нет схемы {name}");
+    }
+    assert!(schemas["TransactionInput"]["properties"]["external_ref"].is_object());
+    assert!(schemas["TransactionDto"]["properties"]["external_refs"].is_object());
+    assert!(doc["paths"]["/api/transactions"]["post"]["responses"]["200"].is_object(), "повтор — 200");
 }

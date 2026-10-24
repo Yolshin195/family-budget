@@ -39,7 +39,16 @@
 остатки лимитов, курсы счетов к базовой валюте. Сохранение — обычный `POST /api/transactions` (в т. ч. `TRANSFER`).
 
 REST (`/api/transactions`): GET/POST `/`, GET `/quick-defaults`, GET `/balances?date`, GET/PUT/DELETE `/{id}`,
-PUT `/{id}/translation`. Фильтр списка: `from`, `to`, `account_code` (выписка), `tx_kind`, `created_by`, `untranslated`.
+PUT `/{id}/translation`, POST `/{id}/external-refs`, GET `/external-refs?provider&external_id`. Фильтр списка: `from`,
+`to`, `account_code` (выписка), `tx_kind`, `created_by`, `untranslated`, `place_code`, `for_person_code`,
+`external_provider`.
+
+**Связи с внешними записями** (`fb_external_refs`, docs/external-refs.md): ключ `(project_id, provider, external_id)` —
+одна запись (SMS банка: `imessage`, `message.guid`) даёт не больше одной операции. `POST /` с `external_ref` идемпотентен:
+повтор — `200` и прежняя операция, операция удалена — `409 EXTERNAL_REF_DELETED`; связь `CREATED` пишется вместе с
+операцией одной SQL-транзакцией. `POST /{id}/external-refs` — связь `MATCHED`, занята другой операцией —
+`409 EXTERNAL_REF_TAKEN`. Внешнего ключа на операции нет: связь переживает удаление (и «Отменить» возвращает её),
+правка операции её не видит, `purge` стирает. В ленте и карточке — значок «SMS» с подсказкой.
 Страницы (`/transactions`): список за месяц (итоги «Доходы / Расходы» — только по категориям; перевод — одна строка
 «откуда → куда» с курсом и комиссией), фильтр по счёту — выписка с остатком на начало и нарастающим остатком;
 форма «Расход | Доход | Перевод» с возвратом, комиссией и курсом, позициями («× цена» — количество, единица, цена,

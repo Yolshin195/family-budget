@@ -1,11 +1,12 @@
 //! Доменная модель «Транзакции»: двойная запись. Транзакция — шапка + проводки; сумма проводок по
 //! каждой валюте равна нулю (ТЗ, раздел 4). У расхода и дохода — позиции чека: количество × цена − скидка
 //! = сумма позиции, на каждую позицию одна проводка на категорию (docs/group-1.md, разделы 4.2 и 5.1).
+//! Связи с внешними записями (SMS банка) — [`ExternalRef`], docs/external-refs.md.
 //! Никаких sqlx/axum/serde.
 
 use std::collections::BTreeMap;
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, SubsecRound, Utc};
 use kernel::error::{Problem, codes};
 use kernel::i18n::{Lang, Localized};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -452,7 +453,8 @@ fn money(i: usize, d: &ItemDraft, old: Option<&Item>, cur: &AccountCurrency) -> 
 
 /// Позиция из черновика; `i` — её номер в чеке после правки, `old` — записанная позиция с тем же `id`.
 /// `patch` — правка по `id` через API: пустые поля остаются прежними. Иначе черновик — вся строка формы:
-/// пустое название — без названия, пустая категория — ошибка.
+/// пустое название — без названия, пустая категория — ошибка. Заметки в форме нет: не присланная заметка позиции
+/// с `id` остаётся прежней и там (docs/external-refs.md, Б2).
 fn item(i: usize, d: ItemDraft, old: Option<&Item>, patch: bool, cur: &AccountCurrency) -> Result<Item, Problem> {
     let field = format!("items[{i}].category_code");
     let base = if patch { old } else { None };
@@ -481,7 +483,7 @@ fn item(i: usize, d: ItemDraft, old: Option<&Item>, patch: bool, cur: &AccountCu
         price,
         discount,
         amount,
-        note: keep(d.note, base.map(|o| &o.note)),
+        note: keep(d.note, old.map(|o| &o.note)),
         // Получателя выбирает `resolve_items`: он зависит от шапки и остальных позиций.
         for_person: None,
     })
@@ -822,6 +824,100 @@ impl Transaction {
     }
 }
 
+/// Источники внешних записей. Список не закрыт: формат кода проверяет [`RefDraft::new`] (и `CHECK` в БД).
+pub mod provider {
+    /// SMS и iMessage из приложения «Сообщения» на Mac (`family-messages-sync`); id — `message.guid` из `chat.db`.
+    pub const IMESSAGE: &str = "imessage";
+}
+
+/// Как внешняя запись связана с операцией.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefLink {
+    /// Запись создала операцию (`POST /api/transactions` с `external_ref`).
+    Created,
+    /// Запись прикреплена к уже существующей операции.
+    Matched,
+}
+
+impl RefLink {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RefLink::Created => "CREATED",
+            RefLink::Matched => "MATCHED",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "CREATED" => Some(RefLink::Created),
+            "MATCHED" => Some(RefLink::Matched),
+            _ => None,
+        }
+    }
+}
+
+/// Связь операции с записью внешней системы (SMS банка). Ключ — `(project_id, provider, external_id)`: одна запись —
+/// одна связь. Переживает правку и удаление операции: `transaction_id` может указывать на удалённую.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternalRef {
+    pub id: Uuid,
+    pub project_id: Uuid,
+    pub provider: String,
+    pub external_id: String,
+    pub transaction_id: Uuid,
+    pub link: RefLink,
+    /// Когда внешняя система получила запись (время SMS), если известно.
+    pub received_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    /// Пользователь запроса (у API-токена — его владелец).
+    pub created_by: Uuid,
+}
+
+/// Внешняя запись из запроса — проверенная, ещё без операции.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefDraft {
+    pub provider: String,
+    pub external_id: String,
+    pub received_at: Option<DateTime<Utc>>,
+}
+
+/// Длина id записи у провайдера — в символах.
+const MAX_EXTERNAL_ID: usize = 200;
+const MAX_PROVIDER: usize = 40;
+
+impl RefDraft {
+    /// Источник — после `trim` и нижнего регистра `^[a-z0-9_]{1,40}$`, id — после `trim` от 1 до 200 символов.
+    /// `prefix` — начало поля в ошибке: `external_ref.` в теле операции, пусто — в теле прикрепления.
+    pub fn new(prefix: &str, provider: &str, external_id: &str, received_at: Option<DateTime<Utc>>) -> Result<Self, Problem> {
+        let provider = provider.trim().to_lowercase();
+        let ok = (1..=MAX_PROVIDER).contains(&provider.len()) && provider.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_');
+        if !ok {
+            return Err(err(&format!("{prefix}provider"), "err.external_provider", &[]));
+        }
+        let external_id = external_id.trim().to_string();
+        if !(1..=MAX_EXTERNAL_ID).contains(&external_id.chars().count()) {
+            return Err(err(&format!("{prefix}external_id"), "err.external_id", &[]));
+        }
+        // Время — с точностью TIMESTAMPTZ (микросекунды): ответ на запрос и прочитанное из БД совпадают.
+        Ok(Self { provider, external_id, received_at: received_at.map(|t| t.trunc_subsecs(6)) })
+    }
+
+    /// Связь этой записи с операцией.
+    pub fn link(&self, project_id: Uuid, transaction_id: Uuid, link: RefLink, created_by: Uuid) -> ExternalRef {
+        ExternalRef {
+            id: Uuid::new_v4(),
+            project_id,
+            provider: self.provider.clone(),
+            external_id: self.external_id.clone(),
+            transaction_id,
+            link,
+            received_at: self.received_at,
+            created_at: Utc::now().trunc_subsecs(6),
+            created_by,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1123,6 +1219,36 @@ mod tests {
         wrong_sum[0].amount = dec("99");
         assert!(check_items(TxKind::Expense, &wrong_sum, &t.postings).is_err());
         assert!(check_items(TxKind::Transfer, &t.items, &[]).is_err(), "у перевода позиций нет");
+    }
+
+    /// Б2: форма не присылает заметки — позиция с тем же `id` сохраняет прежнюю, новая позиция — без заметки.
+    #[test]
+    fn form_keeps_item_notes() {
+        let mut t = create(receipt(vec![("food", "100")])).unwrap();
+        t.items[0].note = Some("от Claude".into());
+        let id = t.items[0].id;
+        let form = ItemsDraft::replace(vec![ItemDraft { id: Some(id), ..ItemDraft::simple("food", dec("120")) }, ItemDraft::simple("cafe", dec("5"))]);
+        t.change(data(Draft::Flow { income: false, account: "card".into(), items: form, refund: false }), &accounts()).unwrap();
+        assert_eq!(t.items.iter().map(|x| (x.amount, x.note.as_deref())).collect::<Vec<_>>(), vec![(dec("120"), Some("от Claude")), (dec("5"), None)]);
+    }
+
+    /// Внешняя запись: источник приводится к нижнему регистру, id — без пробелов по краям; ошибки — на своих полях.
+    #[test]
+    fn external_ref_is_checked() {
+        let r = RefDraft::new("external_ref.", " iMessage ", " p:0/4F1C ", None).unwrap();
+        assert_eq!((r.provider.as_str(), r.external_id.as_str()), ("imessage", "p:0/4F1C"));
+        for (provider, id, field) in [
+            ("", "x", "external_ref.provider"),
+            ("bank-sms", "x", "external_ref.provider"),
+            (&"a".repeat(41), "x", "external_ref.provider"),
+            ("imessage", "  ", "external_ref.external_id"),
+            ("imessage", &"я".repeat(201), "external_ref.external_id"),
+        ] {
+            assert_eq!(RefDraft::new("external_ref.", provider, id, None).unwrap_err().field, field, "{provider:?} {id:?}");
+        }
+        assert!(RefDraft::new("", &"a".repeat(40), &"я".repeat(200), None).is_ok(), "границы включительно, длина — в символах");
+        assert_eq!(RefDraft::new("", "Bad!", "x", None).unwrap_err().field, "provider");
+        assert_eq!(RefLink::parse(RefLink::Matched.as_str()), Some(RefLink::Matched));
     }
 
     #[test]

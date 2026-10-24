@@ -120,7 +120,7 @@ impl From<AppError> for ToolError {
         match e {
             AppError::Validation(m) | AppError::Conflict(m) | AppError::NotFound(m) | AppError::Forbidden(m) => ToolError(m),
             // Код ошибки — для ассистента (AMOUNT_MISMATCH, KIND_MISMATCH, NOT_FOUND…), текст — на языке пользователя.
-            AppError::Invalid(p) => ToolError(format!("[{}] {p}", p.code)),
+            AppError::Invalid(p) | AppError::ConflictWith(p) => ToolError(format!("[{}] {p}", p.code)),
             AppError::TooManyRequests(m) => ToolError(m),
             other => {
                 eprintln!("mcp: {other:?}");
@@ -499,7 +499,8 @@ impl McpService {
             }
             None => None,
         };
-        let filter = TxFilter { from: Some(from), to: Some(to), account_code, kind, place_code, for_person };
+        let external_provider = a.from_sms.unwrap_or(false).then(|| SMS_PROVIDER.to_string());
+        let filter = TxFilter { from: Some(from), to: Some(to), account_code, kind, place_code, for_person, external_provider };
         let category_set: Option<HashSet<String>> = match a.category.as_deref() {
             Some(c) => {
                 let root = resolve("category", c, &q.categories, |x| &x.code, |x| x.search.clone())?.code.clone();
@@ -1887,6 +1888,11 @@ fn tx_json(t: &Tx, lang: Lang) -> Value {
     }
     if t.recipients_differ {
         v["recipients_differ"] = json!(true);
+    }
+    // Из SMS банка или подтверждена им — последняя такая связь (docs/external-refs.md, раздел 4); время — местное.
+    if let Some(r) = t.external_refs.iter().filter(|r| r.provider == SMS_PROVIDER).max_by_key(|r| r.created_at) {
+        let at = r.received_at.map(|at| at.with_timezone(&chrono::Local).to_rfc3339_opts(chrono::SecondsFormat::Secs, false));
+        v["sms"] = json!({"link": r.link, "received_at": at});
     }
     v
 }

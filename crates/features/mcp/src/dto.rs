@@ -60,6 +60,8 @@ pub struct ListTransactionsArgs {
     /// "all" — with an item for everyone
     #[serde(rename = "for")]
     pub for_whom: Option<String>,
+    /// Only transactions created from or confirmed by a bank SMS
+    pub from_sms: Option<bool>,
     /// Page size, 1–200 (default 50)
     pub limit: Option<u32>,
     /// Skip this many transactions (paging)

@@ -3,6 +3,7 @@
 {% block title %}{% if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
 {% block heading %}{% if !f.plan_id.is_empty() %}{{ page.t("paid_plan") }}{% else if id.is_some() %}{{ page.t("edit_title") }}{% else %}{{ page.t("new") }}{% endif %}{% endblock %}
 {% block content %}
+{% if !sms.is_empty() %}<div class="mb-4 flex flex-wrap items-start gap-2 text-sm text-muted"><span class="badge"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("message-circle") }}"></use></svg>{{ page.t("tx.sms_badge") }}</span><div>{% for s in sms %}<p>{{ s }}</p>{% endfor %}</div></div>{% endif %}
 {% if let Some(e) = self.general_error() %}<div class="alert alert-error mb-4" role="alert"><svg class="icon" aria-hidden="true"><use href="{{ page.icon("circle-alert") }}"></use></svg><span>{{ e }}</span></div>{% endif %}
 <form method="post" class="card card-pad form max-w-3xl" id="tx" data-tx-form data-limit-warn{% if id.is_none() %} data-new{% endif %}>
   <input type="hidden" name="_csrf" value="{{ page.csrf() }}">

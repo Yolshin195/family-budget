@@ -17,8 +17,8 @@ use rust_decimal::Decimal;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::domain::{Description, Unit};
-use crate::dto::{ItemDto, ItemInput, ListQuery, TransactionDto, TransactionInput, TranslationInput};
+use crate::domain::{Description, RefLink, Unit, provider};
+use crate::dto::{ExternalRefDto, ItemDto, ItemInput, ListQuery, TransactionDto, TransactionInput, TranslationInput};
 use crate::ports::PersonInfo;
 use crate::service::TransactionService;
 
@@ -71,6 +71,22 @@ pub(crate) fn rate_text(lang: Lang, sent: Decimal, from: &str, got: Decimal, to:
     let r = r.round_dp(4).normalize();
     let s = if lang == Lang::Ru { r.to_string().replace('.', ",") } else { r.to_string() };
     format!("1 {base} = {s} {quote}")
+}
+
+/// Строки значка «SMS» (docs/external-refs.md, раздел 3): по одной на связь с SMS банка — «Из SMS банка · 21.09 10:51»
+/// или «Подтверждено SMS банка · …»; время — получения SMS, без него — дата связи. Другие источники пока не показываются.
+fn sms_lines(lang: Lang, refs: &[ExternalRefDto]) -> Vec<String> {
+    refs.iter()
+        .filter(|r| r.provider == provider::IMESSAGE)
+        .map(|r| {
+            let key = if r.link == RefLink::Matched.as_str() { "tx.sms_matched" } else { "tx.sms_created" };
+            let time = match r.received_at {
+                Some(at) => at.with_timezone(&chrono::Local).format("%d.%m %H:%M").to_string(),
+                None => r.created_at.with_timezone(&chrono::Local).format("%d.%m").to_string(),
+            };
+            kernel::i18n::t(lang, Some(crate::i18n::dict), key).replace("{time}", &time)
+        })
+        .collect()
 }
 
 /// Название системного счёта на языке интерфейса.
@@ -157,6 +173,8 @@ struct TxView {
     recipient: Option<String>,
     /// Разные получатели — сводка под операцией: «Для всех 88,00 ฿ · Для себя 45,00 ฿ · Pinpan 22,00 ฿».
     for_summary: Option<String>,
+    /// Операция из SMS банка или подтверждена им — подсказка значка «SMS» (несколько связей — строки через перенос).
+    sms: Option<String>,
     /// Остаток счёта после операции (выписка).
     running: Option<String>,
     edit_href: String,
@@ -218,6 +236,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
         untranslated: (params.untranslated == "1").then(|| lang.code().to_string()),
         place_code: None,
         for_person_code: Some(params.for_person.clone()).filter(|v| !v.is_empty()),
+        external_provider: None,
     };
     // Месяц целиком; итоги и выписка — по всем операциям фильтра, даже если лента обрезана (техдолг #25).
     let feed = svc.feed(p, query()).await?;
@@ -351,6 +370,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             notes,
             recipient,
             for_summary,
+            sms: Some(sms_lines(lang, &t.external_refs).join("\n")).filter(|s| !s.is_empty()),
             running: if only_account { running.get(&t.id).map(|b| money_in(lang, *b)) } else { None },
             edit_href: if t.is_opening() {
                 format!("/accounts/{}/edit", kernel::web::url_segment(&t.account_code))
@@ -608,6 +628,8 @@ struct FormPage {
     /// Знаков после запятой у валюты счёта — для суммы «количество × цена» в браузере.
     minor: HashMap<String, u32>,
     postings: Vec<PostingView>,
+    /// Операция из SMS банка или подтверждена им: строки под заголовком, только для чтения.
+    sms: Vec<String>,
     error: Option<String>,
 }
 
@@ -876,7 +898,8 @@ async fn form_page(svc: &TransactionService, page: PageCtx, existing: Option<&Tr
     let mut used: Vec<&str> = items.iter().map(|x| x.for_person.as_str()).collect();
     used.extend(f.for_default.as_deref());
     let people = person_choices(&svc.people(p, lang).await?, page.session.user_id, &page_t(&page, "for_me"), &used);
-    render(&FormPage { page: nested(page), id: existing.map(|t| t.id), f, items, units, accounts, categories, places, people, rates, minor, postings, error })
+    let sms = existing.map(|t| sms_lines(lang, &t.external_refs)).unwrap_or_default();
+    render(&FormPage { page: nested(page), id: existing.map(|t| t.id), f, items, units, accounts, categories, places, people, rates, minor, postings, sms, error })
 }
 
 async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q): Query<Prefill>) -> PageResult {

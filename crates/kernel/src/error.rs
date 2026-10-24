@@ -15,6 +15,10 @@ pub mod codes {
     pub const AMOUNT_MISMATCH: &str = "AMOUNT_MISMATCH";
     /// Категория не того типа (доход в расходе и наоборот).
     pub const KIND_MISMATCH: &str = "KIND_MISMATCH";
+    /// Внешняя запись уже создала операцию, и та удалена: повторно не создаётся.
+    pub const EXTERNAL_REF_DELETED: &str = "EXTERNAL_REF_DELETED";
+    /// Внешняя запись уже прикреплена к другой операции.
+    pub const EXTERNAL_REF_TAKEN: &str = "EXTERNAL_REF_TAKEN";
 }
 
 /// Ошибка входных данных с кодом для API и текстом на языке пользователя (техдолг #9).
@@ -58,6 +62,8 @@ pub enum AppError {
     /// Неверные входные данные с кодом и полем (422). Новые ошибки — так, а не `Validation(String)`.
     Invalid(Problem),
     Conflict(String),
+    /// Конфликт с кодом и полем (409): тело — как у `Invalid`, код — `p.code` (`EXTERNAL_REF_TAKEN`).
+    ConflictWith(Problem),
     /// Нет прав (например, роль VIEWER пытается писать).
     Forbidden(String),
     /// Нет входа: сессия или API-токен не предъявлены, истекли или отозваны.
@@ -81,7 +87,7 @@ impl std::fmt::Display for AppError {
             | AppError::Forbidden(m)
             | AppError::Unauthorized(m)
             | AppError::TooManyRequests(m) => f.write_str(m),
-            AppError::Invalid(p) => write!(f, "{p}"),
+            AppError::Invalid(p) | AppError::ConflictWith(p) => write!(f, "{p}"),
             AppError::Unavailable(e) | AppError::Internal(e) => write!(f, "{e}"),
         }
     }
@@ -112,7 +118,7 @@ impl AppError {
         match self {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Validation(_) | AppError::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::Conflict(_) | AppError::ConflictWith(_) => StatusCode::CONFLICT,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
@@ -125,7 +131,7 @@ impl AppError {
         match self {
             AppError::NotFound(_) => "NOT_FOUND",
             AppError::Validation(_) => codes::VALIDATION,
-            AppError::Invalid(p) => p.code,
+            AppError::Invalid(p) | AppError::ConflictWith(p) => p.code,
             AppError::Conflict(_) => "CONFLICT",
             AppError::Forbidden(_) => "FORBIDDEN",
             AppError::Unauthorized(_) => "UNAUTHORIZED",
@@ -166,7 +172,7 @@ impl IntoResponse for AppError {
         let status = self.status();
         let error = self.code();
         let body = match self {
-            AppError::Invalid(p) => ErrorBody { error, message: p.message, field: Some(p.field).filter(|f| !f.is_empty()) },
+            AppError::Invalid(p) | AppError::ConflictWith(p) => ErrorBody { error, message: p.message, field: Some(p.field).filter(|f| !f.is_empty()) },
             other => ErrorBody { error, message: other.public_message(), field: None },
         };
         (status, Json(body)).into_response()
@@ -196,6 +202,18 @@ mod tests {
         let th = crate::i18n::scope(crate::i18n::Lang::Th, async { AppError::Internal(anyhow::anyhow!("x")).public_message() }).await;
         assert_eq!(th, "เซิร์ฟเวอร์ขัดข้อง");
         assert_eq!(AppError::from(p).into_response().status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    /// Конфликт с кодом — 409, код и поле в теле, как у ошибки проверки.
+    #[tokio::test]
+    async fn conflict_with_code_is_409() {
+        let e = AppError::ConflictWith(Problem::new(codes::EXTERNAL_REF_TAKEN, "external_ref", "taken".into()));
+        assert_eq!((e.status(), e.code(), e.to_string().as_str()), (StatusCode::CONFLICT, "EXTERNAL_REF_TAKEN", "external_ref: taken"));
+        let res = e.into_response();
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        let body = axum::body::to_bytes(res.into_body(), 1024).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({"error": "EXTERNAL_REF_TAKEN", "message": "taken", "field": "external_ref"}));
     }
 
     #[test]

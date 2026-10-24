@@ -1,17 +1,17 @@
-//! Исходящий адаптер: порт на PostgreSQL (таблицы `fb_transactions`, `fb_transaction_items`, `fb_postings`).
-//! Сумму проводок по каждой валюте дополнительно проверяет отложенный триггер БД.
+//! Исходящий адаптер: порт на PostgreSQL (таблицы `fb_transactions`, `fb_transaction_items`, `fb_postings`,
+//! `fb_external_refs`). Сумму проводок по каждой валюте дополнительно проверяет отложенный триггер БД.
 
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use kernel::error::{AppError, AppResult};
 use kernel::i18n::Lang;
 use rust_decimal::Decimal;
 use sqlx::{PgPool, Postgres, Transaction as SqlTx};
 use uuid::Uuid;
 
-use crate::domain::{Description, Item, Posting, RefKind, Transaction, TxKind, Unit, system};
+use crate::domain::{Description, ExternalRef, Item, Posting, RefKind, RefLink, Transaction, TxKind, Unit, system};
 use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
 const COLUMNS: &str = "id, project_id, occurred_on, tx_kind, description, description_lang, \
@@ -28,7 +28,7 @@ macro_rules! touches {
     };
 }
 /// $1 проект, $2..$3 период, $4 счёт, $5 тип, $6 автор, $7 язык «без перевода», $8 место, $9 для кого — есть позиция
-/// этого человека, '' — «Для всех» (NULL — условие выключено).
+/// этого человека, '' — «Для всех», $10 источник внешних записей — есть связь с ним (NULL — условие выключено).
 const FILTER: &str = concat!(
     "project_id = $1 \
     AND ($2::date IS NULL OR occurred_on >= $2) AND ($3::date IS NULL OR occurred_on <= $3) \
@@ -39,8 +39,11 @@ const FILTER: &str = concat!(
          (CASE $7 WHEN 'RU' THEN description_ru WHEN 'EN' THEN description_en ELSE description_th END) IS NULL)) \
     AND ($8::text IS NULL OR place_code = $8) \
     AND ($9::text IS NULL OR EXISTS (SELECT 1 FROM fb_transaction_items i \
-         WHERE i.transaction_id = fb_transactions.id AND i.for_person_code IS NOT DISTINCT FROM NULLIF($9, '')))"
+         WHERE i.transaction_id = fb_transactions.id AND i.for_person_code IS NOT DISTINCT FROM NULLIF($9, ''))) \
+    AND ($10::text IS NULL OR EXISTS (SELECT 1 FROM fb_external_refs r \
+         WHERE r.project_id = fb_transactions.project_id AND r.transaction_id = fb_transactions.id AND r.provider = $10))"
 );
+const REF_COLUMNS: &str = "id, project_id, provider, external_id, transaction_id, link, received_at, created_at, created_by";
 
 pub struct PostgresTransactionRepository {
     pool: PgPool,
@@ -157,6 +160,35 @@ impl ItemRow {
     }
 }
 
+#[derive(sqlx::FromRow)]
+struct RefRow {
+    id: Uuid,
+    project_id: Uuid,
+    provider: String,
+    external_id: String,
+    transaction_id: Uuid,
+    link: String,
+    received_at: Option<DateTime<Utc>>,
+    created_at: DateTime<Utc>,
+    created_by: Uuid,
+}
+
+impl RefRow {
+    fn into_domain(self) -> AppResult<ExternalRef> {
+        Ok(ExternalRef {
+            link: RefLink::parse(&self.link).ok_or_else(|| bad_value("fb_external_refs.link", &self.link))?,
+            id: self.id,
+            project_id: self.project_id,
+            provider: self.provider,
+            external_id: self.external_id,
+            transaction_id: self.transaction_id,
+            received_at: self.received_at,
+            created_at: self.created_at,
+            created_by: self.created_by,
+        })
+    }
+}
+
 impl Row {
     fn into_domain(self, items: Vec<Item>, postings: Vec<Posting>) -> AppResult<Transaction> {
         Ok(Transaction {
@@ -186,6 +218,7 @@ fn unique(e: sqlx::Error) -> AppError {
         match db.constraint() {
             Some("fb_transactions_plan_uniq") => return AppError::Conflict(taken::PLAN.into()),
             Some("fb_transactions_opening_uniq") => return AppError::Conflict(taken::OPENING.into()),
+            Some("fb_external_refs_key") => return AppError::Conflict(taken::EXTERNAL_REF.into()),
             _ => {}
         }
     }
@@ -194,6 +227,56 @@ fn unique(e: sqlx::Error) -> AppError {
 
 fn bad_value(column: &str, value: &str) -> AppError {
     AppError::Internal(anyhow::anyhow!("{column}: unknown value '{value}'"))
+}
+
+/// Шапка новой операции.
+async fn insert_header(tx: &mut SqlTx<'_, Postgres>, item: &Transaction) -> AppResult<()> {
+    sqlx::query(
+        "INSERT INTO fb_transactions (id, project_id, occurred_on, tx_kind, description, description_lang, \
+         description_ru, description_en, description_th, created_by, plan_id, plan_date, opening_account, \
+         account_code, total, refund, place_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+    )
+    .bind(item.id)
+    .bind(item.project_id)
+    .bind(item.occurred_on)
+    .bind(item.tx_kind.as_str())
+    .bind(&item.description.text)
+    .bind(item.description.lang.upper())
+    .bind(&item.description.ru)
+    .bind(&item.description.en)
+    .bind(&item.description.th)
+    .bind(item.created_by)
+    .bind(item.plan.map(|p| p.0))
+    .bind(item.plan.map(|p| p.1))
+    .bind(item.opening_account())
+    .bind(item.account_code())
+    .bind(item.total())
+    .bind(item.refund())
+    .bind(&item.place_code)
+    .execute(&mut **tx)
+    .await
+    .map_err(unique)?;
+    Ok(())
+}
+
+async fn write_ref<'e, E: sqlx::PgExecutor<'e>>(ex: E, r: &ExternalRef) -> AppResult<()> {
+    sqlx::query(
+        "INSERT INTO fb_external_refs (id, project_id, provider, external_id, transaction_id, link, received_at, created_at, created_by) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind(r.id)
+    .bind(r.project_id)
+    .bind(&r.provider)
+    .bind(&r.external_id)
+    .bind(r.transaction_id)
+    .bind(r.link.as_str())
+    .bind(r.received_at)
+    .bind(r.created_at)
+    .bind(r.created_by)
+    .execute(ex)
+    .await
+    .map_err(unique)?;
+    Ok(())
 }
 
 /// Позиции и проводки пишутся заново: сначала удаляются проводки (они ссылаются на позиции), потом позиции.
@@ -254,40 +337,43 @@ fn bind_filter<'q, O>(
         .bind(f.untranslated.map(|l| l.upper()))
         .bind(f.place_code.as_deref())
         .bind(f.for_person.as_ref().map(|r| r.as_deref().unwrap_or_default()))
+        .bind(f.external_provider.as_deref())
 }
 
 #[async_trait]
 impl TransactionRepository for PostgresTransactionRepository {
     async fn insert(&self, item: &Transaction) -> AppResult<()> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query(
-            "INSERT INTO fb_transactions (id, project_id, occurred_on, tx_kind, description, description_lang, \
-             description_ru, description_en, description_th, created_by, plan_id, plan_date, opening_account, \
-             account_code, total, refund, place_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
-        )
-        .bind(item.id)
-        .bind(item.project_id)
-        .bind(item.occurred_on)
-        .bind(item.tx_kind.as_str())
-        .bind(&item.description.text)
-        .bind(item.description.lang.upper())
-        .bind(&item.description.ru)
-        .bind(&item.description.en)
-        .bind(&item.description.th)
-        .bind(item.created_by)
-        .bind(item.plan.map(|p| p.0))
-        .bind(item.plan.map(|p| p.1))
-        .bind(item.opening_account())
-        .bind(item.account_code())
-        .bind(item.total())
-        .bind(item.refund())
-        .bind(&item.place_code)
-        .execute(&mut *tx)
-        .await
-        .map_err(unique)?;
+        insert_header(&mut tx, item).await?;
         write_postings(&mut tx, item).await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    async fn insert_with_ref(&self, item: &Transaction, r: &ExternalRef) -> AppResult<()> {
+        // Связь — последней: при занятом ключе SQL-транзакция откатывается целиком, операции не остаётся.
+        let mut tx = self.pool.begin().await?;
+        insert_header(&mut tx, item).await?;
+        write_postings(&mut tx, item).await?;
+        write_ref(&mut *tx, r).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn insert_ref(&self, r: &ExternalRef) -> AppResult<()> {
+        write_ref(&self.pool, r).await
+    }
+
+    async fn find_ref(&self, project_id: Uuid, provider: &str, external_id: &str) -> AppResult<Option<ExternalRef>> {
+        let sql = format!("SELECT {REF_COLUMNS} FROM fb_external_refs WHERE project_id = $1 AND provider = $2 AND external_id = $3");
+        let row: Option<RefRow> = sqlx::query_as(&sql).bind(project_id).bind(provider).bind(external_id).fetch_optional(&self.pool).await?;
+        row.map(RefRow::into_domain).transpose()
+    }
+
+    async fn refs_of(&self, project_id: Uuid, ids: &[Uuid]) -> AppResult<Vec<ExternalRef>> {
+        let sql = format!("SELECT {REF_COLUMNS} FROM fb_external_refs WHERE project_id = $1 AND transaction_id = ANY($2) ORDER BY created_at, id");
+        let rows: Vec<RefRow> = sqlx::query_as(&sql).bind(project_id).bind(ids).fetch_all(&self.pool).await?;
+        rows.into_iter().map(RefRow::into_domain).collect()
     }
 
     async fn update(&self, item: &Transaction) -> AppResult<()> {
@@ -335,7 +421,7 @@ impl TransactionRepository for PostgresTransactionRepository {
 
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>> {
         let sql = format!(
-            "SELECT {COLUMNS} FROM fb_transactions WHERE {FILTER} ORDER BY occurred_on DESC, created_at DESC, id LIMIT $10 OFFSET $11"
+            "SELECT {COLUMNS} FROM fb_transactions WHERE {FILTER} ORDER BY occurred_on DESC, created_at DESC, id LIMIT $11 OFFSET $12"
         );
         let rows: Vec<Row> = bind_filter(sqlx::query_as(&sql), project_id, filter).bind(limit).bind(offset).fetch_all(&self.pool).await?;
         self.with_postings(rows).await
@@ -366,7 +452,7 @@ impl TransactionRepository for PostgresTransactionRepository {
     async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)> {
         let sql = format!(
             "SELECT COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0), COALESCE(SUM(amount) FILTER (WHERE amount < 0), 0) \
-             FROM fb_postings WHERE ref_kind = 'ACCOUNT' AND ref_code = $10 \
+             FROM fb_postings WHERE ref_kind = 'ACCOUNT' AND ref_code = $11 \
              AND transaction_id IN (SELECT id FROM fb_transactions WHERE {FILTER})"
         );
         Ok(bind_filter(sqlx::query_as(&sql), project_id, filter).bind(account).fetch_one(&self.pool).await?)
@@ -521,8 +607,11 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {
-        // Проводки удаляются каскадом (FK внутри фичи).
-        let r = sqlx::query("DELETE FROM fb_transactions WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
+        // Проводки удаляются каскадом (FK внутри фичи); у связей с внешними записями FK нет — отдельно.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM fb_external_refs WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
+        let r = sqlx::query("DELETE FROM fb_transactions WHERE project_id = $1").bind(project_id).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(r.rows_affected())
     }
 

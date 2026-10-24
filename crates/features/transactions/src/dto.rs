@@ -2,7 +2,7 @@
 //!
 //! Клиент присылает тип и поля формы, сервер строит из них проводки; ответ всегда содержит проводки.
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use kernel::i18n::{Lang, Localized};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use kernel::error::Problem;
 
-use crate::domain::{Body, Description, Draft, Fee, Item, ItemDraft, ItemsDraft, Transaction, TransactionData, TxKind};
+use crate::domain::{Body, Description, Draft, ExternalRef, Fee, Item, ItemDraft, ItemsDraft, RefDraft, Transaction, TransactionData, TxKind};
 
 /// Позиция чека в старом формате `lines`: категория и сумма. Принимается по-прежнему — как позиция
 /// «1 шт» с названием из `note`; `lines` заменяют все позиции операции.
@@ -161,6 +161,79 @@ pub struct PostingDto {
     pub note: Option<String>,
 }
 
+/// Внешняя запись (docs/external-refs.md, 2.1): кто её прислал и её id у него. Одна запись — не больше одной операции.
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+pub struct ExternalRefInput {
+    /// Источник: `imessage` — SMS и iMessage из «Сообщений» на Mac. Латиница в нижнем регистре, цифры и «_», до 40 знаков
+    #[serde(default)]
+    #[schema(example = "imessage")]
+    pub provider: String,
+    /// Id записи у источника, 1–200 символов; сервер его не разбирает. Для `imessage` — `message.guid` из `chat.db`
+    #[serde(default)]
+    #[schema(example = "p:0/4F1C2D3E-5A6B-7C8D-9E0F-112233445566")]
+    pub external_id: String,
+    /// Когда источник получил запись (время SMS), RFC 3339 с часовым поясом
+    #[serde(default)]
+    #[schema(format = DateTime, example = "2026-09-21T10:51:07+07:00")]
+    pub received_at: Option<String>,
+}
+
+impl ExternalRefInput {
+    /// Проверенная запись; `prefix` — начало поля в ошибке (`external_ref.` в теле операции).
+    pub fn into_draft(self, prefix: &str) -> Result<RefDraft, Problem> {
+        let at = self.received_at.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(DateTime::parse_from_rfc3339);
+        // Ошибки — в порядке полей: источник, id, время.
+        let r = RefDraft::new(prefix, &self.provider, &self.external_id, at.and_then(Result::ok).map(|t| t.with_timezone(&Utc)))?;
+        if let Some(Err(_)) = at {
+            return Err(Problem::validation(&format!("{prefix}received_at"), kernel::i18n::tr(Some(crate::i18n::dict), "err.external_received_at", &[])));
+        }
+        Ok(r)
+    }
+}
+
+/// Связь операции с внешней записью.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct ExternalRefDto {
+    #[schema(example = "imessage")]
+    pub provider: String,
+    #[schema(example = "p:0/4F1C2D3E-5A6B-7C8D-9E0F-112233445566")]
+    pub external_id: String,
+    /// Операция, которую запись создала или подтвердила (может быть удалена)
+    pub transaction_id: Uuid,
+    /// CREATED — запись создала операцию; MATCHED — прикреплена к уже существующей
+    #[schema(example = "CREATED")]
+    pub link: String,
+    /// Когда источник получил запись (время SMS)
+    pub received_at: Option<DateTime<Utc>>,
+    /// Когда появилась связь
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<ExternalRef> for ExternalRefDto {
+    fn from(r: ExternalRef) -> Self {
+        Self { provider: r.provider, external_id: r.external_id, transaction_id: r.transaction_id, link: r.link.as_str().to_string(), received_at: r.received_at, created_at: r.created_at }
+    }
+}
+
+/// Найденная связь (`GET /api/transactions/external-refs`).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ExternalRefFoundDto {
+    #[serde(flatten)]
+    pub external_ref: ExternalRefDto,
+    /// Операция связи есть (`false` — удалена: та же запись её не создаст)
+    pub transaction_exists: bool,
+}
+
+/// Поиск связи: оба параметра обязательны.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(default)]
+pub struct ExternalRefQuery {
+    /// Источник (`imessage`)
+    pub provider: String,
+    /// Id записи у источника
+    pub external_id: String,
+}
+
 /// Тело запроса на создание и изменение: тип и поля формы.
 ///
 /// - `EXPENSE` / `INCOME`: `account_code`, `items` (или старый формат `lines`), необязательно `refund` (возврат —
@@ -235,6 +308,10 @@ pub struct TransactionInput {
     #[serde(default)]
     #[schema(example = "PINPAN")]
     pub for_person_code: Option<String>,
+    /// Только при создании: внешняя запись (SMS банка), из которой операция. Повтор с той же записью не создаёт вторую
+    /// операцию, а возвращает первую (200); если та удалена — 409 `EXTERNAL_REF_DELETED`. При правке не читается
+    #[serde(default)]
+    pub external_ref: Option<ExternalRefInput>,
 }
 
 /// Переводы описания (оригинал не меняется).
@@ -294,6 +371,8 @@ pub struct TransactionDto {
     /// У позиций разные получатели
     pub recipients_differ: bool,
     pub postings: Vec<PostingDto>,
+    /// Связи с внешними записями (SMS банка), по времени появления; правка операции их не меняет
+    pub external_refs: Vec<ExternalRefDto>,
 }
 
 /// Фильтр списка.
@@ -312,6 +391,8 @@ pub struct ListQuery {
     pub place_code: Option<String>,
     /// Только операции с позицией для этого человека (`all` — для всех); итоги ленты — по этим позициям
     pub for_person_code: Option<String>,
+    /// Только операции со связью с этим источником внешних записей: `imessage` — из SMS банка или подтверждённые им
+    pub external_provider: Option<String>,
 }
 
 impl From<Transaction> for TransactionDto {
@@ -356,6 +437,8 @@ impl From<Transaction> for TransactionDto {
                 .into_iter()
                 .map(|p| PostingDto { ref_kind: p.ref_kind.as_str().into(), ref_code: p.ref_code, currency_code: p.currency, amount: p.amount, note: p.note })
                 .collect(),
+            // Связи хранятся отдельно от операции — их добавляет сервис.
+            external_refs: Vec::new(),
         }
     }
 }
