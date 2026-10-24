@@ -93,7 +93,7 @@ def diff(a, b, where: str = "") -> str | None:
     if isinstance(a, list) and isinstance(b, list):
         if len(a) != len(b):
             return f"{where}: разная длина списка ({len(a)} и {len(b)})"
-        for i, (x, y) in enumerate(zip(a, b)):
+        for i, (x, y) in enumerate(zip(a, b, strict=True)):
             d = diff(x, y, f"{where}[{i}]")
             if d:
                 return d
@@ -187,7 +187,8 @@ def check_content() -> set[str]:
                 stats = body_stats(body)
                 for k, v in ref_stats.items():
                     if stats[k] != v:
-                        err(path, f"в тексте {stats[k]} {k}, а в {files[DEFAULT].name} — {v}: переводы должны совпадать по устройству")
+                        ref = files[DEFAULT].name
+                        err(path, f"в тексте {stats[k]} {k}, а в {ref} — {v}: переводы должны совпадать по устройству")
             check_body(path, lang, body)
             if not base.startswith("_index"):
                 check_blog_fields(path, section, meta)
@@ -247,7 +248,8 @@ def main() -> int:
     check_templates()
     check_reviews()
     if errors:
-        print(f"Сайт: {len(errors)} ошибок — всё на сайте должно быть на трёх языках (site/README.md):", file=sys.stderr)
+        print(f"Сайт: {len(errors)} ошибок — всё на сайте должно быть на трёх языках (site/README.md):",
+              file=sys.stderr)
         for e in errors:
             print(f"  {e}", file=sys.stderr)
         return 1

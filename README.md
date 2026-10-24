@@ -40,6 +40,7 @@ make restart
 | `make db-roles` | пользователи БД без суперправ для базы, созданной до обновления (см. ниже) |
 | `make assets` | пересобрать CSS, htmx, шрифты, иконки Lucide, favicon (Node — в контейнере) |
 | `make test` | тесты, БД не нужна |
+| `make lint` / `make fmt` | линтеры, как в CI: rustfmt, clippy, shellcheck, actionlint, hadolint, ruff / отформатировать Rust-код |
 | `make audit` | `cargo audit` + `cargo deny` |
 | `make backup` / `make restore-check` | зашифрованные копии баз `family_budget` и `rauthy` / проверка восстановления |
 
