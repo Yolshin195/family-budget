@@ -130,6 +130,8 @@ fn tx_of(id: Uuid, user: Uuid, d: &TxDraft, old: Option<&Tx>) -> Tx {
         place_code: d.place_code.clone(),
         for_person_code: items.first().and_then(|f| f.for_person.clone().flatten()).filter(|c| items.iter().all(|x| x.for_person.clone().flatten().as_ref() == Some(c))),
         recipients_differ: items.iter().any(|x| x.for_person != items[0].for_person),
+        // Правка связи с внешними записями не меняет.
+        external_refs: old.map(|o| o.external_refs.clone()).unwrap_or_default(),
         items,
     }
 }
@@ -147,6 +149,7 @@ impl Ledger for Arc<FakeLedger> {
             .iter()
             .filter(|t| filter.kind.as_ref().is_none_or(|k| &t.kind == k) && filter.place_code.as_ref().is_none_or(|p| t.place_code.as_ref() == Some(p)))
             .filter(|t| filter.for_person.as_ref().is_none_or(|who| t.items.iter().any(|x| x.for_person.as_ref() == Some(who))))
+            .filter(|t| filter.external_provider.as_ref().is_none_or(|p| t.external_refs.iter().any(|r| &r.provider == p)))
             .cloned()
             .collect();
         let total = all.len() as i64;
@@ -1495,4 +1498,49 @@ async fn people_directory_tools() {
     assert!(e.dirs.people.lock().unwrap().iter().any(|p| p.code == "NANNY_ANN" && p.name == "Ann B."));
     assert!(e.svc.update_person(&c, UpdatePersonArgs { code: "NANNY_ANN".into(), ..Default::default() }).await.unwrap_err().0.contains("nothing to change"));
     assert!(e.svc.visible(&c, "add_person"));
+}
+
+// ---------------------------------------------------------------- SMS банка (docs/external-refs.md, раздел 4)
+
+/// Операции из SMS банка: поле `sms` в выводе (последняя связь), фильтр `from_sms`; правка связи не трогает.
+#[tokio::test]
+async fn sms_transactions_are_marked_and_filtered() {
+    use chrono::TimeZone;
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    for amount in ["250", "45", "10"] {
+        e.svc.add_expense(&c, expense(amount, "food")).await.unwrap();
+    }
+    let sms_at = Utc.with_ymd_and_hms(2026, 10, 3, 3, 51, 7).unwrap();
+    let r = |provider: &str, link: &str, minutes: i64| TxRef {
+        provider: provider.into(),
+        link: link.into(),
+        received_at: Some(sms_at),
+        created_at: sms_at + chrono::Duration::minutes(minutes),
+    };
+    {
+        let mut txs = e.ledger.txs.lock().unwrap();
+        txs[0].external_refs = vec![r(SMS_PROVIDER, "CREATED", 1)];
+        // Две связи: в выводе — последняя.
+        txs[1].external_refs = vec![r(SMS_PROVIDER, "CREATED", 1), TxRef { received_at: None, ..r(SMS_PROVIDER, "MATCHED", 5) }];
+        txs[2].external_refs = vec![r("bank_statement", "CREATED", 1)];
+    }
+    let all = e.svc.list_transactions(&c, ListTransactionsArgs { from: Some("2000-01-01".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(all.data["total"], 3);
+    let sms = e.svc.list_transactions(&c, ListTransactionsArgs { from_sms: Some(true), from: Some("2000-01-01".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(sms.data["total"], 2, "только из SMS банка или подтверждённые им");
+    let txs = sms.data["transactions"].as_array().unwrap();
+    let local = sms_at.with_timezone(&chrono::Local).to_rfc3339_opts(chrono::SecondsFormat::Secs, false);
+    let by_total = |total: &str| txs.iter().find(|t| t["total"] == total).unwrap().clone();
+    assert_eq!(by_total("250")["sms"], serde_json::json!({"link": "CREATED", "received_at": local}));
+    assert_eq!(by_total("45")["sms"], serde_json::json!({"link": "MATCHED", "received_at": null}));
+    let statement = all.data["transactions"].as_array().unwrap().iter().find(|t| t["total"] == "10").unwrap().clone();
+    assert!(statement.get("sms").is_none(), "другие источники не показываются как SMS");
+    let off = e.svc.list_transactions(&c, ListTransactionsArgs { from_sms: Some(false), from: Some("2000-01-01".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(off.data["total"], 3, "from_sms: false — без фильтра");
+    // Claude дополняет операцию из SMS — связь остаётся.
+    let id = e.ledger.txs.lock().unwrap()[0].id.to_string();
+    let out = e.svc.update_transaction(&c, UpdateTransactionArgs { id, description: Some("Big C".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(out.data["transaction"]["sms"]["link"], "CREATED");
 }

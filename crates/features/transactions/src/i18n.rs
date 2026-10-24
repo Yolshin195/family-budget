@@ -170,6 +170,23 @@ pub fn dict(key: &str) -> Option<Tr> {
         "err.undo_expired" => ("отменить уже нельзя", "it can no longer be undone", "ยกเลิกไม่ได้แล้ว"),
         "err.bad_date" => ("неверная дата", "invalid date", "วันที่ไม่ถูกต้อง"),
         "err.bad_id" => ("неверный id", "invalid id", "id ไม่ถูกต้อง"),
+        // Связи с внешними записями (docs/external-refs.md, 2.6).
+        "err.external_ref_deleted" => ("Операция по этой записи уже была и удалена — повторно не создаётся",
+                                       "A transaction from this record existed and was deleted — it is not created again",
+                                       "รายการจากข้อมูลนี้เคยมีและถูกลบแล้ว — จะไม่สร้างซ้ำ"),
+        "err.external_ref_taken" => ("Эта запись уже прикреплена к другой операции", "This record is already linked to another transaction", "ข้อมูลนี้ผูกกับรายการอื่นแล้ว"),
+        "err.external_ref_opening" => ("Начальный остаток нельзя связать с внешней записью", "An opening balance cannot be linked to an external record", "ยอดยกมาไม่สามารถผูกกับข้อมูลภายนอกได้"),
+        "err.external_ref_not_found" => ("Связи с этой записью нет", "No link to this record", "ไม่มีการผูกกับข้อมูลนี้"),
+        "err.external_provider" => ("Источник: латиница в нижнем регистре, цифры и «_», до 40 знаков",
+                                    "Source: lowercase Latin letters, digits and “_”, up to 40 characters",
+                                    "แหล่งที่มา: ตัวอักษรละตินพิมพ์เล็ก ตัวเลข และ “_” ไม่เกิน 40 ตัว"),
+        "err.external_id" => ("Id внешней записи: от 1 до 200 знаков", "External record id: 1 to 200 characters", "รหัสข้อมูลภายนอก: 1 ถึง 200 ตัวอักษร"),
+        "err.external_received_at" => ("Время записи: дата и время RFC 3339 с часовым поясом", "Record time: RFC 3339 date and time with a time zone",
+                                       "เวลาของข้อมูล: วันที่และเวลาแบบ RFC 3339 พร้อมเขตเวลา"),
+        // Значок «SMS» в ленте и карточке (раздел 3); {time} — время SMS или дата связи.
+        "tx.sms_badge" => ("SMS", "SMS", "SMS"),
+        "tx.sms_created" => ("Из SMS банка · {time}", "From bank SMS · {time}", "จาก SMS ธนาคาร · {time}"),
+        "tx.sms_matched" => ("Подтверждено SMS банка · {time}", "Confirmed by bank SMS · {time}", "ยืนยันด้วย SMS ธนาคาร · {time}"),
         _ => return None,
     })
 }

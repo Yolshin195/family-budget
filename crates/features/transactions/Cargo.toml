@@ -25,3 +25,6 @@ uuid.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
+# HTTP-тесты связей с внешними записями: коды ответов и тело ошибки 409.
+serde_json.workspace = true
+tower.workspace = true

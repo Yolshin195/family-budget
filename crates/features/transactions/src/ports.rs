@@ -10,7 +10,7 @@ use kernel::web::Choice;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::{AccountCurrency, Transaction, TxKind};
+use crate::domain::{AccountCurrency, ExternalRef, Transaction, TxKind};
 
 /// Чем занят уникальный ключ, если хранилище вернуло `Conflict`.
 pub mod taken {
@@ -18,6 +18,8 @@ pub mod taken {
     pub const PLAN: &str = "plan";
     /// У счёта уже есть начальный остаток.
     pub const OPENING: &str = "opening";
+    /// Внешняя запись уже связана с операцией (ключ `(project_id, provider, external_id)`).
+    pub const EXTERNAL_REF: &str = "external_ref";
 }
 
 /// Фильтр списка: период по `occurred_on` (включительно) + необязательные условия.
@@ -35,6 +37,8 @@ pub struct Filter {
     pub place_code: Option<String>,
     /// Только операции с позицией для этого человека; `Some(None)` — с позицией «Для всех». Итоги — по этим позициям.
     pub for_person: Option<Option<String>>,
+    /// Только операции со связью с этим источником внешних записей (`imessage` — из SMS банка или подтверждённые им).
+    pub external_provider: Option<String>,
 }
 
 /// Проводка на категорию — факт для бюджета и лимитов.
@@ -79,8 +83,17 @@ pub struct Payment {
 pub trait TransactionRepository: Send + Sync {
     /// Шапка + проводки в одной SQL-транзакции. Занятый ключ — `Conflict` с одним из [`taken`].
     async fn insert(&self, item: &Transaction) -> AppResult<()>;
-    /// Шапка + замена набора проводок в одной SQL-транзакции. Занятый ключ — как у `insert`.
+    /// Операция и связь `CREATED` в одной SQL-транзакции. Занятый ключ связи — `Conflict` с [`taken::EXTERNAL_REF`],
+    /// и тогда не записывается ничего; ключи шапки — как у `insert`.
+    async fn insert_with_ref(&self, item: &Transaction, r: &ExternalRef) -> AppResult<()>;
+    /// Шапка + замена набора проводок в одной SQL-транзакции. Занятый ключ — как у `insert`. Связи с внешними
+    /// записями не трогает.
     async fn update(&self, item: &Transaction) -> AppResult<()>;
+    /// Новая связь. Занятый ключ — `Conflict` с [`taken::EXTERNAL_REF`].
+    async fn insert_ref(&self, r: &ExternalRef) -> AppResult<()>;
+    async fn find_ref(&self, project_id: Uuid, provider: &str, external_id: &str) -> AppResult<Option<ExternalRef>>;
+    /// Связи операций (для страницы списка — одним запросом), по `created_at`.
+    async fn refs_of(&self, project_id: Uuid, ids: &[Uuid]) -> AppResult<Vec<ExternalRef>>;
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Transaction>>;
     /// Новые сначала.
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>>;
@@ -89,7 +102,7 @@ pub trait TransactionRepository: Send + Sync {
     async fn category_totals(&self, project_id: Uuid, filter: &Filter) -> AppResult<Vec<(String, Decimal, Decimal)>>;
     /// Поступления и списания по счёту `account` у операций фильтра: (сумма «+», сумма «−»).
     async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)>;
-    /// `true`, если запись была удалена.
+    /// `true`, если запись была удалена. Связи с внешними записями остаются.
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool>;
     /// Проводки на категории за период (для бюджета).
     async fn lines(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<FactLine>>;
@@ -110,7 +123,7 @@ pub trait TransactionRepository: Send + Sync {
     /// Для быстрого расхода: последний счёт пользователя в расходах и доходах и его частые категории
     /// (по числу проводок с `since`, чаще — первые) для транзакций типа `kind`.
     async fn quick_stats(&self, project_id: Uuid, user_id: Uuid, kind: &str, since: NaiveDate) -> AppResult<QuickStats>;
-    /// Удалить все операции проекта (удаление проекта или аккаунта).
+    /// Удалить все операции проекта и их связи с внешними записями (удаление проекта или аккаунта).
     async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
     /// Сколько пользователей внесли первую операцию за период — для воронки лендинга
     /// (начальные остатки не считаются).

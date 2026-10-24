@@ -1,5 +1,6 @@
 //! Use cases фичи «Транзакции». Знает только домен и порты — ничего об HTTP и SQL.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::NaiveDate;
@@ -11,8 +12,11 @@ use kernel::web::Choice;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::{Body, Description, Draft, ItemDraft, ItemsDraft, RefKind, Transaction, TransactionData, TxKind};
-use crate::dto::{ItemInput, ListQuery, recipient_of, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, QuickPlaceDto, TransactionDto, TransactionInput, TranslationInput};
+use crate::domain::{Body, Description, Draft, ExternalRef, ItemDraft, ItemsDraft, RefDraft, RefKind, RefLink, Transaction, TransactionData, TxKind};
+use crate::dto::{
+    ExternalRefDto, ExternalRefFoundDto, ExternalRefInput, ItemInput, ListQuery, QuickAccountDto, QuickCategoryDto, QuickDefaultsDto, QuickPlaceDto, TransactionDto, TransactionInput,
+    TranslationInput, recipient_of,
+};
 use crate::ports::{CategoryInfo, Deps, ExchangeLine, FactLine, Filter, Payment, PersonInfo, PlaceInfo, TransactionRepository, taken};
 
 /// Частых категорий в форме быстрого расхода.
@@ -46,7 +50,23 @@ impl TransactionService {
     }
 
     /// Создать транзакцию. `created_by` — текущий пользователь, не из тела запроса.
-    pub async fn create(&self, project_id: Uuid, created_by: Uuid, mut input: TransactionInput) -> AppResult<TransactionDto> {
+    pub async fn create(&self, project_id: Uuid, created_by: Uuid, input: TransactionInput) -> AppResult<TransactionDto> {
+        Ok(self.create_once(project_id, created_by, input).await?.0)
+    }
+
+    /// Создать транзакцию; с `external_ref` — не больше одной на внешнюю запись (docs/external-refs.md, 2.2).
+    /// `false` — операция по этой записи уже есть: ничего не создано, возвращена она (тело запроса с ней не
+    /// сравнивается). Операция по записи была и удалена — `EXTERNAL_REF_DELETED`.
+    pub async fn create_once(&self, project_id: Uuid, created_by: Uuid, mut input: TransactionInput) -> AppResult<(TransactionDto, bool)> {
+        let source = input.external_ref.take().map(|r| r.into_draft("external_ref.")).transpose()?;
+        if let Some(r) = &source {
+            if TxKind::parse(&input.tx_kind) == Some(TxKind::Opening) {
+                return Err(err("external_ref", "err.external_ref_opening", &[]).into());
+            }
+            if let Some(existing) = self.by_ref(project_id, r).await? {
+                return Ok((existing, false));
+            }
+        }
         self.apply_place(project_id, &mut input, None).await?;
         let people = self.check_header_person(project_id, &input, None).await?;
         let data = input.into_domain()?;
@@ -56,19 +76,93 @@ impl TransactionService {
         check_people(&people, &item, None)?;
         self.check_plan(&item, None).await?;
         self.check_opening(&item).await?;
-        self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
-        Ok(item.into())
+        let Some(r) = source else {
+            self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
+            return Ok((item.into(), true));
+        };
+        let link = r.link(project_id, item.id, RefLink::Created, created_by);
+        match self.repo.insert_with_ref(&item, &link).await {
+            Ok(()) => Ok((with_refs(item.into(), vec![link]), true)),
+            // Гонка: ту же запись только что записал параллельный запрос — его SQL-транзакция победила, наша
+            // откатилась целиком. Ответ — как на повтор.
+            Err(AppError::Conflict(m)) if m == taken::EXTERNAL_REF => match self.by_ref(project_id, &r).await? {
+                Some(existing) => Ok((existing, false)),
+                None => Err(ref_taken("external_ref")),
+            },
+            Err(e) => Err(conflict(e, &item)),
+        }
+    }
+
+    /// Операция, которую создала или подтвердила внешняя запись; связи нет — `None`, операция удалена — ошибка.
+    async fn by_ref(&self, project_id: Uuid, r: &RefDraft) -> AppResult<Option<TransactionDto>> {
+        let Some(link) = self.repo.find_ref(project_id, &r.provider, &r.external_id).await? else { return Ok(None) };
+        match self.repo.find(project_id, link.transaction_id).await? {
+            Some(t) => Ok(Some(self.dto(t).await?)),
+            None => Err(AppError::ConflictWith(Problem::new(codes::EXTERNAL_REF_DELETED, "external_ref", tr("err.external_ref_deleted", &[])))),
+        }
+    }
+
+    /// Прикрепить внешнюю запись к существующей операции (2.3): связь `MATCHED`, операция не меняется.
+    /// `false` — запись уже прикреплена к этой операции, возвращена прежняя связь; к другой — `EXTERNAL_REF_TAKEN`.
+    pub async fn attach(&self, project_id: Uuid, user_id: Uuid, id: Uuid, input: ExternalRefInput) -> AppResult<(ExternalRefDto, bool)> {
+        let r = input.into_draft("")?;
+        let item = self.load(project_id, id).await?;
+        if item.tx_kind == TxKind::Opening {
+            return Err(err("", "err.external_ref_opening", &[]).into());
+        }
+        let link = r.link(project_id, id, RefLink::Matched, user_id);
+        match self.repo.insert_ref(&link).await {
+            Ok(()) => Ok((link.into(), true)),
+            // Занято — этой операцией (повтор, в том числе параллельный) или другой.
+            Err(AppError::Conflict(m)) if m == taken::EXTERNAL_REF => match self.repo.find_ref(project_id, &r.provider, &r.external_id).await? {
+                Some(found) if found.transaction_id == id => Ok((found.into(), false)),
+                _ => Err(ref_taken("")),
+            },
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Связь внешней записи (2.4) — для клиента после 409: к какой операции и есть ли она ещё.
+    pub async fn find_ref(&self, project_id: Uuid, provider: &str, external_id: &str) -> AppResult<ExternalRefFoundDto> {
+        let r = RefDraft::new("", provider, external_id, None)?;
+        let link = self.repo.find_ref(project_id, &r.provider, &r.external_id).await?.ok_or_else(|| AppError::NotFound(tr("err.external_ref_not_found", &[])))?;
+        let transaction_exists = self.repo.find(project_id, link.transaction_id).await?.is_some();
+        Ok(ExternalRefFoundDto { external_ref: link.into(), transaction_exists })
     }
 
     pub async fn get(&self, project_id: Uuid, id: Uuid) -> AppResult<TransactionDto> {
-        Ok(self.load(project_id, id).await?.into())
+        let item = self.load(project_id, id).await?;
+        self.dto(item).await
     }
 
     pub async fn list(&self, project_id: Uuid, query: ListQuery, pagination: Pagination) -> AppResult<PagedResponse<TransactionDto>> {
         let filter = filter_of(query)?;
         let items = self.repo.list(project_id, &filter, pagination.limit(), pagination.offset()).await?;
         let total = self.repo.count(project_id, &filter).await?;
-        Ok(PagedResponse::new(items.into_iter().map(Into::into).collect(), &pagination, total))
+        Ok(PagedResponse::new(self.dtos(project_id, items).await?, &pagination, total))
+    }
+
+    /// Операции со связями с внешними записями — одним запросом связей на страницу.
+    async fn dtos(&self, project_id: Uuid, items: Vec<Transaction>) -> AppResult<Vec<TransactionDto>> {
+        let ids: Vec<Uuid> = items.iter().map(|t| t.id).collect();
+        let mut refs: HashMap<Uuid, Vec<ExternalRef>> = HashMap::new();
+        if !ids.is_empty() {
+            for r in self.repo.refs_of(project_id, &ids).await? {
+                refs.entry(r.transaction_id).or_default().push(r);
+            }
+        }
+        Ok(items
+            .into_iter()
+            .map(|t| {
+                let mine = refs.remove(&t.id).unwrap_or_default();
+                with_refs(t.into(), mine)
+            })
+            .collect())
+    }
+
+    async fn dto(&self, item: Transaction) -> AppResult<TransactionDto> {
+        let refs = self.repo.refs_of(item.project_id, &[item.id]).await?;
+        Ok(with_refs(item.into(), refs))
     }
 
     /// Лента страницы за период (техдолги #25, #26): операции — не больше [`MAX_FEED`], и тогда `truncated`;
@@ -102,7 +196,7 @@ impl TransactionService {
                 Some(Statement { start, end, inflow, outflow, running })
             }
         };
-        Ok(Feed { items: items.into_iter().map(Into::into).collect(), truncated, totals, statement })
+        Ok(Feed { items: self.dtos(project_id, items).await?, truncated, totals, statement })
     }
 
     pub async fn update(&self, project_id: Uuid, id: Uuid, mut input: TransactionInput) -> AppResult<TransactionDto> {
@@ -118,7 +212,7 @@ impl TransactionService {
         self.check_plan(&item, Some(&before)).await?;
         self.check_opening(&item).await?;
         self.repo.update(&item).await.map_err(|e| conflict(e, &item))?;
-        Ok(item.into())
+        self.dto(item).await
     }
 
     /// Место операции (docs/group-1.md, 5.2): если счёт и категории новых позиций не указаны — берутся из места.
@@ -183,7 +277,7 @@ impl TransactionService {
         }
         item.translate(input.description_ru, input.description_en, input.description_th);
         self.repo.update(&item).await?;
-        Ok(item.into())
+        self.dto(item).await
     }
 
     /// Удаление. Если транзакция оплачивала вхождение плана — оно снова «ожидается».
@@ -198,11 +292,11 @@ impl TransactionService {
         Ok(self.undo.put(project_id, item))
     }
 
-    /// «Отменить»: вернуть операцию с тем же id и проводками.
+    /// «Отменить»: вернуть операцию с тем же id и проводками; связи с внешними записями снова указывают на неё.
     pub async fn undo_delete(&self, project_id: Uuid, token: Uuid) -> AppResult<TransactionDto> {
         let item = self.undo.take(project_id, token).ok_or_else(|| AppError::NotFound(tr("err.undo_expired", &[])))?;
         self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
-        Ok(item.into())
+        self.dto(item).await
     }
 
     /// Пользователи, внёсшие первую операцию за период — для воронки лендинга (только число).
@@ -210,7 +304,7 @@ impl TransactionService {
         self.repo.count_first(from, to).await
     }
 
-    /// Удалить все операции проекта (удаление проекта или аккаунта).
+    /// Удалить все операции проекта и их связи с внешними записями (удаление проекта или аккаунта).
     pub async fn purge_project(&self, project_id: Uuid) -> AppResult<u64> {
         self.repo.purge(project_id).await
     }
@@ -556,7 +650,17 @@ fn filter_of(query: ListQuery) -> AppResult<Filter> {
         untranslated: query.untranslated.as_deref().and_then(Lang::parse),
         place_code: query.place_code.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_uppercase),
         for_person: recipient_of(query.for_person_code.filter(|v| !v.trim().is_empty())).map(|who| who.map(|c| c.to_uppercase())),
+        external_provider: query.external_provider.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_lowercase),
     })
+}
+
+fn with_refs(dto: TransactionDto, refs: Vec<ExternalRef>) -> TransactionDto {
+    TransactionDto { external_refs: refs.into_iter().map(Into::into).collect(), ..dto }
+}
+
+/// Внешняя запись связана с другой операцией. `field` — `external_ref` в теле операции, пусто — в теле прикрепления.
+fn ref_taken(field: &str) -> AppError {
+    AppError::ConflictWith(Problem::new(codes::EXTERNAL_REF_TAKEN, field, tr("err.external_ref_taken", &[])))
 }
 
 /// Получатели позиций (раздел 5.9): новый — активный человек проекта; получатель, который у операции уже был,

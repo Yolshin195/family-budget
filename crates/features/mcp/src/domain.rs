@@ -274,6 +274,20 @@ pub struct TxDraft {
     pub for_person: Option<Option<String>>,
 }
 
+/// Источник внешних записей «SMS банка» (`imessage` в фиче `transactions`, docs/external-refs.md).
+pub const SMS_PROVIDER: &str = "imessage";
+
+/// Связь операции с внешней записью (SMS банка). Только для чтения: через MCP связи не создаются и не меняются.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TxRef {
+    pub provider: String,
+    /// CREATED — запись создала операцию, MATCHED — подтвердила уже существующую.
+    pub link: String,
+    /// Время SMS, если известно.
+    pub received_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 /// Сохранённая операция.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tx {
@@ -302,6 +316,8 @@ pub struct Tx {
     /// Общий получатель всех позиций; `None` — «Для всех» или разные (`recipients_differ`).
     pub for_person_code: Option<String>,
     pub recipients_differ: bool,
+    /// Связи с внешними записями, по времени появления.
+    pub external_refs: Vec<TxRef>,
 }
 
 impl Tx {
@@ -356,6 +372,8 @@ pub struct TxFilter {
     pub place_code: Option<String>,
     /// С позицией для этого человека; `Some(None)` — с позицией «Для всех».
     pub for_person: Option<Option<String>>,
+    /// Только со связью с этим источником внешних записей ([`SMS_PROVIDER`] — из SMS банка или подтверждённые им).
+    pub external_provider: Option<String>,
 }
 
 /// Строка бюджета по категории (суммы по поддереву, в базовой валюте).
