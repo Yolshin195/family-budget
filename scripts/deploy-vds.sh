@@ -19,6 +19,7 @@ SELF=$(realpath "$0")
 
 if [ -t 1 ]; then B=$'\033[1m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' N=$'\033[0m'; else B='' G='' Y='' R='' N=''; fi
 WARNINGS=()
+RECREATE=()
 step() { printf '\n%s==> %s%s\n' "$B" "$*" "$N"; }
 info() { printf '    %s\n' "$*"; }
 ok()   { printf '    %s✓%s %s\n' "$G" "$N" "$*"; }
@@ -140,8 +141,11 @@ load_conf() {
   [ -n "$SMTP_URL" ] || warn "SMTP не настроен: без писем Rauthy войти сможет только администратор (заполните SMTP_* в .env)"
 }
 
+JOURNALD_CONF=/etc/systemd/journald.conf.d/50-family-budget.conf
+LOGROTATE_CONF=/etc/logrotate.d/family-budget
+
 install_system() {
-  step "Система: обновления, часовой пояс, утилиты (шаги 3.1, 3.5, 3.7)"
+  step "Система: обновления, часовой пояс, утилиты, размер журнала (шаги 3.1, 3.5, 3.7, 3.8)"
   OS_ID=$(. /etc/os-release && echo "$ID")
   OS_CODENAME=$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
   case $OS_ID in ubuntu | debian) ;; *) die "поддерживаются Ubuntu и Debian, а здесь $OS_ID" ;; esac
@@ -149,10 +153,16 @@ install_system() {
   local apt=(apt-get -yq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
   apt-get update -q
   "${apt[@]}" full-upgrade
-  "${apt[@]}" install sudo git make age jq curl ca-certificates gnupg openssl ufw cron unattended-upgrades
+  "${apt[@]}" install sudo git make age jq curl ca-certificates gnupg openssl ufw cron unattended-upgrades logrotate
   [ -z "${TIMEZONE:-}" ] || timedatectl set-timezone "$TIMEZONE"
   # То же, что ответ «Yes» в dpkg-reconfigure -plow unattended-upgrades.
   printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' > /etc/apt/apt.conf.d/20auto-upgrades
+  # Журнал systemd (Caddy, таймер автообновления, cron) по умолчанию занимает до 10% диска. Правку вручную не трогаем.
+  if [ ! -f "$JOURNALD_CONF" ]; then
+    mkdir -p "$(dirname "$JOURNALD_CONF")"
+    printf '[Journal]\nSystemMaxUse=500M\n' > "$JOURNALD_CONF"
+    systemctl restart systemd-journald
+  fi
   ok "$(. /etc/os-release && echo "$PRETTY_NAME"), часовой пояс $(timedatectl show -p Timezone --value)"
 }
 
@@ -231,16 +241,7 @@ install_docker() {
     apt-get update -q
     apt-get -yq install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   fi
-  if [ ! -f /etc/docker/daemon.json ]; then
-    mkdir -p /etc/docker
-    cat > /etc/docker/daemon.json <<'EOF'
-{
-  "log-driver": "json-file",
-  "log-opts": { "max-size": "20m", "max-file": "5" }
-}
-EOF
-    systemctl restart docker
-  fi
+  docker_log_rotation
   systemctl enable --now docker containerd >/dev/null 2>&1
   usermod -aG docker "$APP_USER"
   local bashrc v
@@ -249,6 +250,21 @@ EOF
   v=$(docker compose version --short | sed 's/^v//')
   [ "$(printf '%s\n' 2.24 "$v" | sort -V | head -n 1)" = 2.24 ] || die "нужен docker compose 2.24 или новее, а установлен $v"
   ok "docker compose $v"
+}
+
+# Ротация логов контейнеров (шаг 4.2): без неё json-file растёт, пока не займёт диск. Готовый daemon.json (например,
+# от хостера) дополняется, а не заменяется. Драйверы local и journald ограничены сами.
+docker_log_rotation() {
+  local daemon=/etc/docker/daemon.json old='{}'
+  if [ -s "$daemon" ]; then old=$(jq . "$daemon") || die "$daemon — не JSON: исправьте его и запустите install ещё раз"; fi
+  jq -e '(."log-driver" // "json-file") != "json-file" or ."log-opts"."max-size" != null' <<< "$old" >/dev/null && return 0
+  mkdir -p /etc/docker
+  [ ! -s "$daemon" ] || cp -p "$daemon" "$daemon.bak.$(date +%Y%m%d%H%M%S)"
+  jq '."log-driver" = "json-file" | ."log-opts" = {"max-size": "20m", "max-file": "5"} + (."log-opts" // {})' <<< "$old" > "$daemon"
+  systemctl restart docker
+  # Настройки логов действуют на новые контейнеры: уже созданные start_stack пересоздаст.
+  RECREATE=(--force-recreate)
+  ok "логи контейнеров: не больше 5 файлов по 20 МБ ($daemon)"
 }
 
 install_caddy() {
@@ -534,7 +550,7 @@ start_stack() {
   fi
 
   # Приложение — позже: без секрета клиента оно не пройдёт проверку продакшен-настроек.
-  compose up -d --wait --wait-timeout 180 db rauthy || die "db или rauthy не запустились: docker compose logs db rauthy"
+  compose up -d "${RECREATE[@]}" --wait --wait-timeout 180 db rauthy || die "db или rauthy не запустились: docker compose logs db rauthy"
   ok "PostgreSQL и Rauthy запущены"
   fix_trusted_proxies
 
@@ -551,7 +567,7 @@ start_stack() {
     ok "секрет клиента family-budget записан в .env"
   fi
 
-  compose up -d app
+  compose up -d "${RECREATE[@]}" app
   wait_app
 }
 
@@ -571,6 +587,17 @@ install_backups() {
     { crontab -u "$APP_USER" -l 2>/dev/null || true; echo "$line"; } | crontab -u "$APP_USER" -
     ok "cron: каждый день в 03:15"
   fi
+  # backup.log дописывается каждую ночь: раз в месяц уходит в архив, архивы — за год.
+  cat > "$LOGROTATE_CONF" <<EOF
+$APP_DIR/backups/backup.log {
+	monthly
+	rotate 12
+	compress
+	missingok
+	notifempty
+	su $APP_USER $APP_USER
+}
+EOF
   as_app env ENGINE=docker make --no-print-directory backup
 }
 
@@ -681,6 +708,14 @@ issuer_matches() {
 }
 has_hsts() { curl -fsSI --max-time 10 "$1" | grep -i '^strict-transport-security:' >/dev/null; }
 all_running() { [ "$(compose ps --status running --services | sort | xargs)" = "app db rauthy" ]; }
+# У каждого контейнера логи ограничены: json-file с max-size или драйвер, ограниченный сам (шаг 4.2).
+logs_limited() {
+  local id log
+  for id in $(compose ps -q); do
+    log=$(as_app docker inspect -f '{{.HostConfig.LogConfig.Type}} {{with index .HostConfig.LogConfig.Config "max-size"}}{{.}}{{end}}' "$id")
+    case $log in "json-file "?* | "local "* | "journald "*) ;; *) return 1 ;; esac
+  done
+}
 ports_local() {
   ! ss -Htln | awk '{ print $4 }' | grep -E ':(8080|8443|5432)$' | grep -vE '^(127\.0\.0\.1|\[::1\]):' >/dev/null
 }
@@ -695,6 +730,7 @@ cmd_check() {
   check_item "$base/health отвечает ok" http_ok "$base/health"
   check_item "HTTPS с заголовком Strict-Transport-Security" has_hsts "$base/"
   check_item "порты 8080, 8443, 5432 — только на 127.0.0.1" ports_local
+  check_item "логи контейнеров с ротацией (шаг 4.2)" logs_limited
   check_item "резервные копии настроены (BACKUP_AGE_RECIPIENT)" test -n "$(env_get BACKUP_AGE_RECIPIENT)"
   if systemctl is-enabled --quiet "$UPDATE_UNIT.timer" 2>/dev/null; then
     check_item "автообновление: последняя проверка без ошибок" test "$(systemctl show -P Result "$UPDATE_UNIT.service")" = success
