@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use kernel::web::Choice;
@@ -95,8 +95,10 @@ pub trait TransactionRepository: Send + Sync {
     /// Связи операций (для страницы списка — одним запросом), по `created_at`.
     async fn refs_of(&self, project_id: Uuid, ids: &[Uuid]) -> AppResult<Vec<ExternalRef>>;
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Transaction>>;
-    /// Новые сначала.
+    /// Новые сначала: по дате, внутри дня — по времени операции, без него — по времени внесения.
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>>;
+    /// Изменить только время операции (время SMS банка при прикреплении). Нет операции — ничего не делает.
+    async fn set_time(&self, project_id: Uuid, id: Uuid, at: Option<DateTime<Utc>>) -> AppResult<()>;
     async fn count(&self, project_id: Uuid, filter: &Filter) -> AppResult<i64>;
     /// Итоги по проводкам на категории всех операций фильтра: (валюта, доходы, расходы); возврат уменьшает итог.
     async fn category_totals(&self, project_id: Uuid, filter: &Filter) -> AppResult<Vec<(String, Decimal, Decimal)>>;
@@ -112,6 +114,15 @@ pub trait TransactionRepository: Send + Sync {
     async fn payments(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<Payment>>;
     /// Остатки счетов на дату включительно: (счёт, сумма проводок).
     async fn balances(&self, project_id: Uuid, to: NaiveDate) -> AppResult<Vec<(String, Decimal)>>;
+    /// Остаток счёта на момент `at` (его дата — `date`): операции до `date` и операции `date` без времени или не
+    /// позже `at`.
+    async fn balance_at(
+        &self,
+        project_id: Uuid,
+        account: &str,
+        date: NaiveDate,
+        at: DateTime<Utc>,
+    ) -> AppResult<Decimal>;
     /// Есть ли у счёта хотя бы одна проводка.
     async fn has_postings(&self, project_id: Uuid, account_code: &str) -> AppResult<bool>;
     /// Транзакция начального остатка счёта.
@@ -273,6 +284,10 @@ pub trait AccountsLookup: Send + Sync {
     async fn titles(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<(String, String)>>;
     /// Активные счета с валютой и её символом.
     async fn infos(&self, project_id: Uuid, lang: Lang) -> AppResult<Vec<AccountInfo>>;
+    /// Записать остаток счёта по данным банка на момент `at`, если записанный не новее (SMS приходят не по порядку).
+    async fn report_balance(&self, project_id: Uuid, code: &str, amount: Decimal, at: DateTime<Utc>) -> AppResult<()>;
+    /// Последний остаток счёта по данным банка и его момент.
+    async fn bank_balance(&self, project_id: Uuid, code: &str) -> AppResult<Option<(Decimal, DateTime<Utc>)>>;
 }
 
 /// Категория, на которую ссылается операция.

@@ -140,6 +140,9 @@ pub struct AddFlowArgs {
     pub account: Option<String>,
     /// Date YYYY-MM-DD, or "today" / "yesterday" (default: today)
     pub date: Option<String>,
+    /// Time HH:MM in the user's local time, when known (receipt, screenshot, the user's words). Default: now for
+    /// today, no time for other days
+    pub time: Option<String>,
     /// Short description, e.g. "Coffee at Starbucks"
     pub description: Option<String>,
     /// Language of `description`: ru | en | th (default: the user's language)
@@ -179,6 +182,8 @@ pub struct AddTransferArgs {
     pub fee_category: Option<String>,
     /// Date YYYY-MM-DD, or "today" / "yesterday" (default: today)
     pub date: Option<String>,
+    /// Time HH:MM in the user's local time. Default: now for today, no time for other days
+    pub time: Option<String>,
     pub description: Option<String>,
     /// Language of `description`: ru | en | th (default: the user's language)
     pub description_lang: Option<String>,
@@ -192,8 +197,10 @@ pub struct AddTransferArgs {
 pub struct UpdateTransactionArgs {
     /// Transaction id (from list_transactions or add_* results)
     pub id: String,
-    /// New date YYYY-MM-DD
+    /// New date YYYY-MM-DD (the time of day stays)
     pub date: Option<String>,
+    /// New time HH:MM in the user's local time; "" removes the time
+    pub time: Option<String>,
     /// New account (source account for transfers)
     pub account: Option<String>,
     /// New amount: for a single-item expense/income or a transfer

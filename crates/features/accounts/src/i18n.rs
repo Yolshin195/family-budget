@@ -23,6 +23,25 @@ pub fn dict(key: &str) -> Option<Tr> {
         "statement" => ("Выписка", "Statement", "รายการเดินบัญชี"),
         "transfer" => ("Перевести", "Transfer", "โอน"),
         "reconcile" => ("Сверить", "Reconcile", "กระทบยอด"),
+        // Остаток по данным банка — из последнего SMS банка с остатком.
+        "bank_balance" => ("В банке", "At the bank", "ในธนาคาร"),
+        "bank_hint" => (
+            "Остаток из последнего SMS банка; сверяется с операциями на то же время",
+            "Balance from the latest bank SMS, compared with the transactions up to the same time",
+            "ยอดคงเหลือจาก SMS ล่าสุดของธนาคาร เทียบกับรายการ ณ เวลาเดียวกัน",
+        ),
+        "bank_ok" => ("Сходится", "Matches", "ตรงกัน"),
+        "bank_more" => (
+            "В операциях на {amount} больше, чем в банке",
+            "Transactions show {amount} more than the bank",
+            "ในรายการมากกว่าธนาคาร {amount}",
+        ),
+        "bank_less" => (
+            "В операциях на {amount} меньше, чем в банке",
+            "Transactions show {amount} less than the bank",
+            "ในรายการน้อยกว่าธนาคาร {amount}",
+        ),
+        "bank_reconcile" => ("Сверить остаток", "Reconcile balance", "กระทบยอดคงเหลือ"),
         "holder" => ("Держатель", "Holder", "ผู้ถือ"),
         "nobody" => ("общий", "shared", "ใช้ร่วมกัน"),
         "code_hint" => (

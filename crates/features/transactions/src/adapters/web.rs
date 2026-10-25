@@ -9,7 +9,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Extension, Router};
 use axum_extra::extract::Form;
-use chrono::{Datelike, Months, NaiveDate};
+use chrono::{DateTime, Datelike, Months, NaiveDate, NaiveTime, Utc};
 use kernel::error::{AppError, Problem};
 use kernel::i18n::{Lang, month_name, weekdays};
 use kernel::web::{
@@ -167,6 +167,8 @@ struct TxView {
     css: &'static str,
     desc: String,
     missing: bool,
+    /// Время операции «14:27»; нет — время неизвестно.
+    time: Option<String>,
     /// Счёт (у перевода — «откуда → куда») и автор.
     meta: String,
     /// Позиции по категориям — если операция не простая.
@@ -227,6 +229,17 @@ struct ListPage {
     account_query: String,
     /// Операций больше, чем показано (итоги — по всем).
     truncated: bool,
+    /// Выписка: сверка с остатком по данным банка (последнее SMS с остатком).
+    bank: Option<BankLine>,
+}
+
+/// Остаток по данным банка и остаток по операциям на тот же момент — строка над лентой выписки.
+struct BankLine {
+    /// «В банке по SMS · 25.10 16:25: 6 404,29 ฿»
+    text: String,
+    /// Расхождение словами; пусто — сходится.
+    diff: Option<String>,
+    reconcile: String,
 }
 
 fn month_start(s: &str) -> NaiveDate {
@@ -280,6 +293,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
     let mut running: HashMap<Uuid, Decimal> = HashMap::new();
     let stats: Vec<Stat>;
     let mut statement = None;
+    let mut bank = None;
     if let (Some(acc), Some(st)) = (&account, feed.statement) {
         let currency = items
             .iter()
@@ -308,6 +322,13 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             },
             one("balance_end", st.end, false),
         ];
+        bank = match svc.bank_balance(p, acc).await? {
+            None => None,
+            Some((amount, at)) => {
+                let book = svc.balance_at(p, acc, at).await?;
+                Some(bank_line(&page, acc, &currency, amount, at, book))
+            }
+        };
         statement = Some((acc_title(acc), currency));
     } else {
         let mut sums = feed.totals;
@@ -422,6 +443,7 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
             css,
             desc,
             missing: t.missing_tr(lang),
+            time: t.occurred_at.map(|at| at.with_timezone(&chrono::Local).format("%H:%M").to_string()),
             meta,
             category: if simple { cat_title(&t.items[0].category_code) } else { String::new() },
             groups,
@@ -480,8 +502,40 @@ async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(params
         days,
         stats,
         statement,
+        bank,
         page: ctx(page),
     })
+}
+
+/// Сверка выписки с банком: остаток по данным банка на момент `at` и остаток по операциям на тот же момент `book`.
+fn bank_line(
+    page: &PageCtx,
+    account: &str,
+    currency: &str,
+    amount: Decimal,
+    at: DateTime<Utc>,
+    book: Decimal,
+) -> BankLine {
+    let lang = page.lang;
+    let at = at.with_timezone(&chrono::Local);
+    let money = |v: Decimal| format!("{}\u{a0}{}", money_in(lang, v), page.cur(currency));
+    let diff = book - amount;
+    BankLine {
+        text: page_t(page, "bank_line")
+            .replace("{time}", &at.format("%d.%m %H:%M").to_string())
+            .replace("{amount}", &money(amount)),
+        diff: match diff.cmp(&Decimal::ZERO) {
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Greater => Some(page_t(page, "bank_more").replace("{amount}", &money(diff))),
+            std::cmp::Ordering::Less => Some(page_t(page, "bank_less").replace("{amount}", &money(-diff))),
+        },
+        reconcile: format!(
+            "/transactions/reconcile?account={}&occurred_on={}&actual={}",
+            kernel::web::url_encode(account),
+            at.date_naive(),
+            amount.normalize()
+        ),
+    }
 }
 
 /// Строка словаря фичи (до того, как `PageCtx` переключён на фичу).
@@ -589,6 +643,10 @@ fn item_groups(
 #[serde(default)]
 struct TxForm {
     occurred_on: String,
+    /// Время «ЧЧ:ММ» в поясе сервера; пусто — без времени (у новой операции за сегодня — «сейчас»).
+    occurred_time: String,
+    /// Время, с которым форма открыта: не тронули — время с секундами (из SMS) не обрезается до минут.
+    time_was: String,
     tx_kind: String,
     account_code: String,
     refund: String,
@@ -730,8 +788,9 @@ struct FormPage {
 }
 
 /// Поля формы, у которых свой текст ошибки рядом с полем.
-const FIELDS: [&str; 13] = [
+const FIELDS: [&str; 14] = [
     "occurred_on",
+    "occurred_at",
     "account_code",
     "tx_kind",
     "description",
@@ -874,7 +933,25 @@ impl TxForm {
         }
     }
 
-    fn to_input(&self) -> Result<TransactionInput, AppError> {
+    /// Время для API: не тронутое при правке — не передаётся (остаётся прежним), пустое — у новой операции не
+    /// передаётся (за сегодня — «сейчас»), при правке — убирается.
+    fn occurred_at(&self, editing: bool) -> Result<Option<String>, AppError> {
+        let time = self.occurred_time.trim();
+        if editing && time == self.time_was.trim() {
+            return Ok(None);
+        }
+        if time.is_empty() {
+            return Ok(editing.then(String::new));
+        }
+        let date: NaiveDate = self.occurred_on.parse().map_err(|_| invalid("occurred_on", "err.bad_date"))?;
+        let t = NaiveTime::parse_from_str(time, "%H:%M")
+            .or_else(|_| NaiveTime::parse_from_str(time, "%H:%M:%S"))
+            .map_err(|_| invalid("occurred_at", "err.bad_time"))?;
+        let at = crate::domain::local_moment(date, t).ok_or_else(|| invalid("occurred_at", "err.bad_time"))?;
+        Ok(Some(at.to_rfc3339()))
+    }
+
+    fn to_input(&self, editing: bool) -> Result<TransactionInput, AppError> {
         let v = |m: String| AppError::Validation(m);
         let money = |field: &str, s: &str| opt(s).map(|s| parse_money(field, &s)).transpose().map_err(v);
         let number = |field: &str, s: &str| opt(s).map(|s| kernel::web::parse_number(field, &s)).transpose().map_err(v);
@@ -909,6 +986,7 @@ impl TxForm {
         }
         Ok(TransactionInput {
             occurred_on: self.occurred_on.parse().map_err(|_| invalid("occurred_on", "err.bad_date"))?,
+            occurred_at: self.occurred_at(editing)?,
             tx_kind: self.kind().to_string(),
             account_code: self.account_code.clone(),
             refund: !transfer && self.refund == "1",
@@ -942,8 +1020,11 @@ impl TxForm {
     fn from_dto(t: &TransactionDto) -> Self {
         let num = |d: Option<Decimal>| d.map(|d| d.normalize().to_string()).unwrap_or_default();
         let col = |f: &dyn Fn(&ItemDto) -> String| t.items.iter().map(f).collect::<Vec<String>>();
+        let time = t.occurred_at.map(|at| at.with_timezone(&chrono::Local).format("%H:%M").to_string());
         Self {
             occurred_on: t.occurred_on.to_string(),
+            occurred_time: time.clone().unwrap_or_default(),
+            time_was: time.unwrap_or_default(),
             tx_kind: t.tx_kind.clone(),
             account_code: t.account_code.clone(),
             refund: if t.refund { "1".into() } else { String::new() },
@@ -1080,7 +1161,7 @@ async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>, Query(q)
 
 async fn create(State(svc): Svc, Extension(page): Extension<PageCtx>, Form(f): Form<TxForm>) -> PageResult {
     let s = page.session.scope();
-    let result = async { svc.create(s.project_id, s.user_id, f.to_input()?).await }.await;
+    let result = async { svc.create(s.project_id, s.user_id, f.to_input(false)?).await }.await;
     match result {
         Ok(_) => Ok(see_other_flash(&page.config, &back_or_list(&f.back), Flash::ok(page.t("toast.saved")))),
         Err(e @ (AppError::Validation(_) | AppError::Invalid(_) | AppError::Conflict(_))) => {
@@ -1107,7 +1188,7 @@ async fn update(
     Form(f): Form<TxForm>,
 ) -> PageResult {
     let p = page.session.project_id;
-    let result = async { svc.update(p, id, f.to_input()?).await }.await;
+    let result = async { svc.update(p, id, f.to_input(true)?).await }.await;
     match result {
         Ok(_) => Ok(see_other_flash(&page.config, &back_or_list(&f.back), Flash::ok(page.t("toast.saved")))),
         Err(e @ (AppError::Validation(_) | AppError::Invalid(_) | AppError::Conflict(_))) => {
@@ -1341,7 +1422,7 @@ mod tests {
             ["", "SNACKS", "50", "Круассан", "2", "pcs", "25", "3"],
             ["", "", "", "", "1", "pcs", "", "0"],
         ]);
-        let input = f.to_input().unwrap();
+        let input = f.to_input(false).unwrap();
         assert!(input.replace_items);
         assert_eq!(input.items.len(), 2);
         assert_eq!(
@@ -1353,10 +1434,30 @@ mod tests {
             (x.amount, x.price_per_unit, x.quantity, x.discount, x.name.as_deref()),
             (None, Some(Decimal::from(25)), Some(Decimal::from(2)), Some(Decimal::from(3)), Some("Круассан"))
         );
-        let bad = form(&[["nope", "FOOD", "1", "", "", "pcs", "", ""]]).to_input().unwrap_err();
+        let bad = form(&[["nope", "FOOD", "1", "", "", "pcs", "", ""]]).to_input(false).unwrap_err();
         assert!(matches!(bad, AppError::Invalid(p) if p.field == "items[1].id"));
-        let bad = form(&[["", "FOOD", "abc", "", "", "pcs", "", ""]]).to_input().unwrap_err();
+        let bad = form(&[["", "FOOD", "abc", "", "", "pcs", "", ""]]).to_input(false).unwrap_err();
         assert!(bad.to_string().starts_with("items[1].amount: "));
+    }
+
+    /// Время в форме: новая операция с пустым временем — не передаётся (за сегодня сервер подставит «сейчас»);
+    /// при правке нетронутое — не передаётся (секунды из SMS сохраняются), очищенное — убирается.
+    #[test]
+    fn form_time_to_input() {
+        use chrono::TimeZone;
+        let mut f = form(&[["", "FOOD", "10", "", "", "pcs", "", ""]]);
+        assert_eq!(f.to_input(false).unwrap().occurred_at, None);
+        f.occurred_time = "14:27".into();
+        let at = chrono::Local.with_ymd_and_hms(2026, 10, 18, 14, 27, 0).unwrap().with_timezone(&chrono::Utc);
+        let sent = f.to_input(false).unwrap().occurred_at.unwrap();
+        assert_eq!(chrono::DateTime::parse_from_rfc3339(&sent).unwrap(), at);
+        f.time_was = "14:27".into();
+        assert_eq!(f.to_input(true).unwrap().occurred_at, None, "не тронули");
+        f.occurred_time = String::new();
+        assert_eq!(f.to_input(true).unwrap().occurred_at.as_deref(), Some(""), "очистили");
+        assert_eq!(f.to_input(false).unwrap().occurred_at, None);
+        f.occurred_time = "25:61".into();
+        assert!(matches!(f.to_input(false).unwrap_err(), AppError::Invalid(p) if p.field == "occurred_at"));
     }
 
     /// «Для кого» (шаг 6): без «Разные получатели» все позиции — «Для кого по умолчанию», с ним — свои
@@ -1365,14 +1466,15 @@ mod tests {
     fn form_recipients_to_input() {
         let mut f = form(&[["", "FOOD", "10", "", "", "pcs", "", ""], ["", "CAFE", "5", "", "", "pcs", "", ""]]);
         f.item_for = vec!["".into(), "ANNA".into()];
-        let i = f.to_input().unwrap();
+        let i = f.to_input(false).unwrap();
         assert!(i.for_person_code.is_none() && i.items.iter().all(|x| x.for_person_code.is_none()));
         f.for_default = Some("PINPAN".into());
-        let i = f.to_input().unwrap();
+        let i = f.to_input(false).unwrap();
         assert_eq!(i.for_person_code.as_deref(), Some("PINPAN"));
         assert!(i.items.iter().all(|x| x.for_person_code.as_deref() == Some("PINPAN")));
         f.for_split = "1".into();
-        let who: Vec<Option<String>> = f.to_input().unwrap().items.into_iter().map(|x| x.for_person_code).collect();
+        let who: Vec<Option<String>> =
+            f.to_input(false).unwrap().items.into_iter().map(|x| x.for_person_code).collect();
         assert_eq!(who, vec![Some(String::new()), Some("ANNA".into())]);
     }
 

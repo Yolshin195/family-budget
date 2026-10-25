@@ -4,7 +4,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use kernel::error::{AppError, AppResult};
 use kernel::i18n::Lang;
 use kernel::pagination::Pagination;
@@ -16,8 +16,10 @@ use kernel::testing::TestDb;
 
 use crate::adapters::memory::InMemoryTransactionRepository;
 use crate::adapters::postgres::PostgresTransactionRepository;
-use crate::domain::{AccountCurrency, Description, Draft, ItemDraft, ItemsDraft, Transaction, TransactionData};
-use crate::dto::{ExternalRefInput, ItemInput, LineDto, ListQuery, TransactionInput, TranslationInput};
+use crate::domain::{
+    AccountCurrency, Description, Draft, ItemDraft, ItemsDraft, TimeInput, Transaction, TransactionData,
+};
+use crate::dto::{ExternalRefInput, ItemInput, LineDto, ListQuery, TransactionDto, TransactionInput, TranslationInput};
 use crate::ports::{
     AccountInfo, AccountsLookup, BudgetView, CategoriesLookup, CategoryInfo, CategoryLimit, CategoryRef, Deps,
     PeopleLookup, PersonInfo, PlaceInfo, PlacesLookup, PlanOccurrence, PlansLookup,
@@ -26,6 +28,12 @@ use crate::service::TransactionService;
 
 struct FakeAccounts;
 struct FakeCategories;
+
+/// Остаток по данным банка, записанный через `report_balance`: (проект, счёт, сумма, момент).
+type BankRow = (Uuid, String, Decimal, DateTime<Utc>);
+
+/// Записанные остатки по данным банка. Общие для всех тестов — у каждого теста свой проект.
+static BANK: std::sync::Mutex<Vec<BankRow>> = std::sync::Mutex::new(Vec::new());
 
 #[async_trait::async_trait]
 impl AccountsLookup for FakeAccounts {
@@ -59,6 +67,18 @@ impl AccountsLookup for FakeAccounts {
                 symbol: "₽".into(),
             },
         ])
+    }
+    async fn report_balance(&self, p: Uuid, code: &str, amount: Decimal, at: DateTime<Utc>) -> AppResult<()> {
+        // Как у счетов: более старый остаток не записывается.
+        let mut bank = BANK.lock().unwrap();
+        if bank.iter().all(|b| !(b.0 == p && b.1 == code && b.3 > at)) {
+            bank.retain(|b| !(b.0 == p && b.1 == code));
+            bank.push((p, code.into(), amount, at));
+        }
+        Ok(())
+    }
+    async fn bank_balance(&self, p: Uuid, code: &str) -> AppResult<Option<(Decimal, DateTime<Utc>)>> {
+        Ok(BANK.lock().unwrap().iter().find(|b| b.0 == p && b.1 == code).map(|b| (b.2, b.3)))
     }
 }
 
@@ -619,6 +639,7 @@ async fn second_opening_is_rejected_by_db() {
     let opening = || {
         let data = TransactionData {
             occurred_on: day(15),
+            time: TimeInput::Keep,
             description: Description::default(),
             plan: None,
             place_code: None,
@@ -1024,6 +1045,7 @@ fn archived_recipient_is_kept() {
     };
     let data = TransactionData {
         occurred_on: day(3),
+        time: TimeInput::Keep,
         description: Description::default(),
         plan: None,
         place_code: None,
@@ -1121,6 +1143,7 @@ fn sms(guid: &str) -> ExternalRefInput {
         provider: "imessage".into(),
         external_id: guid.into(),
         received_at: Some("2026-10-03T10:51:07+07:00".into()),
+        ..Default::default()
     }
 }
 
@@ -1447,4 +1470,237 @@ fn external_refs_are_in_openapi() {
     assert!(schemas["TransactionInput"]["properties"]["external_ref"].is_object());
     assert!(schemas["TransactionDto"]["properties"]["external_refs"].is_object());
     assert!(doc["paths"]["/api/transactions"]["post"]["responses"]["200"].is_object(), "повтор — 200");
+}
+
+// ---------------------------------------------------------------- время операции и остаток по данным банка
+
+/// Момент 2026-10-`n` в `hh:mm` по местному времени (`TZ` процесса — как у сервера), RFC 3339.
+fn local(n: u32, hh: u32, mm: u32) -> String {
+    use chrono::TimeZone;
+    chrono::Local.with_ymd_and_hms(2026, 10, n, hh, mm, 0).unwrap().to_rfc3339()
+}
+
+/// Момент 2026-10-`n` в `hh:mm` по Бангкоку, RFC 3339 — для миграции: она считает день в этом поясе.
+fn bkk(n: u32, hh: u32, mm: u32) -> String {
+    format!("2026-10-{n:02}T{hh:02}:{mm:02}:00+07:00")
+}
+
+fn at(s: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+}
+
+/// Расход на «Еду» в `n` число с временем `time` (RFC 3339; `None` — не передано).
+fn spent(n: u32, amount: &str, time: Option<String>) -> TransactionInput {
+    TransactionInput { occurred_on: day(n), occurred_at: time, ..receipt(&[("food", amount)]) }
+}
+
+on_each_repo! {
+    /// Время из запроса хранится; за сегодня без времени — «сейчас», за другой день — пусто; время другого дня —
+    /// ошибка поля `occurred_at`; правка без времени сохраняет время суток и переносит его на новую дату, "" — убирает.
+    async fn time_rules(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let t = svc.create(p, u, spent(3, "10", Some(local(3, 14, 27)))).await.unwrap();
+        assert_eq!(t.occurred_at, Some(at(&local(3, 14, 27))));
+        assert_eq!(svc.get(p, t.id).await.unwrap().occurred_at, t.occurred_at, "читается из хранилища таким же");
+
+        assert_eq!(svc.create(p, u, spent(2, "10", None)).await.unwrap().occurred_at, None, "другой день — без времени");
+        let today = chrono::Local::now().date_naive();
+        let before = Utc::now() - chrono::Duration::seconds(1);
+        let now = svc.create(p, u, TransactionInput { occurred_on: today, ..spent(3, "10", None) }).await.unwrap();
+        assert!(now.occurred_at.is_some_and(|t| t >= before && t <= Utc::now()), "сегодня — сейчас: {:?}", now.occurred_at);
+
+        let other_day = svc.create(p, u, spent(4, "10", Some(local(3, 14, 27)))).await.unwrap_err();
+        assert_eq!(problem(other_day), ("VALIDATION", "occurred_at".into()));
+        let bad = svc.create(p, u, spent(3, "10", Some("14:27".into()))).await.unwrap_err();
+        assert_eq!(problem(bad), ("VALIDATION", "occurred_at".into()));
+
+        let moved = svc.update(p, t.id, spent(5, "12", None)).await.unwrap();
+        assert_eq!((moved.occurred_on, moved.occurred_at), (day(5), Some(at(&local(5, 14, 27)))), "время суток остаётся");
+        let changed = svc.update(p, t.id, spent(5, "12", Some(local(5, 9, 5)))).await.unwrap();
+        assert_eq!(changed.occurred_at, Some(at(&local(5, 9, 5))));
+        assert_eq!(svc.update(p, t.id, spent(5, "12", Some(String::new()))).await.unwrap().occurred_at, None);
+        assert_eq!(svc.update(p, t.id, spent(6, "12", None)).await.unwrap().occurred_at, None, "без времени — без времени");
+    }
+}
+
+on_each_repo! {
+    /// Лента внутри дня — по времени операции, а не по времени внесения; операция без времени — по времени внесения.
+    async fn feed_is_ordered_by_time(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        // Вносим не по порядку: сначала поздние покупки, потом ранние (Mac спал, SMS обработаны позже).
+        let late = svc.create(p, u, spent(3, "30", Some(local(3, 16, 25)))).await.unwrap();
+        let early = svc.create(p, u, spent(3, "38.20", Some(local(3, 14, 26)))).await.unwrap();
+        let middle = svc.create(p, u, spent(3, "38.20", Some(local(3, 14, 27)))).await.unwrap();
+        let next_day = svc.create(p, u, spent(4, "1", Some(local(4, 8, 0)))).await.unwrap();
+        let ids = |list: Vec<TransactionDto>| list.into_iter().map(|t| t.id).collect::<Vec<_>>();
+        let list = svc.list(p, ListQuery::default(), Pagination { page: 0, size: 50 }).await.unwrap().content;
+        assert_eq!(ids(list), vec![next_day.id, late.id, middle.id, early.id]);
+        let feed = svc.feed(p, ListQuery { account_code: Some("CARD".into()), ..Default::default() }).await.unwrap();
+        assert_eq!(ids(feed.items), vec![next_day.id, late.id, middle.id, early.id]);
+        assert_eq!(feed.statement.unwrap().running.iter().map(|r| r.1).collect::<Vec<_>>(), vec![d("-107.40"), d("-106.40"), d("-76.40"), d("-38.20")], "нарастающий остаток — по времени");
+    }
+}
+
+on_each_repo! {
+    /// SMS, прикреплённое к ручной операции того же дня, задаёт её время (оно точнее); SMS другого дня — нет.
+    async fn attached_sms_sets_time(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let sms_at = |guid: &str, received: String| ExternalRefInput { received_at: Some(received), ..sms(guid) };
+        let manual = svc.create(p, u, spent(3, "45", Some(local(3, 10, 58)))).await.unwrap();
+        svc.attach(p, u, manual.id, sms_at("t1", local(3, 10, 51))).await.unwrap();
+        assert_eq!(svc.get(p, manual.id).await.unwrap().occurred_at, Some(at(&local(3, 10, 51))));
+        let yesterday = svc.create(p, u, spent(2, "45", Some(local(2, 20, 0)))).await.unwrap();
+        svc.attach(p, u, yesterday.id, sms_at("t2", local(3, 10, 52))).await.unwrap();
+        assert_eq!(svc.get(p, yesterday.id).await.unwrap().occurred_at, Some(at(&local(2, 20, 0))), "SMS другого дня");
+        // Время операции из текста SMS точнее времени получения: SMS пришло через 9 минут.
+        let late = svc.create(p, u, spent(3, "579", None)).await.unwrap();
+        let text = ExternalRefInput { occurred_at: Some(local(3, 1, 12)), ..sms_at("t3", local(3, 1, 21)) };
+        svc.attach(p, u, late.id, text).await.unwrap();
+        assert_eq!(svc.get(p, late.id).await.unwrap().occurred_at, Some(at(&local(3, 1, 12))));
+        let bad = ExternalRefInput { occurred_at: Some("01:12".into()), ..sms("t4") };
+        assert_eq!(problem(svc.attach(p, u, late.id, bad).await.unwrap_err()), ("VALIDATION", "occurred_at".into()));
+    }
+}
+
+on_each_repo! {
+    /// Остаток на момент: операции до дня момента, операции дня не позже момента и операции дня без времени.
+    async fn balance_at_moment(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        svc.create(p, u, spent(2, "100", None)).await.unwrap();
+        svc.create(p, u, spent(3, "10", Some(local(3, 9, 0)))).await.unwrap();
+        svc.create(p, u, spent(3, "20", None)).await.unwrap();
+        svc.create(p, u, spent(3, "40", Some(local(3, 18, 0)))).await.unwrap();
+        svc.create(p, u, spent(4, "80", Some(local(4, 9, 0)))).await.unwrap();
+        assert_eq!(svc.balance_at(p, "card", at(&local(3, 12, 0))).await.unwrap(), d("-130"));
+        assert_eq!(svc.balance_at(p, "CARD", at(&local(3, 18, 0))).await.unwrap(), d("-170"), "момент включительно");
+        assert_eq!(svc.balance_at(p, "CARD", at(&local(5, 0, 1))).await.unwrap(), d("-250"));
+        assert_eq!(svc.balance_at(p, "CASH", at(&local(5, 0, 1))).await.unwrap(), d("0"));
+    }
+}
+
+on_each_repo! {
+    /// Остаток из SMS записывается в счёт операции (у перевода — в указанный счёт операции) на время SMS; более старое
+    /// SMS не перезаписывает новое; счёт не из операции и неверная сумма — ошибка, и тогда ничего не создано.
+    async fn sms_balance_goes_to_account(svc) {
+        let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+        let with_balance = |guid: &str, received: String, balance: &str, account: Option<&str>| ExternalRefInput {
+            received_at: Some(received),
+            balance: Some(d(balance)),
+            account_code: account.map(Into::into),
+            ..sms(guid)
+        };
+        let create = |r: ExternalRefInput, amount: &str| TransactionInput { external_ref: Some(r), ..spent(3, amount, Some(local(3, 14, 27))) };
+        svc.create(p, u, create(with_balance("b1", local(3, 14, 27), "6510.29", None), "38.20")).await.unwrap();
+        assert_eq!(svc.bank_balance(p, "CARD").await.unwrap(), Some((d("6510.29"), at(&local(3, 14, 27)))));
+
+        // SMS пришли не по порядку: более раннее не перезаписывает более позднее.
+        svc.create(p, u, create(with_balance("b0", local(3, 14, 26), "6548.49", None), "38.20")).await.unwrap();
+        assert_eq!(svc.bank_balance(p, "CARD").await.unwrap(), Some((d("6510.29"), at(&local(3, 14, 27)))));
+
+        // Прикрепление к переводу: остаток — счёта зачисления.
+        let tr = svc.create(p, u, transfer("card", "cash", "500", None, None)).await.unwrap();
+        svc.attach(p, u, tr.id, with_balance("b2", local(3, 15, 0), "700", Some("cash"))).await.unwrap();
+        assert_eq!(svc.bank_balance(p, "CASH").await.unwrap(), Some((d("700"), at(&local(3, 15, 0)))));
+
+        // Момент остатка — время операции из текста SMS, а не время получения.
+        let text = ExternalRefInput { occurred_at: Some(local(3, 14, 40)), ..with_balance("b6", local(3, 14, 49), "6400", None) };
+        svc.create(p, u, create(text, "1")).await.unwrap();
+        assert_eq!(svc.bank_balance(p, "CARD").await.unwrap(), Some((d("6400"), at(&local(3, 14, 40)))));
+
+        let foreign = with_balance("b3", local(3, 16, 0), "1", Some("WISE"));
+        assert_eq!(problem(svc.create_once(p, u, create(foreign, "1")).await.unwrap_err()), ("VALIDATION", "external_ref.account_code".into()));
+        let precise = with_balance("b4", local(3, 16, 0), "1.00001", None);
+        assert_eq!(problem(svc.create_once(p, u, create(precise, "1")).await.unwrap_err()), ("VALIDATION", "external_ref.balance".into()));
+        assert!(matches!(svc.find_ref(p, "imessage", "b3").await.unwrap_err(), AppError::NotFound(_)), "операция не создана");
+        let manual = svc.create(p, u, receipt(&[("food", "5")])).await.unwrap();
+        let other = with_balance("b5", local(3, 16, 0), "1", Some("cash"));
+        assert_eq!(problem(svc.attach(p, u, manual.id, other).await.unwrap_err()).1, "account_code");
+        assert_eq!(svc.bank_balance(p, "CARD").await.unwrap(), Some((d("6400"), at(&local(3, 14, 40)))));
+    }
+}
+
+/// Миграция времени на старых данных: операции из SMS получают время SMS, остальные — время внесения, если внесли в
+/// тот же день по Бангкоку; начальные остатки и операции, внесённые другим днём, — без времени. Только на PostgreSQL.
+#[tokio::test]
+async fn occurred_at_migration_on_old_data() {
+    use crate::ports::TransactionRepository;
+    let Some(db) = TestDb::new("tx_time_mig").await else { return };
+    let mut before = sqlx::migrate!("./migrations");
+    let all = before.migrations.to_vec();
+    let time = 20261025100000;
+    assert!(all.iter().any(|m| m.version == time));
+    before.migrations = all.iter().filter(|m| m.version < time).cloned().collect::<Vec<_>>().into();
+    before.set_locking(false);
+    before.run(&db.pool).await.unwrap();
+    let (p, u) = (Uuid::new_v4(), Uuid::new_v4());
+    let (sms_id, late_sms_id, same_day_id, next_day_id, opening_id) =
+        (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+    let mut tx = db.pool.begin().await.unwrap();
+    // (операция, тип, дата, внесена) — внесена в 00:30 по Бангкоку: это ещё предыдущий день по UTC.
+    for (id, kind, n, created) in [
+        (sms_id, "EXPENSE", 25, bkk(25, 16, 40)),
+        (late_sms_id, "EXPENSE", 24, bkk(24, 11, 30)),
+        (same_day_id, "EXPENSE", 25, bkk(25, 0, 30)),
+        (next_day_id, "EXPENSE", 24, bkk(25, 9, 0)),
+        (opening_id, "OPENING", 25, bkk(25, 10, 0)),
+    ] {
+        sqlx::query("INSERT INTO fb_transactions (id, project_id, occurred_on, tx_kind, description_lang, created_by, created_at, opening_account) VALUES ($1, $2, $3, $4, 'RU', $5, $6, $7)")
+            .bind(id)
+            .bind(p)
+            .bind(day(n))
+            .bind(kind)
+            .bind(u)
+            .bind(at(&created))
+            .bind((kind == "OPENING").then_some("CARD"))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let (a, b) = if kind == "OPENING" {
+            (("ACCOUNT", "CARD"), ("SYSTEM", "OPENING"))
+        } else {
+            (("ACCOUNT", "CARD"), ("CATEGORY", "FOOD"))
+        };
+        for (pos, (rk, rc), amount) in [(1, a, "-10"), (2, b, "10")] {
+            sqlx::query("INSERT INTO fb_postings (transaction_id, position, ref_kind, ref_code, currency_code, amount) VALUES ($1, $2, $3, $4, 'THB', $5)")
+                .bind(id)
+                .bind(pos)
+                .bind(rk)
+                .bind(rc)
+                .bind(d(amount))
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+    }
+    // Два SMS у одной операции — берётся раннее; SMS другого дня времени не даёт.
+    for (guid, id, received) in
+        [("s1", sms_id, bkk(25, 14, 27)), ("s2", sms_id, bkk(25, 14, 29)), ("s3", late_sms_id, bkk(25, 11, 3))]
+    {
+        sqlx::query("INSERT INTO fb_external_refs (id, project_id, provider, external_id, transaction_id, link, received_at, created_by) VALUES ($1, $2, 'imessage', $3, $4, 'MATCHED', $5, $6)")
+            .bind(Uuid::new_v4())
+            .bind(p)
+            .bind(guid)
+            .bind(id)
+            .bind(at(&received) + chrono::Duration::milliseconds(345))
+            .bind(u)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    tx.commit().await.unwrap();
+    let mut after = sqlx::migrate!("./migrations");
+    after.set_locking(false);
+    after.run(&db.pool).await.unwrap();
+
+    let repo = PostgresTransactionRepository::new(db.pool.clone());
+    let time = |id: Uuid| {
+        let repo = &repo;
+        async move { repo.find(p, id).await.unwrap().unwrap().occurred_at }
+    };
+    assert_eq!(time(sms_id).await, Some(at(&bkk(25, 14, 27))), "раннее SMS, до секунды");
+    assert_eq!(time(late_sms_id).await, Some(at(&bkk(24, 11, 30))), "SMS другого дня — время внесения");
+    assert_eq!(time(same_day_id).await, Some(at(&bkk(25, 0, 30))), "день — по Бангкоку");
+    assert_eq!(time(next_day_id).await, None, "внесли на следующий день — время неизвестно");
+    assert_eq!(time(opening_id).await, None, "у начального остатка времени нет");
+    db.close().await;
 }

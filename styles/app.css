@@ -150,6 +150,18 @@
   .card-dashed { @apply border-dashed border-line-strong; }
   .card-link { @apply relative transition-colors hover:border-line-strong; }
   .account-actions { @apply relative z-10 -mx-2 mt-3 flex flex-wrap gap-1; }
+  /* Дата и время операции в одной строке, время — узкое; в тесной колонке время переносится под дату. */
+  .date-time { @apply flex flex-wrap gap-2; }
+  .date-time > [type=date] { @apply min-w-[7.5rem] flex-1; }
+  .date-time > [type=time] { @apply w-[6rem] flex-none; }
+  /* Иконка часов съедает место «PM»: время вводится с клавиатуры, на телефоне открывается системный выбор. */
+  .date-time > [type=time]::-webkit-calendar-picker-indicator { @apply hidden; }
+  /* Остаток по данным банка в карточке счёта: сходится — тихая строка, не сходится — предупреждение. */
+  .bank-check { @apply relative z-10 mt-3 space-y-1 rounded-lg border border-line px-3 py-2 text-sm; }
+  .bank-check-warn { @apply border-warn/30 bg-warn-soft; }
+  .bank-check-title, .bank-check-diff, .bank-check-ok { @apply inline-flex items-center gap-1; }
+  .bank-check-diff { @apply font-medium text-warn; }
+  .bank-check-ok { @apply text-xs text-income; }
   .stretched::after { content: ''; @apply absolute inset-0 rounded-xl; }
   .section-title { @apply text-base font-semibold; }
   /* relative: скрытые подписи (sr-only, absolute) остаются внутри прокрутки и не растягивают страницу на телефоне */

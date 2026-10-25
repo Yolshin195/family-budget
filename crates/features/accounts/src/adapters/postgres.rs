@@ -2,15 +2,20 @@
 //! `query_as` проверяет SQL в рантайме — крейт собирается без БД и без `.sqlx`-кэша.
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use kernel::error::{AppError, AppResult};
+use rust_decimal::Decimal;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 #[allow(unused_imports)]
-use crate::domain::{Account, AccountAccountKind, AccountNameLang};
+use crate::domain::{Account, AccountAccountKind, AccountNameLang, BankBalance};
 use crate::ports::AccountRepository;
 
 const COLUMNS: &str = "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, account_kind, currency_code, holder_user_id";
+/// Для чтения: ещё остаток по данным банка (его пишет только `set_bank_balance`).
+const SELECT: &str = "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, account_kind, currency_code, \
+                      holder_user_id, bank_balance, bank_balance_at";
 
 pub struct PostgresAccountRepository {
     pool: PgPool,
@@ -36,6 +41,8 @@ struct Row {
     account_kind: String,
     currency_code: String,
     holder_user_id: Option<uuid::Uuid>,
+    bank_balance: Option<Decimal>,
+    bank_balance_at: Option<DateTime<Utc>>,
 }
 
 impl TryFrom<Row> for Account {
@@ -56,6 +63,7 @@ impl TryFrom<Row> for Account {
                 .ok_or_else(|| bad_value("account_kind", &r.account_kind))?,
             currency_code: r.currency_code,
             holder_user_id: r.holder_user_id,
+            bank: r.bank_balance.zip(r.bank_balance_at).map(|(amount, at)| BankBalance { amount, at }),
         })
     }
 }
@@ -115,14 +123,14 @@ impl AccountRepository for PostgresAccountRepository {
     }
 
     async fn find_by_code(&self, project_id: Uuid, code: &str) -> AppResult<Option<Account>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_accounts WHERE project_id = $1 AND code = $2");
+        let sql = format!("SELECT {SELECT} FROM fb_accounts WHERE project_id = $1 AND code = $2");
         let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
         row.map(Account::try_from).transpose()
     }
 
     async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Account>> {
         let sql = format!(
-            "SELECT {COLUMNS} FROM fb_accounts WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY code LIMIT $3 OFFSET $4"
+            "SELECT {SELECT} FROM fb_accounts WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY code LIMIT $3 OFFSET $4"
         );
         let rows: Vec<Row> = sqlx::query_as(&sql)
             .bind(project_id)
@@ -148,5 +156,26 @@ impl AccountRepository for PostgresAccountRepository {
         let r =
             sqlx::query("DELETE FROM fb_accounts WHERE project_id = $1").bind(project_id).execute(&self.pool).await?;
         Ok(r.rows_affected())
+    }
+
+    async fn set_bank_balance(
+        &self,
+        project_id: Uuid,
+        code: &str,
+        amount: Decimal,
+        at: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        // Условие — в самом UPDATE: два SMS одновременно не перезапишут новый остаток старым.
+        let r = sqlx::query(
+            "UPDATE fb_accounts SET bank_balance = $3, bank_balance_at = $4 \
+             WHERE project_id = $1 AND code = $2 AND (bank_balance_at IS NULL OR bank_balance_at <= $4)",
+        )
+        .bind(project_id)
+        .bind(code)
+        .bind(amount)
+        .bind(at)
+        .execute(&self.pool)
+        .await?;
+        Ok(r.rows_affected() > 0)
     }
 }
