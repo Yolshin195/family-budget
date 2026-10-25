@@ -1752,15 +1752,47 @@ impl McpService {
         if let Some(o) = old {
             summary.push_str(&format!(" Replaced {} from the same date.", limit_text(o, base)));
         }
-        if let Some(later) = rules
+        // Сроки — по правилам после сохранения: более позднее правило заменяет прежние с начала своего периода.
+        let mut after: Vec<Limit> = rules.iter().filter(|l| l.id != saved.id).cloned().collect();
+        after.push(saved.clone());
+        let spans = limit_spans(&after, &saved.category_code);
+        let span_of = |id: Uuid| spans.iter().find(|(l, _)| l.id == id).and_then(|(_, s)| *s);
+        match span_of(saved.id) {
+            Some(kernel::limits::Span { to: Some(to), .. }) => {
+                let next = to.succ_opt().unwrap_or(to);
+                if let Some(later) = after
+                    .iter()
+                    .filter(|l| l.valid_from > saved.valid_from && period_start(&l.period, l.valid_from) == next)
+                    .min_by_key(|l| l.valid_from)
+                {
+                    summary.push_str(&format!(
+                        " Note: a later rule from {} ({}) takes over from {next}.",
+                        later.valid_from,
+                        limit_text(later, base)
+                    ));
+                }
+            }
+            Some(_) => {}
+            None => summary.push_str(
+                " Note: a later rule of this category starts no later than this one, so this rule never applies.",
+            ),
+        }
+        // Более ранние правила, которые новое перекрыло целиком (его период длиннее и начинается не позже).
+        let overridden: Vec<String> = rules
             .iter()
-            .filter(|l| l.category_code == cat.code && l.valid_from > saved.valid_from)
-            .min_by_key(|l| l.valid_from)
-        {
+            .filter(|l| {
+                l.category_code == saved.category_code
+                    && l.id != saved.id
+                    && l.valid_from < saved.valid_from
+                    && in_force_somewhere(&rules, l)
+                    && span_of(l.id).is_none()
+            })
+            .map(|l| format!("{} from {}", limit_text(l, base), l.valid_from))
+            .collect();
+        if !overridden.is_empty() {
             summary.push_str(&format!(
-                " Note: a later rule from {} ({}) takes over from that date.",
-                later.valid_from,
-                limit_text(later, base)
+                " It replaces earlier rules from {from}, so these no longer apply at all: {}.",
+                overridden.join("; ")
             ));
         }
         Ok(ToolOutput {
@@ -1773,8 +1805,8 @@ impl McpService {
         self.check(caller, Right::read("limits"))?;
         let today = today();
         let mut rules = self.deps.limits.list(caller.project_id).await?;
-        let key = |l: &Limit| (period_start(&l.period, l.valid_from), l.valid_from);
-        rules.sort_by(|x, y| x.category_code.cmp(&y.category_code).then(key(y).cmp(&key(x))));
+        // Внутри категории новые (по valid_from) сначала: более позднее правило заменяет прежние.
+        rules.sort_by(|x, y| x.category_code.cmp(&y.category_code).then(y.valid_from.cmp(&x.valid_from)));
         let categories = self.deps.directories.categories(caller.project_id).await?;
         let title = |code: &str| {
             categories.iter().find(|c| c.code == code).map(|c| c.name.show(caller.lang).to_string()).unwrap_or_default()
@@ -1786,7 +1818,7 @@ impl McpService {
         let in_force_now = rules.iter().filter(|l| current(l) && l.amount.is_some()).count();
         Ok(ToolOutput {
             summary: format!(
-                "{} limit rules, {} in force today; amounts in {}. A rule applies from the start of the period containing valid_from until the next rule of its category, and covers subcategories. Amount 0 = no spending allowed; removed = no limit from that date.",
+                "{} limit rules, {} in force today; amounts in {}. A rule applies from the start of the period containing valid_from until the period start of a later (by valid_from) rule of its category, even if that later rule has a longer period, and covers subcategories. Amount 0 = no spending allowed; removed = no limit from that date.",
                 rules.len(),
                 in_force_now,
                 caller.base_currency
@@ -2090,12 +2122,15 @@ fn show_rate(v: Decimal) -> Decimal {
     v.round_dp(6).normalize()
 }
 
-/// Правило категории, действующее на дату: последнее по началу своего периода (при равном — по `valid_from`).
+/// Правило категории, действующее на дату: более позднее по `valid_from` правило заменяет прежние с начала
+/// своего периода (`kernel::limits::spans`).
+/// Правило действовало хоть день до сохранения нового (иначе о нём нечего сообщать).
+fn in_force_somewhere(rules: &[Limit], rule: &Limit) -> bool {
+    limit_spans(rules, &rule.category_code).iter().any(|(l, s)| l.id == rule.id && s.is_some())
+}
+
 fn in_force<'a>(rules: &'a [Limit], category: &str, date: NaiveDate) -> Option<&'a Limit> {
-    rules
-        .iter()
-        .filter(|l| l.category_code == category && period_start(&l.period, l.valid_from) <= date)
-        .max_by_key(|l| (period_start(&l.period, l.valid_from), l.valid_from))
+    limit_spans(rules, category).into_iter().find(|(_, s)| s.is_some_and(|s| s.contains(date))).map(|(l, _)| l)
 }
 
 /// «12000 THB per month» или «limit removed».

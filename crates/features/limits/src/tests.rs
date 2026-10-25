@@ -158,3 +158,32 @@ async fn removed_limit_has_no_amount() {
         "0 — нулевой лимит, а не снятие"
     );
 }
+
+/// Issue #58: недельный лимит со среды 14.10, затем «Снять лимит» (месяц) с 22.10 — текущим считается снятие,
+/// недельный лимит помечен «заменён»; более раннее месячное правило сентября тоже «заменено».
+#[tokio::test]
+async fn later_longer_rule_is_current() {
+    use crate::domain::{LimitLimitPeriod, RuleState, rule_states};
+    let svc = service();
+    let p = Uuid::new_v4();
+    let date = |m, d| chrono::NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+    let rule = |m, d, period: &str, removed: bool| LimitInput {
+        valid_from: date(m, d),
+        limit_period: period.into(),
+        amount: (!removed).then(|| rust_decimal::Decimal::new(1000, 0)),
+        removed,
+        ..input(1)
+    };
+    svc.create(p, rule(9, 1, "MONTH", false)).await.unwrap();
+    svc.create(p, rule(10, 14, "WEEK", false)).await.unwrap();
+    svc.create(p, rule(10, 22, "MONTH", true)).await.unwrap();
+    let mut all = svc.all(p).await.unwrap();
+    all.sort_by_key(|l| std::cmp::Reverse(l.valid_from));
+    let keys: Vec<_> = all.iter().map(|l| (LimitLimitPeriod::parse(&l.limit_period).unwrap(), l.valid_from)).collect();
+    let states = rule_states(&keys, date(10, 25));
+    let state = |current, superseded| RuleState { current, superseded };
+    assert!(all[0].removed);
+    assert_eq!(states, vec![state(true, false), state(false, true), state(false, true)]);
+    // До 01.10 действует сентябрьский месячный лимит; снятие и неделя ещё не начались.
+    assert_eq!(rule_states(&keys, date(9, 20)), vec![state(false, false), state(false, true), state(true, false)]);
+}
