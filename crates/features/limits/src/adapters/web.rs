@@ -30,7 +30,7 @@ struct Row {
     category: String,
     /// Уровень категории в дереве (отступ строки).
     depth: usize,
-    /// Есть более поздний лимит этой категории, уже вступивший в силу.
+    /// Правило заменено более поздним: не действует ни дня или его срок кончился до сегодня.
     superseded: bool,
     /// Правило вступает в силу раньше `valid_from` — с начала своего периода.
     early: bool,
@@ -60,21 +60,29 @@ async fn show(svc: &LimitService, page: PageCtx, error: Option<String>) -> PageR
     let today = chrono::Local::now().date_naive();
     let categories = svc.ref_choices(p, page.lang).await?;
     let all = svc.all(p).await?;
-    // Порядок строк — как в дереве категорий; внутри категории новые сначала.
+    // Порядок строк — как в дереве категорий; внутри категории новые (по «Действует с») сначала.
     let mut rows = Vec::new();
     for c in &categories {
         let mut mine: Vec<&LimitDto> = all.iter().filter(|l| l.category_code == c.code).collect();
-        // Правило действует с начала своего периода; при одинаковом начале — более позднее по дате.
-        mine.sort_by_key(|l| std::cmp::Reverse((l.effective_from, l.valid_from)));
-        let current = mine.iter().find(|l| l.effective_from <= today).map(|l| l.id);
-        for l in mine {
-            let superseded = l.effective_from <= today && Some(l.id) != current;
-            let early = l.effective_from < l.valid_from;
-            rows.push(Row { dto: l.clone(), category: c.label.clone(), depth: c.depth.min(5), superseded, early });
-        }
+        mine.sort_by_key(|l| std::cmp::Reverse(l.valid_from));
+        rows.extend(rows_of(&mine, today).into_iter().map(|(l, superseded)| Row {
+            dto: l.clone(),
+            category: c.label.clone(),
+            depth: c.depth.min(5),
+            superseded,
+            early: l.effective_from < l.valid_from,
+        }));
     }
     let page = page.for_feature(crate::NAME, crate::i18n::dict);
     render(&ListPage { page, rows, categories, today, error })
+}
+
+/// Правила одной категории с пометкой «заменён» на дату `today`. Более позднее правило заменяет прежние с
+/// начала своего периода, даже если период другой (`kernel::limits::spans`); будущее правило не «заменено».
+pub(crate) fn rows_of<'a>(mine: &[&'a LimitDto], today: chrono::NaiveDate) -> Vec<(&'a LimitDto, bool)> {
+    let keys: Vec<_> = mine.iter().map(|l| (l.effective_from, l.valid_from)).collect();
+    let spans = kernel::limits::spans(&keys);
+    mine.iter().zip(spans).map(|(l, s)| (*l, s.is_none_or(|s| s.ended_before(today)))).collect()
 }
 
 async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {

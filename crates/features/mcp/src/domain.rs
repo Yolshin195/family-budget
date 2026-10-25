@@ -810,12 +810,8 @@ pub fn parse_signed_amount(field: &str, value: &str) -> Result<Decimal, String> 
 
 /// Начало периода лимита (WEEK — с понедельника, MONTH — 1-е число, YEAR — 1 января), содержащего `date`.
 pub fn period_start(period: &str, date: NaiveDate) -> NaiveDate {
-    use chrono::Datelike;
-    match period {
-        "WEEK" => date - chrono::Days::new(u64::from(date.weekday().num_days_from_monday())),
-        "YEAR" => NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap_or(date),
-        _ => date.with_day(1).unwrap_or(date),
-    }
+    use kernel::limits::LimitPeriod;
+    LimitPeriod::parse(period).unwrap_or(LimitPeriod::Month).start(date)
 }
 
 /// Сумма из текста: «120.50», «120,50», «1 200», «120+45» (как в поле суммы интерфейса); > 0.

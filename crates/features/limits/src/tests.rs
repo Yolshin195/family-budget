@@ -158,3 +158,26 @@ async fn removed_limit_has_no_amount() {
         "0 — нулевой лимит, а не снятие"
     );
 }
+
+/// #58: недельный лимит с 14.10, затем «Снять лимит» месячным правилом с 22.10 — текущим считается
+/// снятие (оно действует с 01.10), недельный помечен «заменён».
+#[tokio::test]
+async fn longer_rule_is_current_on_limits_page() {
+    let svc = service();
+    let p = Uuid::new_v4();
+    let date = |m: u32, d: u32| chrono::NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+    let week = svc.create(p, LimitInput { valid_from: date(10, 14), ..input(1) }).await.unwrap();
+    let removal =
+        LimitInput { valid_from: date(10, 22), limit_period: "MONTH".into(), amount: None, removed: true, ..input(1) };
+    let removal = svc.create(p, removal).await.unwrap();
+    let future = svc.create(p, LimitInput { valid_from: date(12, 2), ..input(1) }).await.unwrap();
+    let mut all = svc.all(p).await.unwrap();
+    all.sort_by_key(|l| std::cmp::Reverse(l.valid_from));
+    let mine: Vec<_> = all.iter().collect();
+    let marks: Vec<_> =
+        crate::adapters::web::rows_of(&mine, date(10, 25)).into_iter().map(|(l, s)| (l.id, s)).collect();
+    assert_eq!(marks, vec![(future.id, false), (removal.id, false), (week.id, true)]);
+    // До начала октября действовал бы недельный — но снятие начинается раньше него, поэтому он не действует ни дня.
+    let marks: Vec<_> = crate::adapters::web::rows_of(&mine, date(9, 1)).into_iter().map(|(l, s)| (l.id, s)).collect();
+    assert_eq!(marks[2], (week.id, true));
+}

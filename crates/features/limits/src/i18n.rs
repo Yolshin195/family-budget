@@ -8,9 +8,9 @@ pub fn dict(key: &str) -> Option<Tr> {
         "period" => ("Период", "Period", "ช่วงเวลา"),
         "valid_from" => ("Действует с", "Valid from", "มีผลตั้งแต่"),
         "hint" => (
-            "Лимит действует на всё поддерево категории, в базовой валюте проекта, с начала периода, в который попала дата, и до следующего лимита этой категории. 0 — тратить нельзя совсем; «Снять лимит» — с этой даты лимита нет, прошлые периоды его сохраняют.",
-            "A limit covers the whole subtree of the category, in the project base currency, from the start of the period containing the date until the next limit for that category. 0 means no spending at all; “Remove limit” means no limit from that date, past periods keep theirs.",
-            "วงเงินครอบคลุมหมวดหมู่ย่อยทั้งหมด ในสกุลเงินหลักของโปรเจกต์ ตั้งแต่ต้นช่วงเวลาที่มีวันที่นั้น จนกว่าจะมีวงเงินใหม่ของหมวดนั้น 0 คือห้ามใช้จ่ายเลย ส่วน «ยกเลิกวงเงิน» คือไม่มีวงเงินตั้งแต่วันนั้น ช่วงที่ผ่านมายังคงวงเงินเดิม",
+            "Лимит действует на всё поддерево категории, в базовой валюте проекта, с начала периода, в который попала дата, и до начала периода более позднего лимита этой категории (даже с другим периодом). 0 — тратить нельзя совсем; «Снять лимит» — с этой даты лимита нет, прошлые периоды его сохраняют.",
+            "A limit covers the whole subtree of the category, in the project base currency, from the start of the period containing the date until the start of the period of a later limit for that category (even with a different period). 0 means no spending at all; “Remove limit” means no limit from that date, past periods keep theirs.",
+            "วงเงินครอบคลุมหมวดหมู่ย่อยทั้งหมด ในสกุลเงินหลักของโปรเจกต์ ตั้งแต่ต้นช่วงเวลาที่มีวันที่นั้น จนถึงต้นช่วงเวลาของวงเงินที่ตั้งทีหลังของหมวดนั้น (แม้ช่วงเวลาจะต่างกัน) 0 คือห้ามใช้จ่ายเลย ส่วน «ยกเลิกวงเงิน» คือไม่มีวงเงินตั้งแต่วันนั้น ช่วงที่ผ่านมายังคงวงเงินเดิม",
         ),
         "remove" => ("Снять лимит с даты", "Remove limit from date", "ยกเลิกวงเงินตั้งแต่วันที่"),
         "remove_hint" => (

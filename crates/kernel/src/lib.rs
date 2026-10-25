@@ -7,6 +7,7 @@ pub mod crypto;
 pub mod error;
 pub mod feature;
 pub mod i18n;
+pub mod limits;
 pub mod pagination;
 pub mod rates;
 pub mod search;

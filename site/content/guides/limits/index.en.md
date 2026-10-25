@@ -26,7 +26,7 @@ A limit applies to the whole branch: a limit on "Food" includes both "Groceries"
 
 ## 3. When a limit changes
 
-Decided to spend more on food from next month? Add a new limit for the same category with a "Valid from" date. A limit applies to the whole period containing that date: a monthly limit set on October 20 covers all of October. The old one stays in the list marked "superseded" and keeps applying to past periods, so your history isn't distorted, and the yearly budget adds the limits up month by month.
+Decided to spend more on food from next month? Add a new limit for the same category with a "Valid from" date. A limit applies to the whole period containing that date: a monthly limit set on October 20 covers all of October. The old one stays in the list marked "superseded" and keeps applying to past periods, so your history isn't distorted, and the yearly budget adds the limits up month by month. A new limit replaces the old one from the start of its own period, even if the period is different: a monthly limit or "Remove limit from date" with the "Month" period set after a weekly one applies from the 1st, a yearly one from January 1, and the old limit no longer counts in those periods.
 
 Don't want to limit a category any more? Choose it and a date, then click "Remove limit from date": from that period on there is no limit, past periods keep theirs, and the list marks the rule "limit removed". A limit of 0 is different: you can't spend on the category at all, and any expense is over the limit — a way to ban yourself from, say, food delivery. Delete a limit added by mistake with "Delete"; changed your mind — click "Undo" in the pop-up message.
 

@@ -1746,6 +1746,38 @@ async fn zero_limit_and_removed_limit() {
     assert!(rows.iter().any(|r| r["current"] == true && r["amount"] == "0"), "нулевой лимит действует сегодня");
 }
 
+/// #58: недельный лимит со среды 14.10, затем «Снять лимит» месячным правилом с 22.10 — снятие действует с
+/// 01.10 и перекрывает недельный целиком; `list_limits` считает текущим снятие.
+#[tokio::test]
+async fn longer_rule_replaces_shorter_one() {
+    let e = env();
+    e.grant(&["read", "limits:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let args = |amount: Option<&str>, period: &str, from: &str| SetLimitArgs {
+        category: "FOOD".into(),
+        amount: amount.map(Into::into),
+        period: Some(period.into()),
+        valid_from: Some(from.into()),
+        remove: amount.is_none().then_some(true),
+    };
+    e.svc.set_limit(&c, args(Some("1000"), "week", "2020-10-14")).await.unwrap();
+    let out = e.svc.set_limit(&c, args(None, "month", "2020-10-22")).await.unwrap();
+    assert!(out.summary.contains("removed from 2020-10-01"), "{}", out.summary);
+    assert!(out.summary.contains("no longer apply at all: 1000 THB per week from 2020-10-14"), "{}", out.summary);
+    let list = e.svc.list_limits(&c).await.unwrap();
+    let rows = list.data["limits"].as_array().unwrap().clone();
+    assert_eq!(rows[0]["valid_from"], "2020-10-22", "новые по valid_from сначала");
+    assert_eq!(rows[0]["current"], true, "{rows:?}");
+    assert_eq!(rows[1]["current"], false);
+    // Правило задним числом внутри срока нового: его заменяет более позднее с 01.10 — оно не действует вовсе.
+    let out = e.svc.set_limit(&c, args(Some("500"), "week", "2020-10-19")).await.unwrap();
+    assert!(
+        out.summary.contains("later rule from 2020-10-22") && out.summary.contains("never applies"),
+        "{}",
+        out.summary
+    );
+}
+
 #[test]
 fn period_start_of_week_month_year() {
     let day = NaiveDate::from_ymd_opt(2026, 10, 16).unwrap(); // пятница

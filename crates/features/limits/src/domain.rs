@@ -34,12 +34,13 @@ impl LimitLimitPeriod {
 
     /// Начало периода, в который попадает дата (неделя — с понедельника).
     pub fn start(&self, d: chrono::NaiveDate) -> chrono::NaiveDate {
-        use chrono::Datelike;
+        use kernel::limits::LimitPeriod as P;
         match self {
-            Self::Week => d - chrono::Days::new(d.weekday().num_days_from_monday() as u64),
-            Self::Month => d.with_day(1).unwrap_or(d),
-            Self::Year => d.with_ordinal(1).unwrap_or(d),
+            Self::Week => P::Week,
+            Self::Month => P::Month,
+            Self::Year => P::Year,
         }
+        .start(d)
     }
 }
 
