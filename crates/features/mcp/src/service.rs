@@ -506,7 +506,16 @@ impl McpService {
         let cat = |c: &CategoryInfo| json!({"code": c.code, "title": c.title, "names": c.search.split(kernel::search::SEP).collect::<Vec<_>>(), "parent": c.parent_code, "depth": c.depth, "month_limit": c.limit, "month_available": c.available});
         let mut data = base;
         data["default_account"] = json!(q.default_account);
-        data["accounts"] = q.accounts.iter().map(|a| json!({"code": a.code, "title": a.title, "currency": a.currency, "symbol": a.symbol, "balance": balance(&a.code), "has_rate": a.has_rate})).collect();
+        let mut accounts = Vec::new();
+        let mut off = Vec::new();
+        for a in &q.accounts {
+            let mut row = json!({"code": a.code, "title": a.title, "currency": a.currency, "symbol": a.symbol, "balance": balance(&a.code), "has_rate": a.has_rate});
+            if let Some(b) = self.deps.ledger.bank_balance(caller.project_id, &a.code).await? {
+                off.extend(bank_fields(&mut row, &b, &a.code, &a.currency));
+            }
+            accounts.push(row);
+        }
+        data["accounts"] = json!(accounts);
         data["expense_categories"] = q.categories.iter().filter(|c| c.kind == "EXPENSE").map(cat).collect();
         data["income_categories"] = q.categories.iter().filter(|c| c.kind == "INCOME").map(cat).collect();
         data["frequent_expense_categories"] = json!(q.frequent_expense);
@@ -527,11 +536,12 @@ impl McpService {
         data["my_person_code"] = json!(mine.map(|p| &p.code));
         Ok(ToolOutput {
             summary: format!(
-                "Project '{}', base currency {}, {} accounts, {} categories. Amounts of transactions are in the account currency.",
+                "Project '{}', base currency {}, {} accounts, {} categories. Amounts of transactions are in the account currency.{}",
                 caller.project_name,
                 caller.base_currency,
                 q.accounts.len(),
-                q.categories.len()
+                q.categories.len(),
+                bank_summary(&off)
             ),
             data,
         })
@@ -628,13 +638,17 @@ impl McpService {
         let date = parse_date("date", a.date.as_deref(), today)?;
         let q = self.quick(caller, today).await?;
         let balances = self.deps.ledger.balances(caller.project_id, date).await?;
-        let rows: Vec<Value> = q
-            .accounts
-            .iter()
-            .map(|a| json!({"code": a.code, "title": a.title, "currency": a.currency, "balance": balances.iter().find(|b| b.0 == a.code).map(|b| b.1).unwrap_or_default()}))
-            .collect();
+        let mut rows: Vec<Value> = Vec::new();
+        let mut off = Vec::new();
+        for a in &q.accounts {
+            let mut row = json!({"code": a.code, "title": a.title, "currency": a.currency, "balance": balances.iter().find(|b| b.0 == a.code).map(|b| b.1).unwrap_or_default()});
+            if let Some(b) = self.deps.ledger.bank_balance(caller.project_id, &a.code).await? {
+                off.extend(bank_fields(&mut row, &b, &a.code, &a.currency));
+            }
+            rows.push(row);
+        }
         Ok(ToolOutput {
-            summary: format!("Balances of {} accounts at the end of {date}.", rows.len()),
+            summary: format!("Balances of {} accounts at the end of {date}.{}", rows.len(), bank_summary(&off)),
             data: json!({"date": date, "accounts": rows}),
         })
     }
@@ -770,6 +784,7 @@ impl McpService {
         let by_default = a.account.is_none() && place_account.is_none();
         let account_code = self.account(&q, "account", a.account.as_deref().or(place_account))?;
         let mut draft = blank_draft(kind, date, account_code, caller.lang);
+        draft.occurred_at = a.time.as_deref().map(|t| parse_time("time", t, date)).transpose()?;
         draft.place_code = place.map(|p| p.code.clone());
         draft.for_person = for_person;
         draft.refund = kind == "EXPENSE" && a.refund.unwrap_or(false);
@@ -865,6 +880,7 @@ impl McpService {
         let from = self.account(&q, "from_account", Some(&a.from_account))?;
         let to = self.account(&q, "to_account", Some(&a.to_account))?;
         let mut draft = blank_draft("TRANSFER", date, from, caller.lang);
+        draft.occurred_at = a.time.as_deref().map(|t| parse_time("time", t, date)).transpose()?;
         draft.to_account_code = Some(to);
         draft.amount = Some(parse_amount("amount", &a.amount)?);
         draft.to_amount = a.to_amount.as_deref().map(|v| parse_amount("to_amount", v)).transpose()?;
@@ -902,6 +918,9 @@ impl McpService {
         let mut draft = old.draft();
         if let Some(d) = a.date.as_deref() {
             draft.occurred_on = parse_date("date", Some(d), old.occurred_on)?;
+        }
+        if let Some(t) = a.time.as_deref() {
+            draft.occurred_at = Some(parse_time("time", t, draft.occurred_on)?);
         }
         let q = self.quick(caller, draft.occurred_on).await?;
         if let Some(acc) = a.account.as_deref() {
@@ -2144,6 +2163,7 @@ fn plan_json(p: &Plan, lang: Lang) -> Value {
 fn blank_draft(kind: &str, date: NaiveDate, account_code: String, lang: Lang) -> TxDraft {
     TxDraft {
         occurred_on: date,
+        occurred_at: None,
         kind: kind.to_string(),
         account_code,
         refund: false,
@@ -2247,6 +2267,28 @@ fn item_from(
     })
 }
 
+/// Остаток по данным банка в строке счёта: сумма, момент (местное время) и разница «операции − банк» на тот же
+/// момент. Возвращает строку для сводки, если не сходится.
+fn bank_fields(row: &mut Value, b: &BankBalance, code: &str, currency: &str) -> Option<String> {
+    let diff = b.book - b.amount;
+    row["bank_balance"] = json!(b.amount);
+    row["bank_balance_at"] =
+        json!(b.at.with_timezone(&chrono::Local).to_rfc3339_opts(chrono::SecondsFormat::Secs, false));
+    row["bank_difference"] = json!(diff);
+    (!diff.is_zero()).then(|| format!("{code} ({:+} {currency})", diff.normalize()))
+}
+
+/// Сводка о счетах, где операции не сходятся с остатком из SMS банка.
+fn bank_summary(off: &[String]) -> String {
+    if off.is_empty() {
+        return String::new();
+    }
+    format!(
+        " Transactions do not match the balance from the latest bank SMS (bank_difference = transactions − bank at bank_balance_at) on: {}. Look for a missing, duplicate or wrong transaction around that time.",
+        off.join(", ")
+    )
+}
+
 fn tx_json(t: &Tx, lang: Lang) -> Value {
     let mut v = json!({
         "id": t.id,
@@ -2269,6 +2311,10 @@ fn tx_json(t: &Tx, lang: Lang) -> Value {
         if t.refund {
             v["refund"] = json!(true);
         }
+    }
+    // Время — местное, «HH:MM»; без него время операции неизвестно.
+    if let Some(at) = t.occurred_at {
+        v["time"] = json!(at.with_timezone(&chrono::Local).format("%H:%M").to_string());
     }
     if let Some(p) = t.plan_id {
         v["plan"] = json!({"id": p, "date": t.plan_date});

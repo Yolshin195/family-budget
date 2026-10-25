@@ -10,7 +10,7 @@
   <input type="hidden" name="plan_id" value="{{ f.plan_id }}">
   <input type="hidden" name="plan_date" value="{{ f.plan_date }}">
   <input type="hidden" name="back" value="{{ f.back }}">
-  <div class="grid gap-4 sm:grid-cols-3">
+  <div class="grid gap-4 sm:grid-cols-[auto_minmax(0,1.3fr)_minmax(0,1fr)]">
     <fieldset class="field">
       <legend class="label">{{ page.t("kind") }}</legend>
       <div class="seg" role="radiogroup">
@@ -20,7 +20,12 @@
       </div>
     </fieldset>
     <div class="field"><label class="label" for="occurred_on">{{ page.t("date") }}</label>
-      <input class="input" type="date" id="occurred_on" name="occurred_on" value="{{ f.occurred_on }}" required{% call m::aria(error, "occurred_on") %}{% endcall %}>{% call m::err(error, "occurred_on") %}{% endcall %}</div>
+      <div class="date-time">
+        <input class="input" type="date" id="occurred_on" name="occurred_on" value="{{ f.occurred_on }}" required{% call m::aria(error, "occurred_on") %}{% endcall %}>
+        <input class="input" type="time" id="occurred_time" name="occurred_time" value="{{ f.occurred_time }}" aria-label="{{ page.t("time") }}" title="{{ page.t("time_hint") }}"{% call m::aria(error, "occurred_at") %}{% endcall %}>
+      </div>
+      <input type="hidden" name="time_was" value="{{ f.time_was }}">
+      {% call m::err(error, "occurred_on") %}{% endcall %}{% call m::err(error, "occurred_at") %}{% endcall %}</div>
     <div class="field"><label class="label" for="account_code" data-label-flow="{{ page.t("account") }}" data-label-transfer="{{ page.t("from") }}">{% if f.kind() == "TRANSFER" %}{{ page.t("from") }}{% else %}{{ page.t("account") }}{% endif %}</label>
       <select class="input" id="account_code" name="account_code" required data-account{% call m::aria(error, "account_code") %}{% endcall %}>
         {% for a in accounts %}<option value="{{ a.code }}" data-cur="{{ a.tag }}" data-sym="{{ page.cur(a.tag) }}" data-rate="{{ self.rate_of(a.tag) }}" data-minor="{{ self.minor_of(a.code) }}" {% if f.account_code == a.code %}selected{% endif %}>{{ a.label }} · {{ a.tag }}</option>{% endfor %}

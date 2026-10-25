@@ -54,7 +54,13 @@
     {% for (v, cur, neg) in s.values %}<p class="stat-value{% if s.income %} text-income{% endif %}{% if *neg %} text-danger{% endif %}">{% call m::amount(v, page.cur(cur)) %}{% endcall %}</p>{% endfor %}</div>
   {% endfor %}
 </div>
-{% if statement.is_some() && page.can_write() %}
+{% if let Some(b) = bank %}
+<div class="alert {% if b.diff.is_some() %}alert-warn{% else %}alert-ok{% endif %} mb-4" role="status">
+  <svg class="icon" aria-hidden="true"><use href="{{ page.icon("message-circle") }}"></use></svg>
+  <div><p>{{ b.text }} · {% if let Some(d) = b.diff %}<strong>{{ d }}</strong>{% else %}{{ page.t("bank_ok") }}{% endif %}</p>
+    {% if b.diff.is_some() && page.can_write() %}<p class="mt-1"><a class="link" href="{{ b.reconcile }}">{{ page.t("reconcile") }}</a></p>{% endif %}</div>
+</div>
+{% else if statement.is_some() && page.can_write() %}
 <p class="mb-4 -mt-2 text-sm"><a class="link" href="/transactions/reconcile?account={{ kernel::web::url_encode(params.account) }}">{{ page.t("reconcile") }}</a></p>
 {% endif %}
 {% if truncated %}<p class="alert alert-warn mb-4" role="status">{{ page.t("feed_truncated") }}</p>{% endif %}
@@ -72,7 +78,7 @@
           {% if let Some(s) = t.sms %}<span class="badge" title="{{ s }}"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("message-circle") }}"></use></svg>{{ page.t("tx.sms_badge") }}<span class="sr-only">: {{ s }}</span></span>{% endif %}
           {% if t.dto.plan_id.is_some() %}<span class="badge badge-info"><svg class="icon icon-sm" aria-hidden="true"><use href="{{ page.icon("calendar-check") }}"></use></svg>{{ page.t("from_plan") }}</span>{% endif %}
         </p>
-        <p class="text-xs text-subtle mt-0.5">{{ t.meta }}</p>
+        <p class="text-xs text-subtle mt-0.5">{% if let Some(tm) = t.time %}<time class="tabular-nums">{{ tm }}</time> · {% endif %}{{ t.meta }}</p>
         {% if !t.groups.is_empty() %}
         <ul class="tx-lines">
           {% for g in t.groups %}

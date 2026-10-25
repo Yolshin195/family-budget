@@ -1,5 +1,7 @@
 //! Контракт HTTP API фичи «Счета» и преобразования DTO ⇄ домен.
 
+use chrono::{DateTime, Utc};
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
@@ -84,6 +86,11 @@ pub struct AccountDto {
     pub currency_code: String,
     /// Держатель счёта (участник проекта)
     pub holder_user_id: Option<uuid::Uuid>,
+    /// Остаток по данным банка — из последнего SMS банка с остатком (только чтение); пусто — не было
+    #[schema(value_type = Option<String>, example = "8195.25")]
+    pub bank_balance: Option<Decimal>,
+    /// Момент, на который верен `bank_balance`
+    pub bank_balance_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Default, Deserialize, IntoParams)]
@@ -107,6 +114,8 @@ impl From<Account> for AccountDto {
             account_kind: x.account_kind.as_str().to_string(),
             currency_code: x.currency_code,
             holder_user_id: x.holder_user_id,
+            bank_balance: x.bank.map(|b| b.amount),
+            bank_balance_at: x.bank.map(|b| b.at),
         }
     }
 }

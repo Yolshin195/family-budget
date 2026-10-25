@@ -24,6 +24,7 @@ pub use ports::Deps;
 pub use ports::{CurrenciesLookup, Ledger};
 /// Use cases фичи. Другие фичи получают к ним доступ только через свои порты и адаптеры в app/wiring.
 pub use service::AccountService as Service;
+pub use service::BankCheck;
 
 pub const NAME: &str = "accounts";
 pub const MOUNT: &str = "/accounts";

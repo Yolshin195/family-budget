@@ -46,6 +46,8 @@ The "Transactions" section shows all of the month's transactions by day; the arr
 
 ![A month's transactions with filters and totals](list.en.webp)
 
+Within a day, transactions are ordered by time — it comes first in the line under the description: “08:40 · 7-Eleven · Sukhumvit 24 · KBank card · Алексей”. Change the time in the card next to “Date”. If you leave it empty, a transaction for today gets the current time, while one for another day stays without a time and is placed by when it was entered. Transactions from a bank SMS take the time from the SMS, so the order matches the bank's messages.
+
 A receipt with several items is shown by category: the category total, and under it the goods in receipt order — "Croissant · 2 pcs × 25 − 3 → 47", or "Latte · 45" without a price. A transaction with a single unnamed item looks as usual. A label with a name — “Pinpan”, “For myself” — shows who the purchase is for; “For everyone” isn't labelled.
 
 Transactions paid from a calendar plan carry a "planned" badge. A badge with a language code and a question mark, such as "EN?", means the description has no translation into your language.

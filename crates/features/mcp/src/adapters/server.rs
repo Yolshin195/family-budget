@@ -34,7 +34,8 @@ an exchange rate is the number of base-currency units for 1 unit of the currency
 units of the currency for 1 unit of the base currency). \
 Deleting or archiving anything is not possible through this server; \
 permissions are changed only by the user in a browser. \
-Transactions with `sms.link: CREATED` were created automatically from a bank SMS: amount, account and date are facts, \
+Pass `time` (HH:MM) when the receipt or the user gives it; list_transactions shows `time` when it is known. \
+Transactions with `sms.link: CREATED` were created automatically from a bank SMS: amount, account, date and time are facts, \
 category and description are placeholders. Before add_expense or add_income for a purchase that may already have reached \
 the bank, call list_transactions with from_sms: true for that account and the purchase date ±1 day. If one has the same \
 amount and direction and still has a placeholder category, update it with update_transaction (category, place, for, \
@@ -97,7 +98,7 @@ impl BudgetServer {
     }
 
     #[tool(
-        description = "Account balances at the end of a date (default: today).",
+        description = "Account balances at the end of a date (default: today). Accounts that get bank SMS also have bank_balance from the latest SMS, its time bank_balance_at and bank_difference = transactions − bank at that moment: non-zero means a missing, duplicate or wrong transaction.",
         annotations(title = "Account balances", read_only_hint = true, open_world_hint = false)
     )]
     async fn get_balances(

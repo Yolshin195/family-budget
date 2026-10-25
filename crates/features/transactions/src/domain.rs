@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, NaiveDate, SubsecRound, Utc};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, SubsecRound, TimeZone, Utc};
 use kernel::error::{Problem, codes};
 use kernel::i18n::{Lang, Localized};
 use rust_decimal::{Decimal, RoundingStrategy};
@@ -259,6 +259,40 @@ impl Draft {
     }
 }
 
+/// Время операции в запросе (docs/group-1.md, 5.3). Пояса у операции пока нет: время вводится и показывается в поясе
+/// сервера (`TZ`), как и «сегодня» во всём приложении.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TimeInput {
+    /// Не передано. Новая операция — без времени (за сегодня сервис подставляет «сейчас», [`TimeInput::or_now`]);
+    /// при правке время суток остаётся прежним и переносится на новую дату.
+    #[default]
+    Keep,
+    /// Убрать время.
+    Clear,
+    /// Момент операции: его дата в поясе сервера — дата операции.
+    At(DateTime<Utc>),
+}
+
+impl TimeInput {
+    /// Новая операция за сегодня без времени — «сейчас» (5.2); за другой день время остаётся неизвестным.
+    pub fn or_now(self, date: NaiveDate, now: DateTime<Utc>) -> Self {
+        match self {
+            TimeInput::Keep if local_date(now) == date => TimeInput::At(now),
+            other => other,
+        }
+    }
+}
+
+/// Дата момента в поясе сервера.
+pub fn local_date(at: DateTime<Utc>) -> NaiveDate {
+    at.with_timezone(&Local).date_naive()
+}
+
+/// Момент «дата + время суток» в поясе сервера; при переводе часов — более ранний из двух.
+pub fn local_moment(date: NaiveDate, time: NaiveTime) -> Option<DateTime<Utc>> {
+    Local.from_local_datetime(&date.and_time(time)).earliest().map(|t| t.with_timezone(&Utc))
+}
+
 /// Поля записанной транзакции (для форм, API и других фич).
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body {
@@ -316,6 +350,9 @@ pub struct Transaction {
     pub id: Uuid,
     pub project_id: Uuid,
     pub occurred_on: NaiveDate,
+    /// Момент операции (время из SMS банка, введённое или «сейчас» у операции за сегодня); пусто — время неизвестно.
+    /// Его дата в поясе сервера — `occurred_on`.
+    pub occurred_at: Option<DateTime<Utc>>,
     pub tx_kind: TxKind,
     pub description: Description,
     pub created_by: Uuid,
@@ -326,12 +363,15 @@ pub struct Transaction {
     /// Позиции чека (расход и доход), в порядке чека.
     pub items: Vec<Item>,
     pub postings: Vec<Posting>,
+    /// Когда операцию внесли; не меняется. Внутри дня лента — по `occurred_at`, без него — по этому времени.
+    pub created_at: DateTime<Utc>,
 }
 
 /// Данные для создания и изменения.
 #[derive(Debug, Clone)]
 pub struct TransactionData {
     pub occurred_on: NaiveDate,
+    pub time: TimeInput,
     pub description: Description,
     pub plan: Option<(Uuid, NaiveDate)>,
     /// Код места; у перевода и начального остатка не сохраняется.
@@ -769,6 +809,7 @@ impl Transaction {
             id: Uuid::new_v4(),
             project_id,
             occurred_on: data.occurred_on,
+            occurred_at: None,
             tx_kind: data.body.kind(),
             description: Description::default(),
             created_by,
@@ -776,6 +817,7 @@ impl Transaction {
             place_code: None,
             items: Vec::new(),
             postings: Vec::new(),
+            created_at: Utc::now().trunc_subsecs(6),
         };
         t.change(data, accounts)?;
         Ok(t)
@@ -798,11 +840,26 @@ impl Transaction {
                 .transpose()?,
             TxKind::Transfer | TxKind::Opening => None,
         };
+        let occurred_at = match data.time {
+            TimeInput::At(t) if local_date(t) != data.occurred_on => {
+                return Err(err(
+                    "occurred_at",
+                    "err.time_other_day",
+                    &[("date", &data.occurred_on.format("%d.%m.%Y"))],
+                ));
+            }
+            TimeInput::At(t) => Some(t.trunc_subsecs(0)),
+            TimeInput::Clear => None,
+            TimeInput::Keep => {
+                self.occurred_at.and_then(|t| local_moment(data.occurred_on, t.with_timezone(&Local).time()))
+            }
+        };
         let (items, postings) = build(data.body, &self.items, accounts)?;
         check_balanced(&postings)
             .and_then(|_| check_items(kind, &items, &postings))
             .map_err(|m| Problem::validation("postings", m))?;
         self.occurred_on = data.occurred_on;
+        self.occurred_at = occurred_at;
         self.tx_kind = kind;
         self.description = data.description.cleaned();
         self.plan = data.plan;
@@ -965,6 +1022,12 @@ pub struct RefDraft {
     pub provider: String,
     pub external_id: String,
     pub received_at: Option<DateTime<Utc>>,
+    /// Когда прошла операция по данным источника (время из текста SMS). В связи не хранится: задаёт время
+    /// прикреплённой операции и момент остатка.
+    pub occurred_at: Option<DateTime<Utc>>,
+    /// Остаток счёта после операции по данным банка и счёт, к которому он относится (пусто — счёт операции).
+    /// В связи не хранится: сервис записывает его в счёт.
+    pub balance: Option<(Decimal, Option<String>)>,
 }
 
 /// Длина id записи у провайдера — в символах.
@@ -991,7 +1054,46 @@ impl RefDraft {
             return Err(err(&format!("{prefix}external_id"), "err.external_id", &[]));
         }
         // Время — с точностью TIMESTAMPTZ (микросекунды): ответ на запрос и прочитанное из БД совпадают.
-        Ok(Self { provider, external_id, received_at: received_at.map(|t| t.trunc_subsecs(6)) })
+        Ok(Self {
+            provider,
+            external_id,
+            received_at: received_at.map(|t| t.trunc_subsecs(6)),
+            occurred_at: None,
+            balance: None,
+        })
+    }
+
+    /// Остаток счёта по данным банка: сумма — с точностью и пределом денежных колонок, счёт — код.
+    pub fn with_balance(
+        self,
+        prefix: &str,
+        balance: Option<Decimal>,
+        account: Option<String>,
+    ) -> Result<Self, Problem> {
+        let Some(amount) = balance else { return Ok(self) };
+        if amount.normalize().scale() > MAX_SCALE || amount.abs() >= MAX_MONEY {
+            return Err(err(&format!("{prefix}balance"), "err.external_balance", &[]));
+        }
+        let account = account.map(|c| kernel::code::code(&format!("{prefix}account_code"), &c)).transpose()?;
+        Ok(Self { balance: Some((amount, account)), ..self })
+    }
+
+    /// Момент операции по данным записи: время из её текста, без него — время получения.
+    pub fn moment(&self) -> Option<DateTime<Utc>> {
+        self.occurred_at.or(self.received_at)
+    }
+
+    /// Счёт остатка из записи для операции `t`: указанный — если он среди счетов операции, иначе счёт операции.
+    pub fn balance_account(&self, prefix: &str, t: &Transaction) -> Result<Option<(String, Decimal)>, Problem> {
+        let Some((amount, account)) = &self.balance else { return Ok(None) };
+        let code = match account {
+            None => t.account_code().to_string(),
+            Some(c) if t.accounts().any(|a| a == c) => c.clone(),
+            Some(c) => {
+                return Err(err(&format!("{prefix}account_code"), "err.external_balance_account", &[("code", c)]));
+            }
+        };
+        Ok(Some((code, *amount)))
     }
 
     /// Связь этой записи с операцией.
@@ -1031,6 +1133,7 @@ mod tests {
     fn data(body: Draft) -> TransactionData {
         TransactionData {
             occurred_on: NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+            time: TimeInput::Keep,
             description: Description {
                 text: Some(" Чек ".into()),
                 lang: Lang::Ru,

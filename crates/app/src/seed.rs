@@ -11,7 +11,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use chrono::{Datelike, Months, NaiveDate};
+use chrono::{Datelike, Months, NaiveDate, NaiveTime, TimeZone};
 use kernel::auth::{Memberships, RequestMeta, Role};
 use kernel::error::AppResult;
 use kernel::i18n::Lang;
@@ -46,6 +46,24 @@ fn day(back: u32, d: u32) -> NaiveDate {
     let today = chrono::Local::now().date_naive();
     let first = today.with_day(1).unwrap_or(today).checked_sub_months(Months::new(back)).unwrap_or(today);
     first.checked_add_days(chrono::Days::new((d - 1) as u64)).filter(|x| x.month() == first.month()).unwrap_or(first)
+}
+
+/// Время демо-операции: у трат, где оно очевидно, — своё (завтрак утром, ужин вечером), у остальных — с 08:00 до
+/// 21:59 по ключу (описанию), одно и то же при каждом пересоздании демо. Ещё не наступившее время — `None`: операция
+/// за сегодня получит «сейчас».
+fn demo_time(date: NaiveDate, key: &str) -> Option<String> {
+    const KNOWN: [(&str, u32); 5] = [
+        ("Завтрак", 8 * 60 + 40),
+        ("Grab", 8 * 60 + 55),
+        ("ร้านกาแฟ", 10 * 60 + 20),
+        ("Ужин", 19 * 60 + 45),
+        ("Кино", 20 * 60 + 15),
+    ];
+    let h = key.bytes().fold(7u32, |a, b| a.wrapping_mul(31).wrapping_add(u32::from(b)));
+    let known = KNOWN.iter().find(|k| key.starts_with(k.0)).map(|k| k.1);
+    let minutes = known.unwrap_or(8 * 60 + h % (14 * 60));
+    let at = chrono::Local.from_local_datetime(&date.and_time(NaiveTime::from_hms_opt(minutes / 60, minutes % 60, 0)?));
+    at.earliest().filter(|t| *t < chrono::Local::now()).map(|t| t.to_rfc3339())
 }
 
 /// Демо-пользователи и их личные проекты (`SEED_DEMO=1`), демо-семья с гостем (`GUEST_DEMO=1`).
@@ -201,8 +219,10 @@ async fn tx_for(s: &Services, p: Uuid, t: Tx<'_>, who: &[Option<&str>]) -> AppRe
     if t.date > chrono::Local::now().date_naive() {
         return Ok(());
     }
+    let key = format!("{}{:?}", t.desc.map(|d| d.0).unwrap_or_default(), t.lines.first());
     let input = transactions::dto::TransactionInput {
         occurred_on: t.date,
+        occurred_at: demo_time(t.date, &key),
         account_code: t.account.into(),
         tx_kind: t.kind.into(),
         refund: false,
@@ -254,6 +274,7 @@ async fn receipt(
     }
     let input = transactions::dto::TransactionInput {
         occurred_on: date,
+        occurred_at: demo_time(date, desc.0),
         account_code: "CARD_KBANK".into(),
         tx_kind: "EXPENSE".into(),
         place_code: Some(place.into()),
@@ -298,6 +319,7 @@ async fn transfer(s: &Services, p: Uuid, t: Transfer<'_>) -> AppResult<()> {
     }
     let input = transactions::dto::TransactionInput {
         occurred_on: t.date,
+        occurred_at: demo_time(t.date, t.desc.0),
         tx_kind: "TRANSFER".into(),
         account_code: t.from.into(),
         refund: false,
@@ -955,7 +977,40 @@ async fn fill_family(s: &Services, p: Uuid, me: Uuid, anna: Uuid) -> AppResult<(
             s.planning.skip(p, anna, freelance, day(1, 25)).await?;
         }
     }
-    Ok(())
+    sms_purchase(s, p, me).await
+}
+
+/// Покупка по карте из SMS банка (docs/external-refs.md): связь с SMS и остаток банка после неё. Остаток такой же,
+/// как по операциям, — карточка счёта показывает «Сходится».
+async fn sms_purchase(s: &Services, p: Uuid, by: Uuid) -> AppResult<()> {
+    let at = chrono::Utc::now() - chrono::Duration::minutes(5);
+    let amount = dec("95");
+    let balance = s.transactions.balance_at(p, "CARD_KBANK", at).await? - amount;
+    let input = transactions::dto::TransactionInput {
+        occurred_on: at.with_timezone(&chrono::Local).date_naive(),
+        occurred_at: Some(at.to_rfc3339()),
+        tx_kind: "EXPENSE".into(),
+        account_code: "CARD_KBANK".into(),
+        description: Some("Кофе".into()),
+        description_lang: Lang::Ru.upper().into(),
+        description_en: Some("Coffee".into()),
+        description_th: Some("กาแฟ".into()),
+        items: vec![transactions::dto::ItemInput {
+            category_code: Some("FOOD_CAFE".into()),
+            amount: Some(amount),
+            ..Default::default()
+        }],
+        external_ref: Some(transactions::dto::ExternalRefInput {
+            provider: "imessage".into(),
+            external_id: "demo:kbank-coffee".into(),
+            received_at: Some(at.to_rfc3339()),
+            occurred_at: Some(at.to_rfc3339()),
+            balance: Some(balance),
+            account_code: None,
+        }),
+        ..Default::default()
+    };
+    s.transactions.create(p, by, input).await.map(|_| ())
 }
 
 async fn fill_personal(s: &Services, me: Uuid) -> AppResult<()> {

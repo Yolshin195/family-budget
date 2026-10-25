@@ -17,8 +17,8 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use ::mcp::{
-    Account, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Person, Place, Plan,
-    PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem, TxRef,
+    Account, BankBalance, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Person,
+    Place, Plan, PlanDraft, QuickInfo, Rate, Tx, TxDraft, TxFilter, TxItem, TxRef,
 };
 
 pub struct LedgerAdapter(pub Arc<::transactions::Service>);
@@ -27,6 +27,7 @@ fn tx_from(d: ::transactions::dto::TransactionDto) -> Tx {
     Tx {
         id: d.id,
         occurred_on: d.occurred_on,
+        occurred_at: d.occurred_at,
         kind: d.tx_kind,
         account_code: d.account_code,
         to_account_code: d.to_account_code,
@@ -80,6 +81,7 @@ fn recipient_into(v: Option<Option<String>>) -> Option<String> {
 fn input_from(d: TxDraft) -> ::transactions::dto::TransactionInput {
     ::transactions::dto::TransactionInput {
         occurred_on: d.occurred_on,
+        occurred_at: d.occurred_at,
         tx_kind: d.kind,
         account_code: d.account_code,
         refund: d.refund,
@@ -208,6 +210,12 @@ impl ::mcp::Ledger for LedgerAdapter {
 
     async fn balances(&self, project_id: Uuid, date: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
         self.0.balances(project_id, date).await
+    }
+
+    async fn bank_balance(&self, project_id: Uuid, account_code: &str) -> AppResult<Option<BankBalance>> {
+        let Some((amount, at)) = self.0.bank_balance(project_id, account_code).await? else { return Ok(None) };
+        let book = self.0.balance_at(project_id, account_code, at).await?;
+        Ok(Some(BankBalance { amount, at, book }))
     }
 }
 

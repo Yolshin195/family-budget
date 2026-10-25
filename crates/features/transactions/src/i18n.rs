@@ -139,6 +139,29 @@ pub fn dict(key: &str) -> Option<Tr> {
             "ขาด — หมวดรายจ่าย, เกิน — หมวดรายรับ",
         ),
         "reconcile_desc" => ("Сверка остатка", "Balance reconciliation", "กระทบยอดคงเหลือ"),
+        // Выписка: остаток по данным банка (последнее SMS с остатком) против операций на то же время.
+        "bank_line" => (
+            "В банке по SMS · {time}: {amount}",
+            "At the bank by SMS · {time}: {amount}",
+            "ในธนาคารตาม SMS · {time}: {amount}",
+        ),
+        "bank_ok" => ("сходится с операциями", "matches the transactions", "ตรงกับรายการ"),
+        "bank_more" => (
+            "в операциях на {amount} больше, чем в банке",
+            "transactions show {amount} more than the bank",
+            "ในรายการมากกว่าธนาคาร {amount}",
+        ),
+        "bank_less" => (
+            "в операциях на {amount} меньше, чем в банке",
+            "transactions show {amount} less than the bank",
+            "ในรายการน้อยกว่าธนาคาร {amount}",
+        ),
+        "time" => ("Время", "Time", "เวลา"),
+        "time_hint" => (
+            "Время операции. Пусто: за сегодня — сейчас, за другой день — без времени",
+            "Time of the transaction. Empty: today — now, another day — no time",
+            "เวลาของรายการ ว่างไว้: วันนี้ — เวลาปัจจุบัน วันอื่น — ไม่ระบุเวลา",
+        ),
         "reconcile_done" => ("Остаток сверен", "Balance reconciled", "กระทบยอดแล้ว"),
         "reconcile_same" => {
             ("Остатки совпадают — вносить нечего", "Balances match — nothing to record", "ยอดตรงกัน ไม่ต้องบันทึก")
@@ -317,6 +340,16 @@ pub fn dict(key: &str) -> Option<Tr> {
         ),
         "err.undo_expired" => ("отменить уже нельзя", "it can no longer be undone", "ยกเลิกไม่ได้แล้ว"),
         "err.bad_date" => ("неверная дата", "invalid date", "วันที่ไม่ถูกต้อง"),
+        "err.bad_time" => (
+            "неверное время: ЧЧ:ММ или дата и время RFC 3339 с часовым поясом",
+            "invalid time: HH:MM or an RFC 3339 date and time with a time zone",
+            "เวลาไม่ถูกต้อง: ชช:นน หรือวันที่และเวลาแบบ RFC 3339 พร้อมเขตเวลา",
+        ),
+        "err.time_other_day" => (
+            "время операции приходится на другой день, а не на {date}",
+            "the time falls on another day, not {date}",
+            "เวลาของรายการอยู่คนละวันกับ {date}",
+        ),
         "err.bad_id" => ("неверный id", "invalid id", "id ไม่ถูกต้อง"),
         // Связи с внешними записями (docs/external-refs.md, 2.6).
         "err.external_ref_deleted" => (
@@ -349,6 +382,21 @@ pub fn dict(key: &str) -> Option<Tr> {
             "Время записи: дата и время RFC 3339 с часовым поясом",
             "Record time: RFC 3339 date and time with a time zone",
             "เวลาของข้อมูล: วันที่และเวลาแบบ RFC 3339 พร้อมเขตเวลา",
+        ),
+        "err.external_occurred_at" => (
+            "Время операции: дата и время RFC 3339 с часовым поясом",
+            "Transaction time: RFC 3339 date and time with a time zone",
+            "เวลาของรายการ: วันที่และเวลาแบบ RFC 3339 พร้อมเขตเวลา",
+        ),
+        "err.external_balance" => (
+            "Остаток по данным банка: число, до 4 знаков после запятой",
+            "Bank balance: a number with up to 4 decimal places",
+            "ยอดคงเหลือตามธนาคาร: ตัวเลข ทศนิยมไม่เกิน 4 ตำแหน่ง",
+        ),
+        "err.external_balance_account" => (
+            "Счёт {code} не участвует в этой операции — остаток банка к нему не записать",
+            "Account {code} is not part of this transaction — the bank balance cannot be recorded for it",
+            "บัญชี {code} ไม่อยู่ในรายการนี้ — บันทึกยอดคงเหลือตามธนาคารไม่ได้",
         ),
         // Значок «SMS» в ленте и карточке (раздел 3); {time} — время SMS или дата связи.
         "tx.sms_badge" => ("SMS", "SMS", "SMS"),
