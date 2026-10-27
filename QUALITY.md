@@ -37,7 +37,7 @@
 
 - 2026-10-27 — тесты `Plan::dates`: быстрый пропуск ранних шагов сверяется с полным перебором (1200 сочетаний
   правила, интервала, даты начала с 31-м и 29.02, окна, `end_on`, `effective_from`), `effective_from` и
-  `has_dates_before`, предел `MAX_OCCURRENCES`. PR — ветка `quality/planning-dates-equivalence`.
+  `has_dates_before`, предел `MAX_OCCURRENCES`. [#60](https://github.com/Yolshin195/family-budget/pull/60).
 
 ## Отклонено
 
