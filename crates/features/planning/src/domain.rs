@@ -409,6 +409,67 @@ mod tests {
         assert_eq!(y.dates(d(2025, 1, 1), d(2025, 12, 31)), vec![d(2025, 2, 28)]);
     }
 
+    /// Эталон для `dates`: перебор всех вхождений с k = 0, без пропуска ранних шагов.
+    fn dates_naive(p: &Plan, from: NaiveDate, to: NaiveDate) -> Vec<NaiveDate> {
+        let from = p.effective_from.map_or(from, |e| e.max(from));
+        let to = p.end_on.map_or(to, |e| e.min(to));
+        (0..).map_while(|k| p.nth(k)).take_while(|&x| x <= to).filter(|&x| x >= from).collect()
+    }
+
+    #[test]
+    fn dates_skip_matches_naive_enumeration() {
+        // Пропуск заведомо ранних шагов в `dates` не должен терять или добавлять даты: 31-е, 29.02,
+        // интервалы больше 1, окна до начала, внутри и после, ограничение end_on и effective_from.
+        let starts = [d(2024, 1, 31), d(2024, 2, 29), d(2025, 3, 15), d(2025, 12, 1)];
+        let recurrences =
+            [Recurrence::Once, Recurrence::Daily, Recurrence::Weekly, Recurrence::Monthly, Recurrence::Yearly];
+        let windows = [
+            (d(2023, 1, 1), d(2023, 12, 31)),
+            (d(2024, 1, 1), d(2024, 3, 31)),
+            (d(2024, 2, 29), d(2024, 2, 29)),
+            (d(2025, 2, 1), d(2025, 5, 31)),
+            (d(2026, 1, 30), d(2026, 3, 2)),
+            (d(2027, 2, 28), d(2028, 3, 1)),
+        ];
+        let mut checked = 0;
+        for start in starts {
+            for r in recurrences {
+                for interval in [1, 2, 3, 7, 13] {
+                    for (end_on, effective_from) in [(None, None), (Some(d(2026, 6, 30)), Some(d(2025, 4, 1)))] {
+                        let mut p = plan(r, interval, start);
+                        (p.end_on, p.effective_from) = (end_on, effective_from);
+                        for (from, to) in windows {
+                            assert_eq!(
+                                p.dates(from, to),
+                                dates_naive(&p, from, to),
+                                "{r:?} каждые {interval} с {start}, end_on {end_on:?}, окно {from}..{to}"
+                            );
+                            checked += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(checked, 4 * 5 * 5 * 2 * 6);
+    }
+
+    #[test]
+    fn effective_from_hides_earlier_dates_of_the_series() {
+        let mut p = plan(Recurrence::Monthly, 1, d(2026, 1, 10));
+        assert!(p.has_dates_before(d(2026, 1, 11)));
+        assert!(!p.has_dates_before(d(2026, 1, 10)), "сама дата начала — не «раньше»");
+        p.effective_from = Some(d(2026, 3, 1));
+        assert_eq!(p.dates(d(2026, 1, 1), d(2026, 4, 30)), vec![d(2026, 3, 10), d(2026, 4, 10)]);
+        assert!(!p.occurs_on(d(2026, 2, 10)), "до effective_from вхождения принадлежат прежнему плану");
+        assert!(!p.has_dates_before(d(2026, 3, 10)));
+    }
+
+    #[test]
+    fn daily_dates_are_capped() {
+        let p = plan(Recurrence::Daily, 1, d(2000, 1, 1));
+        assert_eq!(p.dates(d(2000, 1, 1), d(2099, 12, 31)).len(), MAX_OCCURRENCES);
+    }
+
     #[test]
     fn statuses() {
         let today = d(2026, 10, 9);
