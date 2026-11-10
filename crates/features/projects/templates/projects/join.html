@@ -29,7 +29,7 @@
         </form>
         {% else %}
         <div class="grid gap-2">
-          <a class="btn-primary btn-lg w-full justify-center" href="/auth/register">{{ self.t("join_register") }}</a>
+          <a class="btn-primary btn-lg w-full justify-center" href="/auth/register?next=/join/{{ code }}">{{ self.t("join_register") }}</a>
           <a class="btn-secondary w-full justify-center" href="/auth/login?next=/join/{{ code }}">{{ self.t("join_login") }}</a>
         </div>
         <p class="hint mt-3">{{ self.t("join_login_hint") }}</p>

@@ -21,6 +21,15 @@
         <button class="btn-primary" autofocus>{{ self.t("nav.logout") }}</button>
         <a class="btn-ghost" href="/budget">{{ self.t("cancel") }}</a>
       </form>
+    {% else if registered %}
+      <h1 class="auth-title">{{ self.t("registered_title") }}</h1>
+      <ol class="text-muted mb-6 list-decimal pl-5 space-y-2">
+        <li>{{ self.t("registered_step_mail") }}</li>
+        <li>{{ self.t("registered_step_password") }}</li>
+        <li>{{ self.t("registered_step_login") }}</li>
+      </ol>
+      <a class="btn-primary w-full justify-center" href="/auth/login?next={{ next }}">{{ self.t("login_rauthy") }}</a>
+      <p class="hint mt-4">{{ self.t("registered_spam") }}</p>
     {% else if let Some(err) = error %}
       <h1 class="auth-title">{{ self.t("login_failed") }}</h1>
       <div class="alert alert-error mb-4" role="alert"><svg class="icon" aria-hidden="true"><use href="{{ self.icon("circle-alert") }}"></use></svg><span>{{ err }}</span></div>

@@ -2,7 +2,7 @@
 //!
 //! Маршруты:
 //! - публичные: `/` (лендинг), `/privacy`, `/terms`, `/data-deletion`, `/sitemap.xml`, `/robots.txt`,
-//!   `/auth/login|register|callback|logout` (вход через Rauthy), `/demo`, `/lang/{ru|en|th}`, `/static/…`;
+//!   `/auth/login|register|registered|callback|logout` (вход через Rauthy), `/demo`, `/lang/{ru|en|th}`, `/static/…`;
 //! - аккаунт (вход есть, проекта может не быть): `/onboarding`;
 //! - приложение: `/<фича>/…` — страницы, `/api/<фича>/…` — REST; cookie-сессия или API-токен;
 //! - `/docs` — Swagger UI (только в разработке).

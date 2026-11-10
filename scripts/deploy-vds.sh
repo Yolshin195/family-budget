@@ -433,6 +433,7 @@ EOF
     "secret": "generate",
     "redirect_uris": ["https://${DOMAIN}/auth/callback"],
     "post_logout_redirect_uris": ["https://${DOMAIN}/"],
+    "client_uri": "https://${DOMAIN}",
     "enabled": true,
     "flows_enabled": ["authorization_code", "refresh_token"],
     "access_token_alg": "EdDSA",
@@ -544,6 +545,28 @@ fix_trusted_proxies() {
   compose up -d --wait --wait-timeout 180 rauthy
 }
 
+# Client URI клиента family-budget (шаг 8.2). Без него Rauthy отклоняет регистрацию с возвратом в приложение
+# («given redirect_uri not allowed»): адрес возврата должен начинаться с Client URI. bootstrap-prod читается
+# только при первом старте, поэтому на уже развёрнутом сервере поле дописывается в базу rauthy.
+client_uri_sql() { compose exec -T db psql -U budget -d rauthy -qtAc "$1"; }
+client_uri_ok() {
+  local want; want=$(env_get APP_BASE_URL)
+  [ "$(client_uri_sql "SELECT coalesce(client_uri, '') FROM clients WHERE id = 'family-budget'")" = "$want" ]
+}
+fix_client_uri() {
+  local want; want=$(env_get APP_BASE_URL)
+  [[ $want =~ ^https?://[A-Za-z0-9.:-]+$ ]] || { warn "APP_BASE_URL=$want — Client URI не проверяю"; return 0; }
+  client_uri_ok && return 0
+  local current; current=$(client_uri_sql "SELECT coalesce(client_uri, '') FROM clients WHERE id = 'family-budget'") || return 0
+  [ -n "$current" ] && { warn "Client URI клиента family-budget — $current, а не $want: поправьте в админке Rauthy"; return 0; }
+  local updated
+  updated=$(client_uri_sql "UPDATE clients SET client_uri = '$want' WHERE id = 'family-budget' AND coalesce(client_uri, '') = '' RETURNING id") || updated=''
+  [ -n "$updated" ] || { warn "не удалось записать Client URI — впишите $want в админке Rauthy (Clients → family-budget)"; return 0; }
+  # Rauthy кэширует клиентов — перезапуск, чтобы ссылка «Регистрация» на его странице входа вела обратно.
+  compose restart rauthy >/dev/null
+  ok "Client URI клиента family-budget: $want (регистрация возвращает в приложение)"
+}
+
 start_stack() {
   step "Образы и первый запуск (шаг 10)"
   compose config --quiet
@@ -576,6 +599,7 @@ start_stack() {
     env_set OIDC_CLIENT_SECRET "$secret"
     ok "секрет клиента family-budget записан в .env"
   fi
+  fix_client_uri
 
   compose up -d "${RECREATE[@]}" app
   wait_app
@@ -763,6 +787,7 @@ cmd_check() {
   check_item "контейнеры app, db, rauthy запущены" all_running
   check_item "issuer Rauthy совпадает с OIDC_ISSUER ($(env_get OIDC_ISSUER))" issuer_matches
   check_item "$base/health отвечает ok" http_ok "$base/health"
+  check_item "Client URI клиента family-budget = $base (регистрация, шаг 8.2)" client_uri_ok
   check_item "HTTPS с заголовком Strict-Transport-Security" has_hsts "$base/"
   check_item "порты 8080, 8443, 5432 — только на 127.0.0.1" ports_local
   check_item "логи контейнеров с ротацией (шаг 4.2)" logs_limited
@@ -799,6 +824,7 @@ cmd_update() {
   compose pull --quiet
   compose up -d
   wait_app
+  fix_client_uri
   as_app docker image prune -f >/dev/null
   rm -f .auto-update-failed
   ok "работает $(running_tag || env_get APP_IMAGE_TAG)"
