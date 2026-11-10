@@ -130,6 +130,10 @@ fn login(sub: &str, email: &str, name: &str, amr: &[&str]) -> VerifiedLogin {
 }
 
 fn env() -> Env {
+    env_with(Config::test())
+}
+
+fn env_with(config: Config) -> Env {
     let repo = Arc::new(InMemoryProjectRepository::default());
     let boot = Arc::new(FakeBootstrap::default());
     let purge = Arc::new(FakePurge::default());
@@ -148,7 +152,7 @@ fn env() -> Env {
         identity: Arc::new(rauthy),
         people: Arc::new(people.clone()),
     };
-    let svc = ProjectService::new(repo.clone(), repo.clone(), deps, Arc::new(Config::test()));
+    let svc = ProjectService::new(repo.clone(), repo.clone(), deps, Arc::new(config));
     Env { svc, repo, boot, purge, people }
 }
 
@@ -653,6 +657,140 @@ async fn login_error_details_go_to_journal_not_to_page() {
         "{:?}",
         failed[0].details
     );
+}
+
+// ---------------------------------------------------------------- регистрация и возврат из Rauthy
+
+/// Конфигурация с настроенным Rauthy: регистрация ведёт на его страницу.
+fn oidc_config() -> Config {
+    Config {
+        oidc: Some(kernel::config::Oidc {
+            issuer: "https://auth.test/auth/v1/".into(),
+            client_id: "family-budget".into(),
+            client_secret: "s".into(),
+            redirect_url: "http://localhost:8080/auth/callback".into(),
+            register_url: "https://auth.test/auth/v1/users/register".into(),
+            account_url: "https://auth.test/auth/v1/account".into(),
+            admin_api_key: None,
+            internal_url: None,
+        }),
+        ..Config::test()
+    }
+}
+
+/// Ответ публичных страниц входа: статус, `Location`, тело.
+async fn public_get(e: Env, uri: &str, cookie: Option<String>) -> (axum::http::StatusCode, String, String, Env2) {
+    use axum::body::{Body, to_bytes};
+    use axum::http::Request;
+    use tower::ServiceExt;
+
+    let repo = e.repo.clone();
+    let app = crate::adapters::web::public(Arc::new(e.svc)).layer(axum::Extension(meta()));
+    let mut req = Request::builder().uri(uri);
+    if let Some(c) = cookie {
+        req = req.header("cookie", c);
+    }
+    let resp = app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+    let status = resp.status();
+    let location = resp.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or_default().to_string();
+    let body = String::from_utf8(to_bytes(resp.into_body(), 1 << 20).await.unwrap().to_vec()).unwrap();
+    (status, location, body, Env2 { repo })
+}
+
+/// Что остаётся от окружения после запроса: хранилище (журнал, пользователи).
+struct Env2 {
+    repo: Arc<InMemoryProjectRepository>,
+}
+
+fn failed_reasons(repo: &InMemoryProjectRepository) -> Vec<String> {
+    repo.audit
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| a.action == "login_failed")
+        .flat_map(|a| a.details.iter().filter(|(k, _)| k == "reason").map(|(_, v)| v.clone()).collect::<Vec<_>>())
+        .collect()
+}
+
+/// «Создать бюджет»: Rauthy возвращает на «Проверьте почту» (`/auth/registered`), а не на форму входа —
+/// пароля у человека ещё нет. Приглашение едет в адресе возврата: ссылку из письма часто открывают в
+/// другом браузере, где cookie приглашения нет.
+#[tokio::test]
+async fn registration_returns_to_check_email_page_with_invite() {
+    let (_, location, _, _) = public_get(env_with(oidc_config()), "/auth/register", None).await;
+    assert_eq!(
+        location,
+        "https://auth.test/auth/v1/users/register?redirect_uri=http%3A//localhost%3A8080/auth/registered"
+    );
+    let (_, location, _, _) = public_get(env_with(oidc_config()), "/auth/register?next=/join/abc.def", None).await;
+    assert_eq!(
+        location,
+        "https://auth.test/auth/v1/users/register?redirect_uri=http%3A//localhost%3A8080/auth/registered%3Fnext%3D/join/abc.def"
+    );
+    let (_, location, _, _) =
+        public_get(env_with(oidc_config()), "/auth/register?next=https://evil.example", None).await;
+    assert!(location.ends_with("/auth/registered"), "чужой адрес не передаётся: {location}");
+}
+
+#[tokio::test]
+async fn check_email_page_explains_steps_and_keeps_next() {
+    let (status, _, html, _) = public_get(env(), "/auth/registered?next=/join/abc.def", None).await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    for key in ["registered_title", "registered_step_password", "registered_spam"] {
+        assert!(html.contains(crate::i18n::dict(key).unwrap().0), "{key}");
+    }
+    assert!(html.contains(r#"href="/auth/login?next=/join/abc.def""#), "кнопка «Войти» ведёт к приглашению");
+}
+
+/// Возврат из Rauthy без cookie входа (вход начат в другом браузере) — понятная подсказка и запись в журнале.
+#[tokio::test]
+async fn callback_without_login_cookie_is_explained_and_logged() {
+    let (_, _, html, rest) = public_get(env(), "/auth/callback?code=sub-me&state=state-1", None).await;
+    assert!(html.contains(crate::i18n::dict("login_no_cookie").unwrap().0));
+    assert_eq!(failed_reasons(&rest.repo).len(), 1);
+}
+
+/// Вход занял больше 10 минут (ждали письмо регистрации) — начинается заново, с тем же `next`.
+#[tokio::test]
+async fn expired_login_starts_again() {
+    let e = env();
+    let old = PendingLogin { started: Utc::now().timestamp() - 11 * 60, next: "/join/abc.def".into(), ..pending() };
+    let cookie =
+        format!("{}={}", crate::adapters::web::OIDC_COOKIE, crate::adapters::web::seal_pending(e.svc.config(), &old));
+    let (status, location, _, rest) = public_get(e, "/auth/callback?code=sub-me&state=state-1", Some(cookie)).await;
+    assert_eq!(status, axum::http::StatusCode::SEE_OTHER);
+    assert_eq!(location, "/auth/login?next=/join/abc.def");
+    assert!(rest.repo.sessions.lock().unwrap().is_empty(), "сессия не открыта");
+    assert_eq!(failed_reasons(&rest.repo).len(), 1);
+}
+
+/// Новичок, пришедший по приглашению из другого браузера (cookie приглашения нет, оно в `next`), попадает
+/// к приглашению, а не в онбординг личного бюджета.
+#[tokio::test]
+async fn newcomer_with_invite_in_next_skips_onboarding() {
+    let e = env();
+    let p = PendingLogin { next: "/join/abc.def".into(), ..pending() };
+    let cookie =
+        format!("{}={}", crate::adapters::web::OIDC_COOKIE, crate::adapters::web::seal_pending(e.svc.config(), &p));
+    let (_, location, _, _) = public_get(e, "/auth/callback?code=sub-anna&state=state-1", Some(cookie)).await;
+    assert_eq!(location, "/join/abc.def");
+
+    let e = env();
+    let cookie = format!(
+        "{}={}",
+        crate::adapters::web::OIDC_COOKIE,
+        crate::adapters::web::seal_pending(e.svc.config(), &pending())
+    );
+    let (_, location, _, _) = public_get(e, "/auth/callback?code=sub-anna&state=state-1", Some(cookie)).await;
+    assert_eq!(location, "/onboarding", "без приглашения — онбординг");
+}
+
+#[test]
+fn templates_are_translated() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let missing =
+        kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
+    assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
 }
 
 /// Б4: «Посмотреть демо» — только со своего сайта (без `Origin`/`Referer` — отказ), сессия гостя

@@ -10,7 +10,7 @@ topics = ["start", "family", "accounts", "limits", "planning"]
 level = "beginner"
 +++
 
-Sign up with the "Create a budget" button on the home page — a personal budget with a "Cash" account appears right away. Everything else takes five minutes to set up. The screenshots show the demo family: you can open it without signing up with the "View the demo" button.
+Sign up with the "Create a budget" button on the home page, set a password via the link in the email and press "Sign in" — a personal budget with a "Cash" account appears right away. Everything else takes five minutes to set up. The screenshots show the demo family: you can open it without signing up with the "View the demo" button.
 
 ## 1. Log your first expense
 

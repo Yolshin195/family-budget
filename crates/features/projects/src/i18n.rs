@@ -16,7 +16,39 @@ pub fn dict(key: &str) -> Option<Tr> {
             "Start signing in again. If it keeps failing, make sure cookies are allowed.",
             "เริ่มเข้าสู่ระบบใหม่ หากยังไม่ได้ ตรวจสอบว่าเบราว์เซอร์อนุญาตคุกกี้",
         ),
+        "login_failed_generic" => (
+            "Сервис входа не подтвердил вход.",
+            "The sign-in service didn't confirm your sign-in.",
+            "บริการเข้าสู่ระบบไม่ได้ยืนยันการเข้าสู่ระบบ",
+        ),
+        "login_no_cookie" => (
+            "Вход начат в другом браузере или на другом устройстве, либо браузер не сохранил cookie. Нажмите «Войти заново» здесь.",
+            "Sign-in was started in another browser or on another device, or the browser didn't keep cookies. Press Sign in again here.",
+            "เริ่มเข้าสู่ระบบจากเบราว์เซอร์หรืออุปกรณ์อื่น หรือเบราว์เซอร์ไม่ได้เก็บคุกกี้ กด เข้าสู่ระบบอีกครั้ง ที่นี่",
+        ),
         "try_again" => ("Войти заново", "Sign in again", "เข้าสู่ระบบอีกครั้ง"),
+        // после регистрации в Rauthy
+        "registered_title" => ("Проверьте почту", "Check your email", "ตรวจสอบอีเมลของคุณ"),
+        "registered_step_mail" => (
+            "Мы отправили письмо со ссылкой на адрес, который вы указали.",
+            "We've sent an email with a link to the address you entered.",
+            "เราส่งอีเมลพร้อมลิงก์ไปยังที่อยู่ที่คุณกรอกแล้ว",
+        ),
+        "registered_step_password" => (
+            "Откройте ссылку и задайте пароль — она действует 3 дня.",
+            "Open the link and set a password — it's valid for 3 days.",
+            "เปิดลิงก์และตั้งรหัสผ่าน — ลิงก์ใช้ได้ 3 วัน",
+        ),
+        "registered_step_login" => (
+            "Пароль задан? Нажмите «Войти» — и бюджет готов к работе.",
+            "Password set? Press Sign in and your budget is ready.",
+            "ตั้งรหัสผ่านแล้ว? กด เข้าสู่ระบบ แล้วงบของคุณก็พร้อมใช้",
+        ),
+        "registered_spam" => (
+            "Письма нет несколько минут — загляните в «Спам». Не нашлось — на странице входа запросите сброс пароля для того же адреса: придёт новая ссылка.",
+            "No email after a few minutes? Check your spam folder. Still nothing — request a password reset for the same address on the sign-in page and you'll get a new link.",
+            "ไม่ได้รับอีเมลภายในไม่กี่นาที? ตรวจสอบโฟลเดอร์สแปม หากยังไม่พบ ให้ขอรีเซ็ตรหัสผ่านสำหรับที่อยู่เดิมในหน้าเข้าสู่ระบบ แล้วคุณจะได้รับลิงก์ใหม่",
+        ),
         "oidc_off" => (
             "Вход через Rauthy не настроен: задайте OIDC_ISSUER, OIDC_CLIENT_ID и OIDC_CLIENT_SECRET.",
             "Rauthy sign-in isn't configured: set OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET.",

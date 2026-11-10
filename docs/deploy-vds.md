@@ -484,6 +484,7 @@ cat > deploy/rauthy/bootstrap-prod/clients.json <<EOF
     "secret": "generate",
     "redirect_uris": ["https://${DOMAIN}/auth/callback"],
     "post_logout_redirect_uris": ["https://${DOMAIN}/"],
+    "client_uri": "https://${DOMAIN}",
     "enabled": true,
     "flows_enabled": ["authorization_code", "refresh_token"],
     "access_token_alg": "EdDSA",
@@ -501,6 +502,10 @@ echo '[]' > deploy/rauthy/bootstrap-prod/users.json
 chmod -R a+rX deploy/rauthy/bootstrap-prod       # Rauthy в контейнере работает не от вашего пользователя
 cat deploy/rauthy/bootstrap-prod/clients.json     # проверьте домен
 ```
+
+`client_uri` обязателен: после регистрации Rauthy возвращает человека в приложение (`/auth/registered` — «Проверьте
+почту»), но только если адрес возврата начинается с Client URI какого-нибудь клиента. Без него форма регистрации
+отвечает «given `redirect_uri` not allowed», и зарегистрироваться через «Создать бюджет» нельзя.
 
 ### 8.3. Скрыть серверные файлы от git
 
@@ -626,9 +631,11 @@ docker compose logs rauthy 2>&1 | grep -i -B2 -A2 password
 Admin → Clients → `family-budget`:
 
 - Redirect URIs — `https://budget.example.com/auth/callback`;
-- Post Logout Redirect URIs — `https://budget.example.com/`.
+- Post Logout Redirect URIs — `https://budget.example.com/`;
+- Client URI — `https://budget.example.com` (без слеша в конце; без него не работает регистрация, шаг 8.2).
 
-Если Rauthy уже стартовал со старым bootstrap и там `localhost`, исправьте адреса здесь вручную.
+Если Rauthy уже стартовал со старым bootstrap и там `localhost` или Client URI пуст, исправьте здесь вручную.
+`scripts/deploy-vds.sh update` дописывает пустой Client URI сам, `scripts/deploy-vds.sh check` его проверяет.
 
 ### 11.3. Вход через GitHub и Facebook (необязательно)
 
@@ -673,8 +680,10 @@ docker inspect -f '{{.Name}} {{.HostConfig.LogConfig.Type}} {{.HostConfig.LogCon
 
 1. `https://budget.example.com` — лендинг, замок в адресной строке.
 2. «Посмотреть демо» (если `GUEST_DEMO=1`) — демо-семья в режиме просмотра.
-3. «Создать бюджет» → регистрация в Rauthy → письмо пришло → вход → онбординг (имя, валюта, язык).
-4. Профиль → Безопасность → включите 2FA, выйдите и войдите снова — код приходит по почте.
+3. «Создать бюджет» → регистрация в Rauthy → через 3 секунды страница «Проверьте почту» → по ссылке из письма задать
+   пароль → снова «Проверьте почту» → «Войти» → онбординг (имя, валюта, язык).
+4. То же по ссылке-приглашению, открыв письмо в другом браузере: после входа — страница приглашения, а не онбординг.
+5. Профиль → Безопасность → включите 2FA, выйдите и войдите снова — код приходит по почте.
 
 Перезагрузка: `sudo reboot`, через минуту `docker compose ps` и `curl https://budget.example.com/health`. Docker и Caddy
 стартуют сами, контейнеры поднимаются по `restart: unless-stopped`.
@@ -881,6 +890,9 @@ docker compose logs -f app
 | Caddy не получает сертификат | `dig +short <домен>` указывает на сервер; порты 80 и 443 открыты (`sudo ufw status`, файрвол в панели хостера); `sudo journalctl -u caddy -f` |
 | `502 Bad Gateway` | Контейнер не запущен или упал: `docker compose ps`, `docker compose logs app` / `rauthy` |
 | Rauthy отвечает ошибкой или блокирует запросы | Подсеть сети compose должна входить в `RAUTHY_TRUSTED_PROXIES`: `docker network inspect family-budget_default -f '{{(index .IPAM.Config 0).Subnet}}'`. Если там не `172.x`, впишите эту подсеть и выполните `docker compose up -d rauthy` |
+| Регистрация: «given `redirect_uri` not allowed» | Пустой Client URI клиента: Admin Rauthy → Clients → `family-budget` → Client URI = `https://<домен>` (шаг 11.2) или `scripts/deploy-vds.sh update` |
+| После регистрации или установки пароля — кабинет Rauthy, а не приложение | Тот же Client URI: без него ссылка «Регистрация» на странице входа Rauthy не знает, куда вернуть |
+| «Вход начат в другом браузере…» | Ссылка из письма открылась в другом браузере, чем вход, или cookie запрещены. Причины отказов входа — `SELECT at, details FROM fb_audit_log WHERE action = 'login_failed' ORDER BY at DESC LIMIT 20;` |
 | После входа ошибка `redirect_uri` | Admin Rauthy → Clients → `family-budget` → Redirect URIs = `https://<домен>/auth/callback` |
 | Ошибка проверки issuer при входе | `OIDC_ISSUER` должен совпадать с `issuer` из discovery (шаг 12) символ в символ, включая `https` и слеш в конце |
 | Не приходят письма | Настройки `SMTP_*`, `docker compose logs rauthy`. Многие хостеры блокируют порт 25 — используйте 587 (`SMTP_TLS_MODE=tls`) или 465. Добавьте SPF/DKIM для домена отправителя, иначе письма уйдут в спам |
@@ -906,7 +918,7 @@ docker compose exec db psql -U budget -d family_budget    # консоль БД 
 - [ ] SSH только по ключу, root-вход выключен, ufw: 22, 80, 443
 - [ ] `ss -tlnp`: 8080, 8443, 5432 слушают только `127.0.0.1`
 - [ ] `.env`: `APP_ENV=prod`, `SEED_DEMO=0`, `TRUST_PROXY=1`, права `600`, копия — в менеджере паролей
-- [ ] Rauthy: пароль администратора сменён, passkey добавлен, redirect URI клиента — продакшен-домен
+- [ ] Rauthy: пароль администратора сменён, passkey добавлен, redirect URI и Client URI клиента — продакшен-домен
 - [ ] SMTP работает: регистрация и код 2FA приходят на почту
 - [ ] `make backup` в cron, приватный ключ age вне сервера, копии уходят с сервера, `make restore-check` проходит
 - [ ] Автообновление включено, `deploy-vds.sh auto-update test` доходит до Telegram или почты

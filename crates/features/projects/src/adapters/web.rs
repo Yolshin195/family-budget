@@ -32,7 +32,7 @@ type Svc = State<Arc<ProjectService>>;
 
 const YEAR: i64 = 365 * 24 * 3600;
 const SESSION_AGE: i64 = 30 * 24 * 3600;
-const OIDC_COOKIE: &str = "fb_oidc";
+pub(crate) const OIDC_COOKIE: &str = "fb_oidc";
 /// Приглашение, открытое до входа: после входа или регистрации в Rauthy человек вернётся к нему.
 const JOIN_COOKIE: &str = "fb_join";
 const JOIN_AGE: i64 = 24 * 3600;
@@ -42,6 +42,7 @@ pub fn public(service: Arc<ProjectService>) -> Router {
     Router::new()
         .route("/auth/login", get(login))
         .route("/auth/register", get(register))
+        .route("/auth/registered", get(registered))
         .route("/auth/callback", get(callback))
         .route("/auth/logout", get(logout_page).post(logout))
         .route("/auth/dev", post(dev_login))
@@ -108,7 +109,7 @@ struct PendingCookie {
     t: i64,
 }
 
-fn seal_pending(cfg: &Config, p: &PendingLogin) -> String {
+pub(crate) fn seal_pending(cfg: &Config, p: &PendingLogin) -> String {
     let c = PendingCookie {
         s: p.state.clone(),
         n: p.nonce.clone(),
@@ -138,6 +139,8 @@ struct AuthPage {
     next: String,
     /// Подтверждение выхода (GET /auth/logout): CSRF-токен формы.
     logout_csrf: Option<String>,
+    /// После регистрации в Rauthy (GET /auth/registered): «проверьте почту, задайте пароль, войдите».
+    registered: bool,
 }
 
 impl AuthPage {
@@ -151,6 +154,7 @@ impl AuthPage {
             demo_users: vec![("aleksey@demo.local", "Алексей · OWNER"), ("anna@demo.local", "Anna · EDITOR")],
             next: "/budget".into(),
             logout_csrf: None,
+            registered: false,
         }
     }
 
@@ -202,19 +206,43 @@ async fn login(State(svc): Svc, headers: HeaderMap, Query(q): Query<NextQuery>) 
     Ok((AppendHeaders([c]), Redirect::to(&url)).into_response())
 }
 
-/// «Создать бюджет»: страница регистрации Rauthy, после неё — обычный вход. Ссылки «Войти» на ней нет,
-/// поэтому вошедшего туда не отправляем — сразу в приложение.
-async fn register(State(svc): Svc, headers: HeaderMap) -> Response {
+/// Адрес возврата из регистрации Rauthy: страница «Проверьте почту» (`/auth/registered`), с `next`, если он
+/// не по умолчанию. Rauthy пускает на него, только если адрес начинается с Client URI клиента
+/// (docs/deploy-vds.md, шаг 8). Он же — адрес после того, как человек задал пароль по ссылке из письма:
+/// ссылку часто открывают в другом браузере, поэтому приглашение едет в `next`, а не только в cookie.
+fn registration_return(base_url: &str, next: &str) -> String {
+    let next = crate::domain::safe_next(next);
+    if next == "/budget" {
+        format!("{base_url}/auth/registered")
+    } else {
+        format!("{base_url}/auth/registered?next={}", kernel::web::url_encode(&next))
+    }
+}
+
+/// «Создать бюджет»: страница регистрации Rauthy, после неё — «Проверьте почту» и обычный вход. Ссылки
+/// «Войти» на ней нет, поэтому вошедшего туда не отправляем — сразу в приложение.
+async fn register(State(svc): Svc, headers: HeaderMap, Query(q): Query<NextQuery>) -> Response {
     if signed_in(&svc, &headers).await {
-        return see_other("/budget");
+        return see_other(&crate::domain::safe_next(&q.next));
     }
     match &svc.config().oidc {
         Some(o) if svc.oidc_enabled() => {
-            let back = format!("{}/auth/login", svc.config().base_url);
+            let back = registration_return(&svc.config().base_url, &q.next);
             Redirect::to(&format!("{}?redirect_uri={}", o.register_url, kernel::web::url_encode(&back))).into_response()
         }
-        _ => Redirect::to("/auth/login").into_response(),
+        _ => Redirect::to(&format!("/auth/login?next={}", kernel::web::url_encode(&crate::domain::safe_next(&q.next))))
+            .into_response(),
     }
+}
+
+/// Возврат из регистрации Rauthy — сразу после неё и ещё раз после того, как задан пароль: пароль приходит
+/// письмом, поэтому вместо формы входа (пароля ещё нет) — подсказка и кнопка «Войти».
+async fn registered(State(svc): Svc, headers: HeaderMap, Query(q): Query<NextQuery>) -> PageResult {
+    let next = crate::domain::safe_next(&q.next);
+    if signed_in(&svc, &headers).await {
+        return Ok(see_other(&next));
+    }
+    render(&AuthPage { registered: true, next, ..AuthPage::new(&svc, lang_of(&headers)) })
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -246,16 +274,28 @@ async fn callback(
     // Пользователю — общий текст: ответ Rauthy и подробности проверки уходят в журнал.
     if !q.error.is_empty() {
         svc.login_failed(&meta, &[("error", &q.error), ("description", &q.error_description)]).await;
-        return fail(t(lang, "login_failed_hint"));
+        return fail(t(lang, "login_failed_generic"));
     }
+    // Cookie входа нет: вход начат в другом браузере (ссылка из письма открылась не там), cookie
+    // запрещены или вход начат слишком давно. Причину — в журнал, человеку — подсказку.
     let Some(pending) = open_pending(cfg, &headers) else {
-        return fail(t(lang, "login_failed_hint"));
+        svc.login_failed(&meta, &[("reason", "нет cookie входа (fb_oidc)")]).await;
+        return fail(t(lang, "login_no_cookie"));
     };
+    // Вход занял больше 10 минут (например, ждали письмо регистрации): начать его заново, а не показывать
+    // ошибку. Сессия Rauthy ещё жива — второй раз пароль обычно не спрашивают.
+    if pending.expired(Utc::now()) {
+        svc.login_failed(&meta, &[("reason", "вход занял больше 10 минут — начат заново")]).await;
+        let again = format!("/auth/login?next={}", kernel::web::url_encode(&pending.next));
+        return Ok((AppendHeaders([clear_pending.clone()]), Redirect::to(&again)).into_response());
+    }
     match svc.finish_login(&pending, &q.state, &q.code, lang, &meta).await {
         Ok(r) => {
             // Открывал приглашение до входа — сразу к нему (новичку онбординг не нужен: проект будет семейный).
+            // Приглашение — из cookie или из `next` (регистрация, законченная в другом браузере).
             let to = match cookie(&headers, JOIN_COOKIE).filter(|c| split_invite_code(c).is_some()) {
                 Some(code) => format!("/join/{code}"),
+                None if r.next.starts_with("/join/") => r.next,
                 None if r.onboarding => "/onboarding".to_string(),
                 None => r.next,
             };
@@ -272,7 +312,7 @@ async fn callback(
         }
         Err(AppError::Validation(m) | AppError::Forbidden(m)) => {
             svc.login_failed(&meta, &[("reason", &m)]).await;
-            fail(t(lang, "login_failed_hint"))
+            fail(t(lang, "login_failed_generic"))
         }
         Err(e) => Err(PageError(e)),
     }
