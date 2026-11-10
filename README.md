@@ -12,6 +12,8 @@ MCP-сервер для Claude: расходы голосом и по фото �
 
 Что сделано по ТЗ v3 (разделы 9–13) и что осталось — [docs/tz-v3.md](docs/tz-v3.md).
 ТЗ на реализацию группы 1 (карточка операции: позиции чека, время, места, «Для кого») — [docs/group-1.md](docs/group-1.md).
+План вложенных проектов и поездок (дерево проектов, своя валюта учёта, сводка родителя) —
+[docs/nested-projects.md](docs/nested-projects.md).
 Схема БД для https://app.diagrams.net — [docs/db-schema.drawio](docs/db-schema.drawio) (File → Open from → Device).
 Сайт (предварительная версия на GitHub Pages) — https://yolshin195.github.io/family-budget/.
 
