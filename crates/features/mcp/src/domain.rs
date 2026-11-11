@@ -810,12 +810,20 @@ pub fn parse_signed_amount(field: &str, value: &str) -> Result<Decimal, String> 
 
 /// Начало периода лимита (WEEK — с понедельника, MONTH — 1-е число, YEAR — 1 января), содержащего `date`.
 pub fn period_start(period: &str, date: NaiveDate) -> NaiveDate {
-    use chrono::Datelike;
-    match period {
-        "WEEK" => date - chrono::Days::new(u64::from(date.weekday().num_days_from_monday())),
-        "YEAR" => NaiveDate::from_ymd_opt(date.year(), 1, 1).unwrap_or(date),
-        _ => date.with_day(1).unwrap_or(date),
-    }
+    limit_period(period).start(date)
+}
+
+/// WEEK / MONTH / YEAR → вид периода ядра; неизвестное — месяц.
+pub fn limit_period(period: &str) -> kernel::limits::LimitPeriod {
+    kernel::limits::LimitPeriod::parse(period).unwrap_or(kernel::limits::LimitPeriod::Month)
+}
+
+/// Сроки действия правил категории `category` (общее правило ядра `kernel::limits::spans`): пары
+/// (правило, срок), `None` — правило не действует ни дня.
+pub fn limit_spans<'a>(rules: &'a [Limit], category: &str) -> Vec<(&'a Limit, Option<kernel::limits::Span>)> {
+    let mine: Vec<&Limit> = rules.iter().filter(|l| l.category_code == category).collect();
+    let keys: Vec<_> = mine.iter().map(|l| (limit_period(&l.period), l.valid_from)).collect();
+    mine.into_iter().zip(kernel::limits::spans(&keys)).collect()
 }
 
 /// Сумма из текста: «120.50», «120,50», «1 200», «120+45» (как в поле суммы интерфейса); > 0.

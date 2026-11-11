@@ -32,15 +32,42 @@ impl LimitLimitPeriod {
         }
     }
 
-    /// Начало периода, в который попадает дата (неделя — с понедельника).
-    pub fn start(&self, d: chrono::NaiveDate) -> chrono::NaiveDate {
-        use chrono::Datelike;
+    /// Тот же вид периода в правилах лимита ядра.
+    pub fn kernel(self) -> kernel::limits::LimitPeriod {
         match self {
-            Self::Week => d - chrono::Days::new(d.weekday().num_days_from_monday() as u64),
-            Self::Month => d.with_day(1).unwrap_or(d),
-            Self::Year => d.with_ordinal(1).unwrap_or(d),
+            Self::Week => kernel::limits::LimitPeriod::Week,
+            Self::Month => kernel::limits::LimitPeriod::Month,
+            Self::Year => kernel::limits::LimitPeriod::Year,
         }
     }
+
+    /// Начало периода, в который попадает дата (неделя — с понедельника).
+    pub fn start(&self, d: chrono::NaiveDate) -> chrono::NaiveDate {
+        self.kernel().start(d)
+    }
+}
+
+/// Пометки правила на странице «Лимиты».
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuleState {
+    /// Правило действует сегодня.
+    pub current: bool,
+    /// Правило уже не действует: срок кончился до сегодня или более позднее правило перекрыло его целиком.
+    pub superseded: bool,
+}
+
+/// Пометки правил одной категории (в порядке входа) на дату `today`. Правило — (период, `valid_from`);
+/// сроки — общее правило ядра `kernel::limits::spans`: более позднее правило заменяет прежние с начала
+/// своего периода, даже если период другой.
+pub fn rule_states(rules: &[(LimitLimitPeriod, chrono::NaiveDate)], today: chrono::NaiveDate) -> Vec<RuleState> {
+    let keys: Vec<_> = rules.iter().map(|(p, v)| (p.kernel(), *v)).collect();
+    kernel::limits::spans(&keys)
+        .into_iter()
+        .map(|s| RuleState {
+            current: s.is_some_and(|s| s.contains(today)),
+            superseded: s.is_none_or(|s| s.to.is_some_and(|t| t < today)),
+        })
+        .collect()
 }
 
 /// Запись журнала.

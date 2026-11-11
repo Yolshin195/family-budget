@@ -11,6 +11,7 @@ use kernel::web::{Choice, Flash, PageCtx, PageError, PageResult, parse_money, re
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::domain::{LimitLimitPeriod, rule_states};
 use crate::dto::{LimitDto, LimitInput};
 use crate::service::LimitService;
 
@@ -30,7 +31,7 @@ struct Row {
     category: String,
     /// Уровень категории в дереве (отступ строки).
     depth: usize,
-    /// Есть более поздний лимит этой категории, уже вступивший в силу.
+    /// Правило уже не действует: его заменило более позднее правило этой категории.
     superseded: bool,
     /// Правило вступает в силу раньше `valid_from` — с начала своего периода.
     early: bool,
@@ -60,16 +61,18 @@ async fn show(svc: &LimitService, page: PageCtx, error: Option<String>) -> PageR
     let today = chrono::Local::now().date_naive();
     let categories = svc.ref_choices(p, page.lang).await?;
     let all = svc.all(p).await?;
-    // Порядок строк — как в дереве категорий; внутри категории новые сначала.
+    // Порядок строк — как в дереве категорий; внутри категории новые (по «Действует с») сначала.
     let mut rows = Vec::new();
     for c in &categories {
         let mut mine: Vec<&LimitDto> = all.iter().filter(|l| l.category_code == c.code).collect();
-        // Правило действует с начала своего периода; при одинаковом начале — более позднее по дате.
-        mine.sort_by_key(|l| std::cmp::Reverse((l.effective_from, l.valid_from)));
-        let current = mine.iter().find(|l| l.effective_from <= today).map(|l| l.id);
-        for l in mine {
-            let superseded = l.effective_from <= today && Some(l.id) != current;
+        mine.sort_by_key(|l| std::cmp::Reverse(l.valid_from));
+        let keys: Vec<_> = mine
+            .iter()
+            .map(|l| (LimitLimitPeriod::parse(&l.limit_period).unwrap_or(LimitLimitPeriod::Month), l.valid_from))
+            .collect();
+        for (l, state) in mine.into_iter().zip(rule_states(&keys, today)) {
             let early = l.effective_from < l.valid_from;
+            let superseded = state.superseded;
             rows.push(Row { dto: l.clone(), category: c.label.clone(), depth: c.depth.min(5), superseded, early });
         }
     }

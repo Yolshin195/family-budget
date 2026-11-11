@@ -1746,6 +1746,41 @@ async fn zero_limit_and_removed_limit() {
     assert!(rows.iter().any(|r| r["current"] == true && r["amount"] == "0"), "нулевой лимит действует сегодня");
 }
 
+/// Issue #58: недельный лимит со среды, затем «снять лимит» помесячно неделей позже — снятие действует с начала
+/// месяца и перекрывает недельный лимит целиком; текущим в list_limits считается снятие.
+#[tokio::test]
+async fn longer_later_rule_replaces_earlier_from_its_start() {
+    let e = env();
+    e.grant(&["read", "limits:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let set = |period: &str, valid_from: &str, amount: Option<&str>| SetLimitArgs {
+        category: "FOOD".into(),
+        amount: amount.map(Into::into),
+        period: Some(period.into()),
+        valid_from: Some(valid_from.into()),
+        remove: amount.is_none().then_some(true),
+    };
+    e.svc.set_limit(&c, set("month", "2026-08-01", Some("4000"))).await.unwrap();
+    // 16.09.2026 — среда: недельный лимит с понедельника 14.09.
+    e.svc.set_limit(&c, set("week", "2026-09-16", Some("1000"))).await.unwrap();
+    let out = e.svc.set_limit(&c, set("month", "2026-09-22", None)).await.unwrap();
+    assert!(out.summary.contains("removed from 2026-09-01"), "{}", out.summary);
+    assert!(out.summary.contains("no longer apply at all: 1000 THB per week from 2026-09-16"), "{}", out.summary);
+    let list = e.svc.list_limits(&c).await.unwrap();
+    let rows = list.data["limits"].as_array().unwrap().clone();
+    let current: Vec<_> = rows.iter().filter(|r| r["current"] == true).collect();
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0]["removed"], true, "действует снятие, а не недельный лимит");
+    assert_eq!(rows[0]["valid_from"], "2026-09-22", "новые правила сначала");
+    // Прошлые периоды сохраняют своё: в августе действует месячный лимит.
+    let rules = e.limits.limits.lock().unwrap().clone();
+    let aug = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+    let spans = limit_spans(&rules, "FOOD");
+    let in_aug: Vec<_> = spans.iter().filter(|(_, s)| s.is_some_and(|s| s.contains(aug))).collect();
+    assert_eq!(in_aug.len(), 1);
+    assert_eq!(in_aug[0].0.amount, Some(d("4000")));
+}
+
 #[test]
 fn period_start_of_week_month_year() {
     let day = NaiveDate::from_ymd_opt(2026, 10, 16).unwrap(); // пятница
