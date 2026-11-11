@@ -12,8 +12,8 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::domain::{
-    Account, BudgetReport, Category, Currency, Grant, Limit, Occurrence, Person, Place, Plan, PlanDraft, QuickInfo,
-    Rate, Tx, TxDraft, TxFilter,
+    Account, BankBalance, BudgetReport, Category, Currency, Grant, Limit, Occurrence, Person, Place, Plan, PlanDraft,
+    QuickInfo, Rate, Tx, TxDraft, TxFilter,
 };
 
 #[async_trait]
@@ -46,6 +46,10 @@ pub trait Ledger: Send + Sync {
     async fn create(&self, project_id: Uuid, user_id: Uuid, draft: TxDraft) -> AppResult<Tx>;
     async fn update(&self, project_id: Uuid, id: Uuid, draft: TxDraft) -> AppResult<Tx>;
     async fn balances(&self, project_id: Uuid, date: NaiveDate) -> AppResult<Vec<(String, Decimal)>>;
+    /// Остаток счёта по данным банка и остаток по операциям на тот же момент; `None` — SMS с остатком не было.
+    async fn bank_balance(&self, _project_id: Uuid, _account_code: &str) -> AppResult<Option<BankBalance>> {
+        Ok(None)
+    }
 }
 
 /// Бюджет за период (фича `budget`).

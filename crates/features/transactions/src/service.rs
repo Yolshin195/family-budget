@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, SubsecRound, Utc};
 use kernel::code::normalize;
 use kernel::error::{AppError, AppResult, Problem, codes};
 use kernel::i18n::Lang;
@@ -13,8 +13,8 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::domain::{
-    Body, Description, Draft, ExternalRef, ItemDraft, ItemsDraft, RefDraft, RefKind, RefLink, Transaction,
-    TransactionData, TxKind,
+    Body, Description, Draft, ExternalRef, ItemDraft, ItemsDraft, RefDraft, RefKind, RefLink, TimeInput, Transaction,
+    TransactionData, TxKind, local_date,
 };
 use crate::dto::{
     ExternalRefDto, ExternalRefFoundDto, ExternalRefInput, ItemInput, ListQuery, QuickAccountDto, QuickCategoryDto,
@@ -85,6 +85,8 @@ impl TransactionService {
         self.apply_place(project_id, &mut input, None).await?;
         let people = self.check_header_person(project_id, &input, None).await?;
         let data = input.into_domain()?;
+        // Без времени операция за сегодня — «сейчас» (docs/group-1.md, 5.2).
+        let data = TransactionData { time: data.time.or_now(data.occurred_on, Utc::now()), ..data };
         let accounts = self.deps.accounts.currencies(project_id).await?;
         let item = Transaction::create(project_id, created_by, data, &accounts)?;
         self.check_refs(project_id, &item, None).await?;
@@ -95,9 +97,13 @@ impl TransactionService {
             self.repo.insert(&item).await.map_err(|e| conflict(e, &item))?;
             return Ok((item.into(), true));
         };
+        let balance = r.balance_account("external_ref.", &item)?;
         let link = r.link(project_id, item.id, RefLink::Created, created_by);
         match self.repo.insert_with_ref(&item, &link).await {
-            Ok(()) => Ok((with_refs(item.into(), vec![link]), true)),
+            Ok(()) => {
+                self.report_balance(project_id, balance, &r, &item).await?;
+                Ok((with_refs(item.into(), vec![link]), true))
+            }
             // Гонка: ту же запись только что записал параллельный запрос — его SQL-транзакция победила, наша
             // откатилась целиком. Ответ — как на повтор.
             Err(AppError::Conflict(m)) if m == taken::EXTERNAL_REF => match self.by_ref(project_id, &r).await? {
@@ -121,7 +127,8 @@ impl TransactionService {
         }
     }
 
-    /// Прикрепить внешнюю запись к существующей операции (2.3): связь `MATCHED`, операция не меняется.
+    /// Прикрепить внешнюю запись к существующей операции (2.3): связь `MATCHED`. Из операции меняется только время:
+    /// время SMS того же дня точнее введённого вручную — оно и становится временем операции.
     /// `false` — запись уже прикреплена к этой операции, возвращена прежняя связь; к другой — `EXTERNAL_REF_TAKEN`.
     pub async fn attach(
         &self,
@@ -135,9 +142,16 @@ impl TransactionService {
         if item.tx_kind == TxKind::Opening {
             return Err(err("", "err.external_ref_opening", &[]).into());
         }
+        let balance = r.balance_account("", &item)?;
         let link = r.link(project_id, id, RefLink::Matched, user_id);
         match self.repo.insert_ref(&link).await {
-            Ok(()) => Ok((link.into(), true)),
+            Ok(()) => {
+                if let Some(at) = r.moment().filter(|t| local_date(*t) == item.occurred_on) {
+                    self.repo.set_time(project_id, id, Some(at.trunc_subsecs(0))).await?;
+                }
+                self.report_balance(project_id, balance, &r, &item).await?;
+                Ok((link.into(), true))
+            }
             // Занято — этой операцией (повтор, в том числе параллельный) или другой.
             Err(AppError::Conflict(m)) if m == taken::EXTERNAL_REF => {
                 match self.repo.find_ref(project_id, &r.provider, &r.external_id).await? {
@@ -147,6 +161,36 @@ impl TransactionService {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Остаток счёта по данным банка из внешней записи — в счёт, на момент операции по данным записи (без него — на
+    /// время операции, без него — сейчас). Более старый, чем уже записанный, счёт не меняет.
+    async fn report_balance(
+        &self,
+        project_id: Uuid,
+        balance: Option<(String, Decimal)>,
+        r: &RefDraft,
+        item: &Transaction,
+    ) -> AppResult<()> {
+        let Some((account, amount)) = balance else { return Ok(()) };
+        let at = r.moment().or(item.occurred_at).unwrap_or_else(Utc::now);
+        self.deps.accounts.report_balance(project_id, &account, amount, at).await
+    }
+
+    /// Остаток счёта на момент `at`: операции до его дня и операции его дня не позже него; операции этого дня без
+    /// времени — тоже (их время неизвестно). С ним сверяется остаток по данным банка.
+    pub async fn balance_at(&self, project_id: Uuid, account_code: &str, at: DateTime<Utc>) -> AppResult<Decimal> {
+        let code = normalize("account_code", account_code).map_err(AppError::Validation)?;
+        self.repo.balance_at(project_id, &code, local_date(at), at).await
+    }
+
+    /// Остаток счёта по данным банка (последнее SMS с остатком) — для выписки.
+    pub async fn bank_balance(
+        &self,
+        project_id: Uuid,
+        account_code: &str,
+    ) -> AppResult<Option<(Decimal, DateTime<Utc>)>> {
+        self.deps.accounts.bank_balance(project_id, account_code).await
     }
 
     /// Связь внешней записи (2.4) — для клиента после 409: к какой операции и есть ли она ещё.
@@ -408,6 +452,7 @@ impl TransactionService {
             Some(mut t) => {
                 let data = TransactionData {
                     occurred_on: date,
+                    time: TimeInput::Keep,
                     description: t.description.clone(),
                     plan: None,
                     place_code: None,
@@ -419,6 +464,7 @@ impl TransactionService {
             None => {
                 let data = TransactionData {
                     occurred_on: date,
+                    time: TimeInput::Keep,
                     description: Description::default(),
                     plan: None,
                     place_code: None,
@@ -432,6 +478,7 @@ impl TransactionService {
                             self.repo.find_opening(project_id, &code).await?.ok_or_else(|| AppError::Conflict(m))?;
                         let data = TransactionData {
                             occurred_on: date,
+                            time: TimeInput::Keep,
                             description: t.description.clone(),
                             plan: None,
                             place_code: None,
@@ -497,7 +544,14 @@ impl TransactionService {
         let accounts = self.deps.accounts.currencies(project_id).await?;
         let items = ItemsDraft::replace(vec![ItemDraft::simple(category_code, diff.abs())]);
         let body = Draft::Flow { income: diff > Decimal::ZERO, account: code, items, refund: false };
-        let data = TransactionData { occurred_on: date, description, plan: None, place_code: None, body };
+        let data = TransactionData {
+            occurred_on: date,
+            time: TimeInput::Keep,
+            description,
+            plan: None,
+            place_code: None,
+            body,
+        };
         let item = Transaction::create(project_id, user_id, data, &accounts)?;
         self.check_refs(project_id, &item, None).await.map_err(|e| match e {
             AppError::Invalid(_) | AppError::Validation(_) if diff > Decimal::ZERO => {

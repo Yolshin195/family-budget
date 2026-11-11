@@ -3,7 +3,7 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use kernel::error::{AppError, AppResult};
 use rust_decimal::Decimal;
 use uuid::Uuid;
@@ -130,11 +130,20 @@ impl TransactionRepository for InMemoryTransactionRepository {
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>> {
         let refs = self.refs();
         let rows = self.rows.lock().unwrap();
-        // Новые сначала: при одной дате — позже добавленные.
+        // Как в БД: новые сначала, внутри дня — по времени операции, без него — по времени внесения; при равных —
+        // позже добавленные.
         let mut items: Vec<_> =
             rows.iter().enumerate().filter(|(_, r)| matches(r, project_id, filter, &refs)).collect();
-        items.sort_by(|a, b| b.1.occurred_on.cmp(&a.1.occurred_on).then(b.0.cmp(&a.0)));
+        let key = |r: &Transaction| (r.occurred_on, r.occurred_at.unwrap_or(r.created_at), r.created_at);
+        items.sort_by(|a, b| key(b.1).cmp(&key(a.1)).then(b.0.cmp(&a.0)));
         Ok(items.into_iter().skip(offset as usize).take(limit as usize).map(|(_, r)| r.clone()).collect())
+    }
+
+    async fn set_time(&self, project_id: Uuid, id: Uuid, at: Option<DateTime<Utc>>) -> AppResult<()> {
+        if let Some(r) = self.rows.lock().unwrap().iter_mut().find(|r| r.project_id == project_id && r.id == id) {
+            r.occurred_at = at;
+        }
+        Ok(())
     }
 
     async fn count(&self, project_id: Uuid, filter: &Filter) -> AppResult<i64> {
@@ -252,6 +261,19 @@ impl TransactionRepository for InMemoryTransactionRepository {
             }
         }
         Ok(out)
+    }
+
+    async fn balance_at(
+        &self,
+        project_id: Uuid,
+        account: &str,
+        date: NaiveDate,
+        at: DateTime<Utc>,
+    ) -> AppResult<Decimal> {
+        let rows = self.rows.lock().unwrap();
+        let before =
+            |r: &Transaction| r.occurred_on < date || (r.occurred_on == date && r.occurred_at.is_none_or(|t| t <= at));
+        Ok(rows.iter().filter(|r| r.project_id == project_id && before(r)).map(|r| r.amount_on(account)).sum())
     }
 
     async fn has_postings(&self, project_id: Uuid, account_code: &str) -> AppResult<bool> {

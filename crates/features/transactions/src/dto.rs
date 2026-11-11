@@ -2,7 +2,7 @@
 //!
 //! Клиент присылает тип и поля формы, сервер строит из них проводки; ответ всегда содержит проводки.
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, SubsecRound, Utc};
 use kernel::i18n::{Lang, Localized};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -12,8 +12,8 @@ use uuid::Uuid;
 use kernel::error::Problem;
 
 use crate::domain::{
-    Body, Description, Draft, ExternalRef, Fee, Item, ItemDraft, ItemsDraft, RefDraft, Transaction, TransactionData,
-    TxKind,
+    Body, Description, Draft, ExternalRef, Fee, Item, ItemDraft, ItemsDraft, RefDraft, TimeInput, Transaction,
+    TransactionData, TxKind,
 };
 
 /// Позиция чека в старом формате `lines`: категория и сумма. Принимается по-прежнему — как позиция
@@ -183,6 +183,21 @@ pub struct ExternalRefInput {
     #[serde(default)]
     #[schema(format = DateTime, example = "2026-09-21T10:51:07+07:00")]
     pub received_at: Option<String>,
+    /// Когда прошла операция по данным источника (время из текста SMS банка), RFC 3339 с часовым поясом. При
+    /// прикреплении становится временем операции, если день тот же; с ним сверяется `balance`. Без него — `received_at`
+    #[serde(default)]
+    #[schema(format = DateTime, example = "2026-09-21T10:50:00+07:00")]
+    pub occurred_at: Option<String>,
+    /// Остаток счёта после операции по данным банка (`Outstanding Balance` в SMS). Записывается в счёт как «остаток
+    /// в банке на момент `received_at`», если он не старше уже записанного
+    #[serde(default)]
+    #[schema(value_type = Option<String>, example = "8195.25")]
+    pub balance: Option<Decimal>,
+    /// Счёт, к которому относится `balance`: один из счетов операции. Не передан — счёт операции (у перевода — счёт
+    /// списания)
+    #[serde(default)]
+    #[schema(example = "CARD_KBANK")]
+    pub account_code: Option<String>,
 }
 
 impl ExternalRefInput {
@@ -202,7 +217,19 @@ impl ExternalRefInput {
                 kernel::i18n::tr(Some(crate::i18n::dict), "err.external_received_at", &[]),
             ));
         }
-        Ok(r)
+        let occurred = self.occurred_at.as_deref().map(str::trim).filter(|v| !v.is_empty());
+        let occurred = occurred
+            .map(|v| DateTime::parse_from_rfc3339(v).map(|t| t.with_timezone(&Utc)))
+            .transpose()
+            .map_err(|_| {
+                Problem::validation(
+                    &format!("{prefix}occurred_at"),
+                    kernel::i18n::tr(Some(crate::i18n::dict), "err.external_occurred_at", &[]),
+                )
+            })?;
+        let account = self.account_code.filter(|c| !c.trim().is_empty());
+        let r = RefDraft { occurred_at: occurred.map(|t| t.trunc_subsecs(0)), ..r };
+        r.with_balance(prefix, self.balance, account)
     }
 }
 
@@ -267,6 +294,12 @@ pub struct ExternalRefQuery {
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub struct TransactionInput {
     pub occurred_on: NaiveDate,
+    /// Время операции, RFC 3339 с часовым поясом; его дата — `occurred_on`. Не передано: новая операция за сегодня —
+    /// момент запроса, за другой день — без времени; при правке время суток остаётся и переносится на новую дату.
+    /// Пустая строка — убрать время
+    #[serde(default)]
+    #[schema(format = DateTime, example = "2026-09-21T10:50:00+07:00")]
+    pub occurred_at: Option<String>,
     #[schema(example = "EXPENSE")]
     pub tx_kind: String,
     /// Счёт (у перевода — счёт списания); можно не передавать, если у места есть счёт по умолчанию
@@ -351,6 +384,10 @@ pub struct TranslationInput {
 pub struct TransactionDto {
     pub id: Uuid,
     pub occurred_on: NaiveDate,
+    /// Время операции; пусто — время неизвестно (лента внутри дня ставит такую операцию по времени внесения)
+    pub occurred_at: Option<DateTime<Utc>>,
+    /// Когда операцию внесли
+    pub created_at: DateTime<Utc>,
     #[schema(example = "EXPENSE")]
     pub tx_kind: String,
     /// Счёт; у перевода — счёт списания
@@ -434,6 +471,8 @@ impl From<Transaction> for TransactionDto {
             recipients_differ,
             id: x.id,
             occurred_on: x.occurred_on,
+            occurred_at: x.occurred_at,
+            created_at: x.created_at,
             tx_kind: x.tx_kind.as_str().to_string(),
             currency: currency_of(&account_code),
             to_currency: to_account_code.as_deref().map(currency_of),
@@ -540,8 +579,16 @@ impl TransactionInput {
                 amount: self.amount.ok_or_else(|| err("amount", "err.opening_required", &[]))?,
             },
         };
+        let time = match self.occurred_at.as_deref().map(str::trim) {
+            None => TimeInput::Keep,
+            Some("") => TimeInput::Clear,
+            Some(v) => DateTime::parse_from_rfc3339(v)
+                .map(|t| TimeInput::At(t.with_timezone(&Utc)))
+                .map_err(|_| err("occurred_at", "err.bad_time", &[]))?,
+        };
         Ok(TransactionData {
             occurred_on: self.occurred_on,
+            time,
             description: Description {
                 text: self.description,
                 lang,

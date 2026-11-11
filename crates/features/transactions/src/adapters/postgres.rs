@@ -14,8 +14,10 @@ use uuid::Uuid;
 use crate::domain::{Description, ExternalRef, Item, Posting, RefKind, RefLink, Transaction, TxKind, Unit, system};
 use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
-const COLUMNS: &str = "id, project_id, occurred_on, tx_kind, description, description_lang, \
-                       description_ru, description_en, description_th, created_by, plan_id, plan_date, place_code";
+const COLUMNS: &str = "id, project_id, occurred_on, occurred_at, tx_kind, description, description_lang, \
+                       description_ru, description_en, description_th, created_by, plan_id, plan_date, place_code, created_at";
+/// Порядок ленты: дни — новые сначала, внутри дня — по времени операции, без него — по времени внесения.
+const ORDER: &str = "occurred_on DESC, COALESCE(occurred_at, created_at) DESC, created_at DESC, id";
 /// Транзакция с проводкой на счёт $N.
 macro_rules! touches {
     ($n:literal) => {
@@ -93,6 +95,7 @@ struct Row {
     id: Uuid,
     project_id: Uuid,
     occurred_on: NaiveDate,
+    occurred_at: Option<DateTime<Utc>>,
     tx_kind: String,
     description: Option<String>,
     description_lang: String,
@@ -103,6 +106,7 @@ struct Row {
     plan_id: Option<Uuid>,
     plan_date: Option<NaiveDate>,
     place_code: Option<String>,
+    created_at: DateTime<Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -197,6 +201,7 @@ impl Row {
             id: self.id,
             project_id: self.project_id,
             occurred_on: self.occurred_on,
+            occurred_at: self.occurred_at,
             tx_kind: TxKind::parse(&self.tx_kind).ok_or_else(|| bad_value("fb_transactions.tx_kind", &self.tx_kind))?,
             description: Description {
                 text: self.description,
@@ -211,6 +216,7 @@ impl Row {
             place_code: self.place_code,
             items,
             postings,
+            created_at: self.created_at,
         })
     }
 }
@@ -237,7 +243,8 @@ async fn insert_header(tx: &mut SqlTx<'_, Postgres>, item: &Transaction) -> AppR
     sqlx::query(
         "INSERT INTO fb_transactions (id, project_id, occurred_on, tx_kind, description, description_lang, \
          description_ru, description_en, description_th, created_by, plan_id, plan_date, opening_account, \
-         account_code, total, refund, place_code) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+         account_code, total, refund, place_code, occurred_at, created_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)",
     )
     .bind(item.id)
     .bind(item.project_id)
@@ -256,6 +263,8 @@ async fn insert_header(tx: &mut SqlTx<'_, Postgres>, item: &Transaction) -> AppR
     .bind(item.total())
     .bind(item.refund())
     .bind(&item.place_code)
+    .bind(item.occurred_at)
+    .bind(item.created_at)
     .execute(&mut **tx)
     .await
     .map_err(unique)?;
@@ -389,7 +398,8 @@ impl TransactionRepository for PostgresTransactionRepository {
         let res = sqlx::query(
             "UPDATE fb_transactions SET occurred_on = $3, tx_kind = $4, description = $5, description_lang = $6, \
              description_ru = $7, description_en = $8, description_th = $9, plan_id = $10, plan_date = $11, \
-             opening_account = $12, account_code = $13, total = $14, refund = $15, place_code = $16 WHERE project_id = $1 AND id = $2",
+             opening_account = $12, account_code = $13, total = $14, refund = $15, place_code = $16, occurred_at = $17 \
+             WHERE project_id = $1 AND id = $2",
         )
         .bind(item.project_id)
         .bind(item.id)
@@ -407,6 +417,7 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(item.total())
         .bind(item.refund())
         .bind(&item.place_code)
+        .bind(item.occurred_at)
         .execute(&mut *tx)
         .await
         .map_err(unique)?;
@@ -428,15 +439,23 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_transactions WHERE {FILTER} ORDER BY occurred_on DESC, created_at DESC, id LIMIT $11 OFFSET $12"
-        );
+        let sql = format!("SELECT {COLUMNS} FROM fb_transactions WHERE {FILTER} ORDER BY {ORDER} LIMIT $11 OFFSET $12");
         let rows: Vec<Row> = bind_filter(sqlx::query_as(&sql), project_id, filter)
             .bind(limit)
             .bind(offset)
             .fetch_all(&self.pool)
             .await?;
         self.with_postings(rows).await
+    }
+
+    async fn set_time(&self, project_id: Uuid, id: Uuid, at: Option<DateTime<Utc>>) -> AppResult<()> {
+        sqlx::query("UPDATE fb_transactions SET occurred_at = $3 WHERE project_id = $1 AND id = $2")
+            .bind(project_id)
+            .bind(id)
+            .bind(at)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     async fn count(&self, project_id: Uuid, filter: &Filter) -> AppResult<i64> {
@@ -556,6 +575,27 @@ impl TransactionRepository for PostgresTransactionRepository {
         .bind(to)
         .fetch_all(&self.pool)
         .await?)
+    }
+
+    async fn balance_at(
+        &self,
+        project_id: Uuid,
+        account: &str,
+        date: NaiveDate,
+        at: DateTime<Utc>,
+    ) -> AppResult<Decimal> {
+        let (sum,): (Decimal,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(p.amount), 0) FROM fb_postings p JOIN fb_transactions t ON t.id = p.transaction_id \
+             WHERE t.project_id = $1 AND p.ref_kind = 'ACCOUNT' AND p.ref_code = $2 \
+             AND (t.occurred_on < $3 OR (t.occurred_on = $3 AND (t.occurred_at IS NULL OR t.occurred_at <= $4)))",
+        )
+        .bind(project_id)
+        .bind(account)
+        .bind(date)
+        .bind(at)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(sum)
     }
 
     async fn has_postings(&self, project_id: Uuid, account_code: &str) -> AppResult<bool> {

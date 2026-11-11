@@ -3,10 +3,12 @@
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use kernel::error::{AppError, AppResult};
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::Account;
+use crate::domain::{Account, BankBalance};
 use crate::ports::AccountRepository;
 
 #[derive(Default)]
@@ -28,7 +30,9 @@ impl AccountRepository for InMemoryAccountRepository {
     async fn update(&self, item: &Account) -> AppResult<()> {
         let mut rows = self.rows.lock().unwrap();
         let row = rows.iter_mut().find(|r| r.project_id == item.project_id && r.code == item.code);
-        *row.ok_or_else(|| AppError::NotFound(item.code.clone()))? = item.clone();
+        let row = row.ok_or_else(|| AppError::NotFound(item.code.clone()))?;
+        // Как в БД: правка счёта не меняет остаток по данным банка.
+        *row = Account { bank: row.bank, ..item.clone() };
         Ok(())
     }
 
@@ -48,6 +52,24 @@ impl AccountRepository for InMemoryAccountRepository {
     async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64> {
         let rows = self.rows.lock().unwrap();
         Ok(rows.iter().filter(|r| r.project_id == project_id && (include_archived || !r.archived)).count() as i64)
+    }
+
+    async fn set_bank_balance(
+        &self,
+        project_id: Uuid,
+        code: &str,
+        amount: Decimal,
+        at: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let mut rows = self.rows.lock().unwrap();
+        let row = rows.iter_mut().find(|r| r.project_id == project_id && r.code == code);
+        match row {
+            Some(r) if r.bank.is_none_or(|b| b.at <= at) => {
+                r.bank = Some(BankBalance { amount, at });
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     async fn purge(&self, project_id: Uuid) -> AppResult<u64> {

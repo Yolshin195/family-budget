@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 #[allow(unused_imports)]
 use kernel::code::{ensure_ref, normalize};
 use kernel::error::{AppError, AppResult};
@@ -13,9 +13,24 @@ use kernel::web::Choice;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::Account;
+use crate::domain::{Account, BankBalance};
 use crate::dto::{AccountDto, CreateAccountDto, ListQuery, UpdateAccountDto};
 use crate::ports::{AccountRepository, Deps};
+
+/// Сверка остатка по данным банка с остатком по операциям на тот же момент.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BankCheck {
+    pub bank: BankBalance,
+    /// Остаток по операциям на момент `bank.at`.
+    pub book: Decimal,
+}
+
+impl BankCheck {
+    /// Насколько остаток по операциям больше остатка в банке; 0 — сходится.
+    pub fn diff(&self) -> Decimal {
+        self.book - self.bank.amount
+    }
+}
 
 pub struct AccountService {
     repo: Arc<dyn AccountRepository>,
@@ -109,6 +124,28 @@ impl AccountService {
     /// Остатки счетов на дату: (счёт, остаток).
     pub async fn balances(&self, project_id: Uuid, date: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
         self.deps.ledger.balances(project_id, date).await
+    }
+
+    /// Остаток по данным банка (из SMS банка): записывается, если не старше уже записанного — SMS обрабатываются не
+    /// по порядку. Счёта нет — ничего не делает: операция по SMS уже прошла проверку счёта.
+    pub async fn report_bank_balance(
+        &self,
+        project_id: Uuid,
+        code: &str,
+        amount: Decimal,
+        at: DateTime<Utc>,
+    ) -> AppResult<()> {
+        let Ok(code) = normalize("code", code) else { return Ok(()) };
+        self.repo.set_bank_balance(project_id, &code, amount, at).await?;
+        Ok(())
+    }
+
+    /// Сверка с банком: остаток по данным банка и остаток по операциям на тот же момент. `None` — у счёта нет
+    /// остатка по данным банка.
+    pub async fn bank_check(&self, project_id: Uuid, account: &AccountDto) -> AppResult<Option<BankCheck>> {
+        let (Some(amount), Some(at)) = (account.bank_balance, account.bank_balance_at) else { return Ok(None) };
+        let book = self.deps.ledger.balance_at(project_id, &account.code, at).await?;
+        Ok(Some(BankCheck { bank: BankBalance { amount, at }, book }))
     }
 
     /// Начальный остаток счёта и его дата.

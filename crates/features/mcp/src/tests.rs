@@ -97,6 +97,15 @@ fn quick_info() -> QuickInfo {
     }
 }
 
+/// Время после записи — упрощённо, как в transactions: не передано — прежнее, "" — без времени.
+fn time_of(d: &TxDraft, old: Option<&Tx>) -> Option<chrono::DateTime<chrono::Utc>> {
+    match d.occurred_at.as_deref() {
+        None => old.and_then(|t| t.occurred_at),
+        Some("") => None,
+        Some(v) => Some(chrono::DateTime::parse_from_rfc3339(v).unwrap().with_timezone(&chrono::Utc)),
+    }
+}
+
 /// Позиции после правки — упрощённо, как в transactions: с id — заменить заданные поля, без id — добавить.
 fn items_of(old: Option<&Tx>, d: &TxDraft) -> Vec<TxItem> {
     let mut items: Vec<TxItem> = match old {
@@ -138,6 +147,7 @@ fn tx_of(id: Uuid, user: Uuid, d: &TxDraft, old: Option<&Tx>) -> Tx {
     Tx {
         id,
         occurred_on: d.occurred_on,
+        occurred_at: time_of(d, old),
         kind: d.kind.clone(),
         account_code: d.account_code.clone(),
         to_account_code: d.to_account_code.clone(),
@@ -217,6 +227,12 @@ impl Ledger for Arc<FakeLedger> {
     }
     async fn balances(&self, _p: Uuid, _date: NaiveDate) -> AppResult<Vec<(String, Decimal)>> {
         Ok(vec![("CASH".into(), d("500")), ("CARD".into(), d("12000"))])
+    }
+    /// Карта получает SMS банка: в банке 11 970, по операциям на тот же момент — 12 000.
+    async fn bank_balance(&self, _p: Uuid, code: &str) -> AppResult<Option<BankBalance>> {
+        use chrono::TimeZone;
+        let at = Utc.with_ymd_and_hms(2026, 10, 25, 9, 25, 13).unwrap();
+        Ok((code == "CARD").then(|| BankBalance { amount: d("11970"), at, book: d("12000") }))
     }
 }
 
@@ -2516,4 +2532,50 @@ async fn sms_transactions_are_marked_and_filtered() {
         .await
         .unwrap();
     assert_eq!(out.data["transaction"]["sms"]["link"], "CREATED");
+}
+
+// ---------------------------------------------------------------- время операции и остаток по данным банка
+
+/// `time` при добавлении и правке («» — убрать), `time` в выводе; остаток из SMS банка в get_balances и get_context —
+/// с разницей «операции − банк» и подсказкой в сводке.
+#[tokio::test]
+async fn time_and_bank_balance() {
+    use chrono::TimeZone;
+    let e = env();
+    e.grant(&["read", "transactions:write"]).await;
+    let c = e.caller(&e.oauth()).await;
+    let args = AddFlowArgs { date: Some("2026-10-25".into()), time: Some("14:27".into()), ..expense("38.20", "food") };
+    let out = e.svc.add_expense(&c, args).await.unwrap();
+    assert_eq!(out.data["transaction"]["time"], "14:27");
+    let local = chrono::Local.with_ymd_and_hms(2026, 10, 25, 14, 27, 0).unwrap().with_timezone(&Utc);
+    assert_eq!(e.ledger.txs.lock().unwrap()[0].occurred_at, Some(local));
+    let id = out.data["transaction"]["id"].as_str().unwrap().to_string();
+    let changed = UpdateTransactionArgs { id: id.clone(), time: Some("09:05".into()), ..Default::default() };
+    assert_eq!(e.svc.update_transaction(&c, changed).await.unwrap().data["transaction"]["time"], "09:05");
+    let kept = UpdateTransactionArgs { id: id.clone(), description: Some("Waffles".into()), ..Default::default() };
+    assert_eq!(
+        e.svc.update_transaction(&c, kept).await.unwrap().data["transaction"]["time"],
+        "09:05",
+        "не передано — остаётся"
+    );
+    let cleared = UpdateTransactionArgs { id, time: Some(String::new()), ..Default::default() };
+    assert!(e.svc.update_transaction(&c, cleared).await.unwrap().data["transaction"].get("time").is_none());
+    let bad = AddFlowArgs { time: Some("25:00".into()), ..expense("1", "food") };
+    assert!(e.svc.add_expense(&c, bad).await.unwrap_err().0.starts_with("time:"));
+
+    let accounts = |v: &serde_json::Value| v["accounts"].as_array().unwrap().clone();
+    let by_code = |list: &[serde_json::Value], code: &str| list.iter().find(|a| a["code"] == code).unwrap().clone();
+    let balances = e.svc.get_balances(&c, DateArgs::default()).await.unwrap();
+    let card = by_code(&accounts(&balances.data), "CARD");
+    assert_eq!(
+        (&card["bank_balance"], &card["bank_difference"]),
+        (&serde_json::json!("11970"), &serde_json::json!("30"))
+    );
+    let at = Utc.with_ymd_and_hms(2026, 10, 25, 9, 25, 13).unwrap().with_timezone(&chrono::Local);
+    assert_eq!(card["bank_balance_at"], at.to_rfc3339_opts(chrono::SecondsFormat::Secs, false));
+    assert!(by_code(&accounts(&balances.data), "CASH").get("bank_balance").is_none(), "без SMS — без полей");
+    assert!(balances.summary.contains("CARD (+30 THB)"), "{}", balances.summary);
+    let context = e.svc.get_context(&c).await.unwrap();
+    assert_eq!(by_code(&accounts(&context.data), "CARD")["bank_difference"], "30");
+    assert!(context.summary.contains("CARD (+30 THB)"), "{}", context.summary);
 }

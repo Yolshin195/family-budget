@@ -4,7 +4,7 @@
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use kernel::web::Choice;
@@ -63,6 +63,16 @@ impl ::transactions::AccountsLookup for AccountsLookupAdapter {
                 currency: a.currency_code,
             })
             .collect())
+    }
+    async fn report_balance(&self, project_id: Uuid, code: &str, amount: Decimal, at: DateTime<Utc>) -> AppResult<()> {
+        self.0.report_bank_balance(project_id, code, amount, at).await
+    }
+    async fn bank_balance(&self, project_id: Uuid, code: &str) -> AppResult<Option<(Decimal, DateTime<Utc>)>> {
+        match self.0.get(project_id, code).await {
+            Ok(a) => Ok(a.bank_balance.zip(a.bank_balance_at)),
+            Err(kernel::error::AppError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 }
 

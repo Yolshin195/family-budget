@@ -26,7 +26,9 @@ The "Accounts" page has a card for each account: its type, the balance in its cu
 
 ![The family's accounts: cards, cash and a dollar account](accounts.en.webp)
 
-The "Statement" button opens the month's transactions for that account only: "Opening balance", "Money in", "Money out", "Closing balance" and the balance after each transaction — handy for comparing with your bank statement.
+If the card's transactions come from bank SMS (the family-messages-sync app), the card has an “At the bank” block: the balance from the latest SMS and its time. “Matches” means the transactions up to that time give the same balance. If not, the block turns yellow and shows the difference, for example “Transactions show 30.00 ฿ less than the bank”: a purchase is missing or entered twice.
+
+The "Statement" button opens the month's transactions for that account only: "Opening balance", "Money in", "Money out", "Closing balance" and the balance after each transaction — handy for comparing with your bank statement. Above the feed is the same check against the balance from the bank SMS: compare the balance after each transaction with the balances in the SMS.
 
 ![A card statement: the balance after each transaction](statement.en.webp)
 
@@ -36,7 +38,7 @@ The "Transfer" button on a card opens a transfer with that account already selec
 
 ## 4. Reconcile the balance with your bank
 
-Sometimes you can't record everything, and the balance in the app drifts from your bank or wallet. Click "Reconcile" on the account card or "Reconcile balance" in the statement. Enter the "Actual balance" — the app compares it with the "Balance per records" and shows the difference.
+Sometimes you can't record everything, and the balance in the app drifts from your bank or wallet. Click "Reconcile" on the account card or "Reconcile balance" in the statement. Enter the "Actual balance" — the app compares it with the "Balance per records" and shows the difference. If “At the bank” on the account card shows a difference, the “Reconcile balance” link under it opens the reconciliation with the SMS balance and date already filled in.
 
 ![Reconciling the cash balance](reconcile.en.webp)
 

@@ -1,7 +1,7 @@
 //! Модель фичи «MCP для ассистентов»: кто вызывает инструменты, с какими правами, и данные,
 //! которыми фича обменивается с другими фичами через порты (без их типов).
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use kernel::auth::{RequestMeta, Role, scope_allows};
 use kernel::i18n::Lang;
 use kernel::search::Found;
@@ -246,6 +246,8 @@ impl TxItem {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TxDraft {
     pub occurred_on: NaiveDate,
+    /// Время операции, RFC 3339: `None` — не меняется (у новой за сегодня — «сейчас»), "" — убрать время.
+    pub occurred_at: Option<String>,
     /// EXPENSE / INCOME / TRANSFER
     pub kind: String,
     pub account_code: String,
@@ -294,6 +296,8 @@ pub struct TxRef {
 pub struct Tx {
     pub id: Uuid,
     pub occurred_on: NaiveDate,
+    /// Время операции; `None` — неизвестно.
+    pub occurred_at: Option<DateTime<Utc>>,
     pub kind: String,
     pub account_code: String,
     pub to_account_code: Option<String>,
@@ -326,6 +330,8 @@ impl Tx {
     pub fn draft(&self) -> TxDraft {
         TxDraft {
             occurred_on: self.occurred_on,
+            // Время не передаётся — остаётся прежним (при смене даты — то же время суток).
+            occurred_at: None,
             kind: self.kind.clone(),
             account_code: self.account_code.clone(),
             refund: self.refund,
@@ -836,6 +842,31 @@ pub fn parse_date(field: &str, value: Option<&str>, today: NaiveDate) -> Result<
         Some(v) => NaiveDate::parse_from_str(v, "%Y-%m-%d")
             .map_err(|_| format!("{field}: expected date YYYY-MM-DD, got '{v}'")),
     }
+}
+
+/// Время операции «HH:MM» на дату `date` в поясе сервера → RFC 3339 для фичи операций; "" — убрать время.
+pub fn parse_time(field: &str, value: &str, date: NaiveDate) -> Result<String, String> {
+    let v = value.trim();
+    if v.is_empty() {
+        return Ok(String::new());
+    }
+    let t = NaiveTime::parse_from_str(v, "%H:%M")
+        .or_else(|_| NaiveTime::parse_from_str(v, "%H:%M:%S"))
+        .map_err(|_| format!("{field}: expected time HH:MM, got '{v}'"))?;
+    let at = Local
+        .from_local_datetime(&date.and_time(t))
+        .earliest()
+        .ok_or_else(|| format!("{field}: there is no {v} on {date} in local time"))?;
+    Ok(at.to_rfc3339())
+}
+
+/// Остаток счёта по данным банка (последнее SMS банка с остатком) и остаток по операциям на тот же момент.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BankBalance {
+    pub amount: Decimal,
+    pub at: DateTime<Utc>,
+    /// Остаток по операциям на момент `at`.
+    pub book: Decimal,
 }
 
 /// Найти код по коду или названию на любом языке (`kernel::search`). Ошибка — с вариантами, чтобы ассистент уточнил.

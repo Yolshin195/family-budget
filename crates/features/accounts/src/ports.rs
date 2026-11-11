@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use kernel::web::Choice;
@@ -22,6 +22,15 @@ pub trait AccountRepository: Send + Sync {
     async fn count(&self, project_id: Uuid, include_archived: bool) -> AppResult<i64>;
     /// Удалить все записи проекта (удаление проекта или аккаунта).
     async fn purge(&self, project_id: Uuid) -> AppResult<u64>;
+    /// Записать остаток по данным банка, если записанный не новее `at`. `false` — не записан (счёта нет или
+    /// записанный новее).
+    async fn set_bank_balance(
+        &self,
+        project_id: Uuid,
+        code: &str,
+        amount: Decimal,
+        at: DateTime<Utc>,
+    ) -> AppResult<bool>;
 }
 
 /// Зависимости фичи от других фич. Порты объявляет эта фича (потребитель),
@@ -51,6 +60,8 @@ pub trait Ledger: Send + Sync {
     ) -> AppResult<()>;
     /// Есть ли по счёту проводки.
     async fn has_postings(&self, project_id: Uuid, code: &str) -> AppResult<bool>;
+    /// Остаток счёта на момент `at` — для сверки с остатком по данным банка.
+    async fn balance_at(&self, project_id: Uuid, code: &str, at: DateTime<Utc>) -> AppResult<Decimal>;
 }
 
 /// Что этой фиче нужно от справочника `currencies`.

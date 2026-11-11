@@ -4,7 +4,7 @@
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use kernel::error::AppResult;
 use kernel::i18n::Lang;
 use kernel::web::Choice;
@@ -43,6 +43,7 @@ pub trait LedgerSource: Send + Sync {
         date: NaiveDate,
     ) -> AppResult<()>;
     async fn has_postings(&self, project_id: Uuid, code: &str) -> AppResult<bool>;
+    async fn balance_at(&self, project_id: Uuid, code: &str, at: DateTime<Utc>) -> AppResult<Decimal>;
 }
 
 #[cfg(feature = "transactions")]
@@ -66,6 +67,9 @@ impl LedgerSource for ::transactions::Service {
     }
     async fn has_postings(&self, project_id: Uuid, code: &str) -> AppResult<bool> {
         ::transactions::Service::has_postings(self, project_id, code).await
+    }
+    async fn balance_at(&self, project_id: Uuid, code: &str, at: DateTime<Utc>) -> AppResult<Decimal> {
+        ::transactions::Service::balance_at(self, project_id, code, at).await
     }
 }
 
@@ -103,6 +107,12 @@ impl ::accounts::Ledger for LedgerAdapter {
         match self.0.get() {
             Some(l) => l.has_postings(project_id, code).await,
             None => Ok(false),
+        }
+    }
+    async fn balance_at(&self, project_id: Uuid, code: &str, at: DateTime<Utc>) -> AppResult<Decimal> {
+        match self.0.get() {
+            Some(l) => l.balance_at(project_id, code, at).await,
+            None => Ok(Decimal::ZERO),
         }
     }
 }

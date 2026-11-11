@@ -1,6 +1,8 @@
 //! Доменная модель «Счета». Никаких sqlx/axum/serde — только правила предметной области.
 
+use chrono::{DateTime, Utc};
 use kernel::code::{new_code, normalize, require_text};
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 /// Язык оригинала названия
@@ -64,6 +66,14 @@ impl AccountAccountKind {
     }
 }
 
+/// Остаток счёта по данным банка (из SMS банка): сумма и момент, на который она верна. С ним сверяется остаток по
+/// операциям на тот же момент; правка счёта его не меняет.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BankBalance {
+    pub amount: Decimal,
+    pub at: DateTime<Utc>,
+}
+
 /// Запись справочника. Уникальна в пределах проекта по `code`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Account {
@@ -79,6 +89,8 @@ pub struct Account {
     pub account_kind: AccountAccountKind,
     pub currency_code: String,
     pub holder_user_id: Option<uuid::Uuid>,
+    /// Последний остаток по данным банка; пишет только сервис по SMS банка.
+    pub bank: Option<BankBalance>,
 }
 
 /// Данные для создания записи.
@@ -124,6 +136,7 @@ impl Account {
             account_kind: new.account_kind,
             currency_code: normalize("currency_code", &new.currency_code)?,
             holder_user_id: new.holder_user_id,
+            bank: None,
         })
     }
 

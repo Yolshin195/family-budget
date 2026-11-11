@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::domain::AccountAccountKind;
 use crate::dto::{AccountDto, CreateAccountDto, UpdateAccountDto};
-use crate::service::AccountService;
+use crate::service::{AccountService, BankCheck};
 
 type Svc = State<Arc<AccountService>>;
 
@@ -48,8 +48,26 @@ fn form_ctx(page: PageCtx) -> PageCtx {
 #[template(path = "accounts/list.html")]
 struct ListPage {
     page: PageCtx,
-    /// Счёт и его текущий остаток (сумма проводок на сегодня).
-    rows: Vec<(AccountDto, String, bool)>,
+    rows: Vec<Row>,
+}
+
+struct Row {
+    a: AccountDto,
+    /// Текущий остаток (сумма проводок на сегодня) и признак «меньше нуля».
+    balance: String,
+    negative: bool,
+    bank: Option<BankView>,
+}
+
+/// Остаток по данным банка (последнее SMS) и сверка с операциями на тот же момент.
+struct BankView {
+    amount: String,
+    /// «25.10 16:25»
+    at: String,
+    /// Расхождение словами («В операциях на 30,00 ฿ больше, чем в банке»); пусто — сходится.
+    diff: Option<String>,
+    /// «Сверить остаток» с остатком банка и его датой.
+    reconcile: String,
 }
 
 #[derive(Template)]
@@ -138,17 +156,36 @@ fn today() -> NaiveDate {
 
 async fn list(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {
     let p = page.session.project_id;
+    let page = ctx(page);
     let balances: HashMap<String, Decimal> = svc.balances(p, today()).await?.into_iter().collect();
-    let rows = svc
-        .all(p, true)
-        .await?
-        .into_iter()
-        .map(|a| {
-            let b = balances.get(&a.code).copied().unwrap_or_default();
-            (a, money_in(page.lang, b), b < Decimal::ZERO)
-        })
-        .collect();
-    render(&ListPage { page: ctx(page), rows })
+    let mut rows = Vec::new();
+    for a in svc.all(p, true).await? {
+        let b = balances.get(&a.code).copied().unwrap_or_default();
+        let bank = svc.bank_check(p, &a).await?.map(|c| bank_view(&page, &a, &c));
+        rows.push(Row { balance: money_in(page.lang, b), negative: b < Decimal::ZERO, bank, a });
+    }
+    render(&ListPage { page, rows })
+}
+
+fn bank_view(page: &PageCtx, a: &AccountDto, c: &BankCheck) -> BankView {
+    let at = c.bank.at.with_timezone(&chrono::Local);
+    let diff = c.diff();
+    let amount = format!("{}\u{a0}{}", money_in(page.lang, diff.abs()), page.cur(&a.currency_code));
+    BankView {
+        amount: money_in(page.lang, c.bank.amount),
+        at: at.format("%d.%m %H:%M").to_string(),
+        diff: match diff.cmp(&Decimal::ZERO) {
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Greater => Some(page.t("bank_more").replace("{amount}", &amount)),
+            std::cmp::Ordering::Less => Some(page.t("bank_less").replace("{amount}", &amount)),
+        },
+        reconcile: format!(
+            "/transactions/reconcile?account={}&occurred_on={}&actual={}",
+            kernel::web::url_encode(&a.code),
+            at.date_naive(),
+            c.bank.amount.normalize()
+        ),
+    }
 }
 
 async fn new_form(State(svc): Svc, Extension(page): Extension<PageCtx>) -> PageResult {

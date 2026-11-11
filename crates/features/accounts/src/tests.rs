@@ -58,6 +58,16 @@ impl super::ports::Ledger for Arc<FakeLedger> {
     async fn has_postings(&self, _p: Uuid, code: &str) -> kernel::error::AppResult<bool> {
         Ok(self.0.lock().unwrap().iter().any(|x| x.0 == code))
     }
+    /// Остаток на момент — сумма проводок по дату момента (в тесте у проводок нет времени).
+    async fn balance_at(
+        &self,
+        _p: Uuid,
+        code: &str,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> kernel::error::AppResult<rust_decimal::Decimal> {
+        let date = at.date_naive();
+        Ok(self.0.lock().unwrap().iter().filter(|x| x.0 == code && x.2 <= date).map(|x| x.1).sum())
+    }
 }
 
 fn deps() -> super::ports::Deps {
@@ -243,4 +253,53 @@ fn templates_are_translated() {
     let missing =
         kernel::i18n::missing_keys(&[root.join("templates"), root.join("src/adapters")], Some(crate::i18n::dict));
     assert!(missing.is_empty(), "нет перевода для ключей: {missing:?}");
+}
+
+/// Остаток по данным банка: записывается более новый, старый SMS его не перезаписывает, правка счёта не стирает;
+/// сверка — с остатком по операциям на тот же момент. На памяти и, с `TEST_DATABASE_URL`, на PostgreSQL.
+#[tokio::test]
+async fn bank_balance_is_kept_and_checked() {
+    use rust_decimal::Decimal;
+    let at = |h: u32| chrono::DateTime::parse_from_rfc3339(&format!("2026-10-25T{h:02}:00:00+07:00")).unwrap().to_utc();
+    let ledger = Arc::new(FakeLedger::default());
+    let deps = || super::ports::Deps { currencies: Arc::new(FakeLookup), ledger: Arc::new(ledger.clone()) };
+    let mut services = vec![AccountService::new(Arc::new(InMemoryAccountRepository::default()), deps())];
+    let db = kernel::testing::TestDb::migrated("accounts_bank", vec![sqlx::migrate!("./migrations")]).await;
+    if let Some(db) = &db {
+        let repo = crate::adapters::postgres::PostgresAccountRepository::new(db.pool.clone());
+        services.push(AccountService::new(Arc::new(repo), deps()));
+    }
+    for svc in services {
+        let p = Uuid::new_v4();
+        svc.create(p, create_dto("CARD")).await.unwrap();
+        assert_eq!(svc.get(p, "CARD").await.unwrap().bank_balance, None);
+        svc.report_bank_balance(p, "card", Decimal::from(6510), at(14)).await.unwrap();
+        svc.report_bank_balance(p, "CARD", Decimal::from(6548), at(13)).await.unwrap();
+        svc.report_bank_balance(p, "NOPE", Decimal::ONE, at(15)).await.unwrap();
+        let a = svc.get(p, "CARD").await.unwrap();
+        assert_eq!(
+            (a.bank_balance, a.bank_balance_at),
+            (Some(Decimal::from(6510)), Some(at(14))),
+            "старое SMS не перезаписывает"
+        );
+        svc.update(p, "CARD", update_dto("Карта")).await.unwrap();
+        assert_eq!(
+            svc.get(p, "CARD").await.unwrap().bank_balance,
+            Some(Decimal::from(6510)),
+            "правка счёта не стирает"
+        );
+        svc.report_bank_balance(p, "CARD", Decimal::from(6480), at(14)).await.unwrap();
+        assert_eq!(svc.get(p, "CARD").await.unwrap().bank_balance, Some(Decimal::from(6480)), "то же время — новее");
+
+        // Сверка: по операциям на тот момент 6500 — на 20 больше, чем в банке.
+        ledger.0.lock().unwrap().retain(|x| x.0 != "CARD");
+        ledger.0.lock().unwrap().push(("CARD".into(), Decimal::from(6500), at(14).date_naive()));
+        let check = svc.bank_check(p, &svc.get(p, "CARD").await.unwrap()).await.unwrap().unwrap();
+        assert_eq!((check.book, check.diff()), (Decimal::from(6500), Decimal::from(20)));
+        svc.create(p, create_dto("CASH")).await.unwrap();
+        assert_eq!(svc.bank_check(p, &svc.get(p, "CASH").await.unwrap()).await.unwrap(), None);
+    }
+    if let Some(db) = db {
+        db.close().await;
+    }
 }

@@ -23,8 +23,9 @@ use kernel::feature::Feature;
 use kernel::web::Web;
 
 pub use domain::{
-    Account, AccountInfo, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name, Occurrence, Person,
-    Place, PlaceInfo, Plan, PlanDraft, QuickInfo, Rate, SMS_PROVIDER, Tx, TxDraft, TxFilter, TxItem, TxRef,
+    Account, AccountInfo, BankBalance, BudgetLine, BudgetReport, Category, CategoryInfo, Currency, Limit, Name,
+    Occurrence, Person, Place, PlaceInfo, Plan, PlanDraft, QuickInfo, Rate, SMS_PROVIDER, Tx, TxDraft, TxFilter,
+    TxItem, TxRef,
 };
 pub use ports::{Accounts, Budget, Deps, Directories, Ledger, Limits, Plans, Rates};
 pub use service::{McpService as Service, Settings};
