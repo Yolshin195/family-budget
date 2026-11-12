@@ -1,1 +1,3 @@
-out/frame.*.png
+out/*.frame.*.png
+out/*.sheet.*.png
+out/grid.png
