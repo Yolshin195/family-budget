@@ -118,6 +118,11 @@ CSP без `unsafe-inline`/`unsafe-eval` (все скрипты — файлы �
 `cargo deny`, Trivy, OWASP ZAP baseline (`.github/workflows/ci.yml`); раз в неделю — `cargo audit`, `cargo deny` и
 Trivy по опубликованному образу (`.github/workflows/security-scan.yml`); Renovate (`renovate.json`).
 
+Задержка новых версий зависимостей — 5 дней: Renovate не предлагает версию младше (`minimumReleaseAge`, кроме
+исправлений уязвимостей), а `cargo update` и `cargo add` её пропускают (`.cargo/config.toml`,
+`global-min-publish-age`; нужен Rust 1.100+ — `rustup update`, старый Cargo настройку молча игнорирует). GitHub
+Actions закреплены по SHA коммита (Renovate, `helpers:pinGitHubActionDigests`).
+
 API: личный токен из «Профиль → Безопасность» → `Authorization: Bearer fbt_…` (проект фиксирован токеном).
 Вход по паролю через API (`POST /api/auth/login`) убран.
 

@@ -1,0 +1,6 @@
+# Задержка новых версий (dependency cooldown): при выборе версий — cargo update, cargo add, новая зависимость —
+# Cargo пропускает версии крейтов, опубликованные меньше 5 дней назад. Вредоносные релизы обычно ловят за часы или
+# дни. Сборки с --locked (CI, Dockerfile) берут версии из Cargo.lock, на них настройка не влияет. Нужен Cargo 1.100+:
+# старые версии ключ молча пропускают. Тот же срок — у Renovate (renovate.json, minimumReleaseAge).
+[registry]
+global-min-publish-age = "5 days"
