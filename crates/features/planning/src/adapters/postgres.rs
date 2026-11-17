@@ -11,8 +11,12 @@ use uuid::Uuid;
 use crate::domain::{Name, Plan, Recurrence};
 use crate::ports::PlanRepository;
 
-const COLUMNS: &str = "id, project_id, name, name_lang, name_ru, name_en, name_th, tx_kind, account_code, category_code, \
-                       amount, recurrence, interval_n, start_on, end_on, active, created_by, to_account_code, series_id, effective_from";
+macro_rules! columns {
+    () => {
+        "id, project_id, name, name_lang, name_ru, name_en, name_th, tx_kind, account_code, category_code, \
+                       amount, recurrence, interval_n, start_on, end_on, active, created_by, to_account_code, series_id, effective_from"
+    };
+}
 
 pub struct PostgresPlanRepository {
     pool: PgPool,
@@ -81,29 +85,33 @@ impl TryFrom<Row> for Plan {
 }
 
 async fn insert<'e>(db: impl sqlx::PgExecutor<'e>, p: &Plan) -> AppResult<()> {
-    sqlx::query(&format!("INSERT INTO fb_plans ({COLUMNS}) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)"))
-        .bind(p.id)
-        .bind(p.project_id)
-        .bind(&p.name.text)
-        .bind(p.name.lang.upper())
-        .bind(&p.name.ru)
-        .bind(&p.name.en)
-        .bind(&p.name.th)
-        .bind(&p.tx_kind)
-        .bind(&p.account_code)
-        .bind(&p.category_code)
-        .bind(p.amount)
-        .bind(p.recurrence.as_str())
-        .bind(p.interval as i32)
-        .bind(p.start_on)
-        .bind(p.end_on)
-        .bind(p.active)
-        .bind(p.created_by)
-        .bind(&p.to_account_code)
-        .bind(p.series_id)
-        .bind(p.effective_from)
-        .execute(db)
-        .await?;
+    sqlx::query(concat!(
+        "INSERT INTO fb_plans (",
+        columns!(),
+        ") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)"
+    ))
+    .bind(p.id)
+    .bind(p.project_id)
+    .bind(&p.name.text)
+    .bind(p.name.lang.upper())
+    .bind(&p.name.ru)
+    .bind(&p.name.en)
+    .bind(&p.name.th)
+    .bind(&p.tx_kind)
+    .bind(&p.account_code)
+    .bind(&p.category_code)
+    .bind(p.amount)
+    .bind(p.recurrence.as_str())
+    .bind(p.interval as i32)
+    .bind(p.start_on)
+    .bind(p.end_on)
+    .bind(p.active)
+    .bind(p.created_by)
+    .bind(&p.to_account_code)
+    .bind(p.series_id)
+    .bind(p.effective_from)
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -158,17 +166,18 @@ impl PlanRepository for PostgresPlanRepository {
     }
 
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Plan>> {
-        let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLUMNS} FROM fb_plans WHERE project_id=$1 AND id=$2"))
-            .bind(project_id)
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let row: Option<Row> =
+            sqlx::query_as(concat!("SELECT ", columns!(), " FROM fb_plans WHERE project_id=$1 AND id=$2"))
+                .bind(project_id)
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
         row.map(Plan::try_from).transpose()
     }
 
     async fn list(&self, project_id: Uuid) -> AppResult<Vec<Plan>> {
         let rows: Vec<Row> =
-            sqlx::query_as(&format!("SELECT {COLUMNS} FROM fb_plans WHERE project_id=$1 ORDER BY start_on, id"))
+            sqlx::query_as(concat!("SELECT ", columns!(), " FROM fb_plans WHERE project_id=$1 ORDER BY start_on, id"))
                 .bind(project_id)
                 .fetch_all(&self.pool)
                 .await?;

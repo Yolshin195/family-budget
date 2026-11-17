@@ -56,8 +56,16 @@ fn role(v: &str) -> AppResult<Role> {
     Role::parse(v).ok_or_else(|| bad("fb_project_members.role", v))
 }
 
-const USER_COLS: &str = "u.id, u.rauthy_sub, u.email, u.display_name, u.avatar_url, u.lang, u.theme";
-const PROJECT_COLS: &str = "p.id, p.name, p.project_kind, p.base_currency, p.created_by, p.require_2fa";
+macro_rules! user_cols {
+    () => {
+        "u.id, u.rauthy_sub, u.email, u.display_name, u.avatar_url, u.lang, u.theme"
+    };
+}
+macro_rules! project_cols {
+    () => {
+        "p.id, p.name, p.project_kind, p.base_currency, p.created_by, p.require_2fa"
+    };
+}
 
 type InviteRow = (
     Uuid,
@@ -70,7 +78,11 @@ type InviteRow = (
     Option<DateTime<Utc>>,
     Option<DateTime<Utc>>,
 );
-const INVITE_COLS: &str = "id, project_id, role, created_by, created_at, expires_at, used_by, used_at, revoked_at";
+macro_rules! invite_cols {
+    () => {
+        "id, project_id, role, created_by, created_at, expires_at, used_by, used_at, revoked_at"
+    };
+}
 
 fn invite(r: InviteRow) -> AppResult<Invite> {
     let role = Role::parse(&r.2).ok_or_else(|| bad("fb_project_invites.role", &r.2))?;
@@ -141,10 +153,11 @@ impl ProjectRepository for PostgresProjectRepository {
     }
 
     async fn user_by_sub(&self, sub: &str) -> AppResult<Option<User>> {
-        let r: Option<UserRow> = sqlx::query_as(&format!("SELECT {USER_COLS} FROM fb_users u WHERE u.rauthy_sub = $1"))
-            .bind(sub)
-            .fetch_optional(&self.pool)
-            .await?;
+        let r: Option<UserRow> =
+            sqlx::query_as(concat!("SELECT ", user_cols!(), " FROM fb_users u WHERE u.rauthy_sub = $1"))
+                .bind(sub)
+                .fetch_optional(&self.pool)
+                .await?;
         r.map(user).transpose()
     }
 
@@ -158,10 +171,8 @@ impl ProjectRepository for PostgresProjectRepository {
     }
 
     async fn user_by_email(&self, email: &str) -> AppResult<Option<User>> {
-        let r: Option<UserRow> = sqlx::query_as(&format!(
-            "SELECT {USER_COLS} FROM fb_users u LEFT JOIN LATERAL (SELECT max(s.created_at) AS seen FROM fb_sessions s WHERE s.user_id = u.id) x ON true \
-             WHERE lower(u.email) = lower($1) ORDER BY x.seen DESC NULLS LAST, u.created_at DESC LIMIT 1"
-        ))
+        let r: Option<UserRow> = sqlx::query_as(concat!("SELECT ", user_cols!(), " FROM fb_users u LEFT JOIN LATERAL (SELECT max(s.created_at) AS seen FROM fb_sessions s WHERE s.user_id = u.id) x ON true \
+             WHERE lower(u.email) = lower($1) ORDER BY x.seen DESC NULLS LAST, u.created_at DESC LIMIT 1"))
         .bind(email)
         .fetch_optional(&self.pool)
         .await?;
@@ -169,7 +180,7 @@ impl ProjectRepository for PostgresProjectRepository {
     }
 
     async fn user(&self, id: Uuid) -> AppResult<Option<User>> {
-        let r: Option<UserRow> = sqlx::query_as(&format!("SELECT {USER_COLS} FROM fb_users u WHERE u.id = $1"))
+        let r: Option<UserRow> = sqlx::query_as(concat!("SELECT ", user_cols!(), " FROM fb_users u WHERE u.id = $1"))
             .bind(id)
             .fetch_optional(&self.pool)
             .await?;
@@ -248,7 +259,7 @@ impl ProjectRepository for PostgresProjectRepository {
 
     async fn project(&self, id: Uuid) -> AppResult<Option<Project>> {
         let r: Option<ProjectRow> =
-            sqlx::query_as(&format!("SELECT {PROJECT_COLS} FROM fb_projects p WHERE p.id = $1"))
+            sqlx::query_as(concat!("SELECT ", project_cols!(), " FROM fb_projects p WHERE p.id = $1"))
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await?;
@@ -256,8 +267,10 @@ impl ProjectRepository for PostgresProjectRepository {
     }
 
     async fn projects_of(&self, user_id: Uuid) -> AppResult<Vec<(Project, Member)>> {
-        let rows: Vec<(Uuid, String, String, String, Uuid, bool, String)> = sqlx::query_as(&format!(
-            "SELECT {PROJECT_COLS}, m.role FROM fb_projects p JOIN fb_project_members m ON m.project_id = p.id \
+        let rows: Vec<(Uuid, String, String, String, Uuid, bool, String)> = sqlx::query_as(concat!(
+            "SELECT ",
+            project_cols!(),
+            ", m.role FROM fb_projects p JOIN fb_project_members m ON m.project_id = p.id \
              WHERE m.user_id = $1 ORDER BY (p.project_kind = 'PERSONAL') DESC, p.created_at, p.id"
         ))
         .bind(user_id)
@@ -273,8 +286,10 @@ impl ProjectRepository for PostgresProjectRepository {
 
     async fn members(&self, project_id: Uuid) -> AppResult<Vec<(Member, User)>> {
         let rows: Vec<(String, Uuid, String, String, String, Option<String>, String, String)> =
-            sqlx::query_as(&format!(
-                "SELECT m.role, {USER_COLS} FROM fb_project_members m JOIN fb_users u ON u.id = m.user_id \
+            sqlx::query_as(concat!(
+                "SELECT m.role, ",
+                user_cols!(),
+                " FROM fb_project_members m JOIN fb_users u ON u.id = m.user_id \
              WHERE m.project_id = $1 ORDER BY m.joined_at, u.display_name"
             ))
             .bind(project_id)
@@ -288,11 +303,14 @@ impl ProjectRepository for PostgresProjectRepository {
     }
 
     async fn all_members(&self) -> AppResult<Vec<(Member, User)>> {
-        let rows: Vec<(Uuid, String, Uuid, String, String, String, Option<String>, String, String)> = sqlx::query_as(&format!(
-            "SELECT m.project_id, m.role, {USER_COLS} FROM fb_project_members m JOIN fb_users u ON u.id = m.user_id ORDER BY m.project_id, m.joined_at"
-        ))
-        .fetch_all(&self.pool)
-        .await?;
+        let rows: Vec<(Uuid, String, Uuid, String, String, String, Option<String>, String, String)> =
+            sqlx::query_as(concat!(
+                "SELECT m.project_id, m.role, ",
+                user_cols!(),
+                " FROM fb_project_members m JOIN fb_users u ON u.id = m.user_id ORDER BY m.project_id, m.joined_at"
+            ))
+            .fetch_all(&self.pool)
+            .await?;
         rows.into_iter()
             .map(|r| {
                 Ok((
@@ -333,8 +351,10 @@ impl ProjectRepository for PostgresProjectRepository {
     }
 
     async fn insert_invite(&self, i: &Invite) -> AppResult<()> {
-        sqlx::query(&format!(
-            "INSERT INTO fb_project_invites ({INVITE_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+        sqlx::query(concat!(
+            "INSERT INTO fb_project_invites (",
+            invite_cols!(),
+            ") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
         ))
         .bind(i.id)
         .bind(i.project_id)
@@ -352,7 +372,7 @@ impl ProjectRepository for PostgresProjectRepository {
 
     async fn invite(&self, id: Uuid) -> AppResult<Option<Invite>> {
         let r: Option<InviteRow> =
-            sqlx::query_as(&format!("SELECT {INVITE_COLS} FROM fb_project_invites WHERE id = $1"))
+            sqlx::query_as(concat!("SELECT ", invite_cols!(), " FROM fb_project_invites WHERE id = $1"))
                 .bind(id)
                 .fetch_optional(&self.pool)
                 .await?;
@@ -360,8 +380,10 @@ impl ProjectRepository for PostgresProjectRepository {
     }
 
     async fn invites_of(&self, project_id: Uuid) -> AppResult<Vec<Invite>> {
-        let rows: Vec<InviteRow> = sqlx::query_as(&format!(
-            "SELECT {INVITE_COLS} FROM fb_project_invites WHERE project_id = $1 ORDER BY created_at DESC, id"
+        let rows: Vec<InviteRow> = sqlx::query_as(concat!(
+            "SELECT ",
+            invite_cols!(),
+            " FROM fb_project_invites WHERE project_id = $1 ORDER BY created_at DESC, id"
         ))
         .bind(project_id)
         .fetch_all(&self.pool)
@@ -436,7 +458,11 @@ type SessionRow = (
     Option<String>,
     Option<DateTime<Utc>>,
 );
-const SESSION_COLS: &str = "id_hash, user_id, created_at, last_seen_at, expires_at, mfa, ip, user_agent, revoked_at";
+macro_rules! session_cols {
+    () => {
+        "id_hash, user_id, created_at, last_seen_at, expires_at, mfa, ip, user_agent, revoked_at"
+    };
+}
 
 fn session(r: SessionRow) -> SessionRecord {
     SessionRecord {
@@ -465,8 +491,11 @@ type TokenRow = (
     DateTime<Utc>,
     bool,
 );
-const TOKEN_COLS: &str =
-    "id, user_id, project_id, name, token_hash, scopes, expires_at, last_used_at, revoked_at, created_at, mfa";
+macro_rules! token_cols {
+    () => {
+        "id, user_id, project_id, name, token_hash, scopes, expires_at, last_used_at, revoked_at, created_at, mfa"
+    };
+}
 
 fn token(r: TokenRow) -> ApiToken {
     ApiToken {
@@ -502,24 +531,28 @@ fn details_pairs(json: &str) -> Vec<(String, String)> {
 #[async_trait]
 impl AccessRepository for PostgresProjectRepository {
     async fn insert_session(&self, s: &SessionRecord) -> AppResult<()> {
-        sqlx::query(&format!("INSERT INTO fb_sessions ({SESSION_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"))
-            .bind(&s.id_hash)
-            .bind(s.user_id)
-            .bind(s.created_at)
-            .bind(s.last_seen_at)
-            .bind(s.expires_at)
-            .bind(s.mfa)
-            .bind(&s.ip)
-            .bind(&s.user_agent)
-            .bind(s.revoked_at)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(concat!(
+            "INSERT INTO fb_sessions (",
+            session_cols!(),
+            ") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+        ))
+        .bind(&s.id_hash)
+        .bind(s.user_id)
+        .bind(s.created_at)
+        .bind(s.last_seen_at)
+        .bind(s.expires_at)
+        .bind(s.mfa)
+        .bind(&s.ip)
+        .bind(&s.user_agent)
+        .bind(s.revoked_at)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
     async fn session(&self, id_hash: &str) -> AppResult<Option<SessionRecord>> {
         let r: Option<SessionRow> =
-            sqlx::query_as(&format!("SELECT {SESSION_COLS} FROM fb_sessions WHERE id_hash = $1"))
+            sqlx::query_as(concat!("SELECT ", session_cols!(), " FROM fb_sessions WHERE id_hash = $1"))
                 .bind(id_hash)
                 .fetch_optional(&self.pool)
                 .await?;
@@ -536,8 +569,10 @@ impl AccessRepository for PostgresProjectRepository {
     }
 
     async fn sessions_of(&self, user_id: Uuid, now: DateTime<Utc>) -> AppResult<Vec<SessionRecord>> {
-        let rows: Vec<SessionRow> = sqlx::query_as(&format!(
-            "SELECT {SESSION_COLS} FROM fb_sessions WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > $2 \
+        let rows: Vec<SessionRow> = sqlx::query_as(concat!(
+            "SELECT ",
+            session_cols!(),
+            " FROM fb_sessions WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > $2 \
              AND last_seen_at > $2 - interval '7 days' ORDER BY last_seen_at DESC"
         ))
         .bind(user_id)
@@ -578,8 +613,10 @@ impl AccessRepository for PostgresProjectRepository {
     }
 
     async fn insert_token(&self, t: &ApiToken) -> AppResult<()> {
-        sqlx::query(&format!(
-            "INSERT INTO fb_api_tokens ({TOKEN_COLS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+        sqlx::query(concat!(
+            "INSERT INTO fb_api_tokens (",
+            token_cols!(),
+            ") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
         ))
         .bind(t.id)
         .bind(t.user_id)
@@ -599,7 +636,7 @@ impl AccessRepository for PostgresProjectRepository {
 
     async fn token_by_hash(&self, token_hash: &str) -> AppResult<Option<ApiToken>> {
         let r: Option<TokenRow> =
-            sqlx::query_as(&format!("SELECT {TOKEN_COLS} FROM fb_api_tokens WHERE token_hash = $1"))
+            sqlx::query_as(concat!("SELECT ", token_cols!(), " FROM fb_api_tokens WHERE token_hash = $1"))
                 .bind(token_hash)
                 .fetch_optional(&self.pool)
                 .await?;
@@ -616,8 +653,10 @@ impl AccessRepository for PostgresProjectRepository {
     }
 
     async fn tokens_of(&self, user_id: Uuid) -> AppResult<Vec<ApiToken>> {
-        let rows: Vec<TokenRow> = sqlx::query_as(&format!(
-            "SELECT {TOKEN_COLS} FROM fb_api_tokens WHERE user_id = $1 ORDER BY created_at DESC"
+        let rows: Vec<TokenRow> = sqlx::query_as(concat!(
+            "SELECT ",
+            token_cols!(),
+            " FROM fb_api_tokens WHERE user_id = $1 ORDER BY created_at DESC"
         ))
         .bind(user_id)
         .fetch_all(&self.pool)

@@ -5,7 +5,7 @@
 
 use sqlx::migrate::Migrator;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use sqlx::{Connection, PgConnection, PgPool};
+use sqlx::{AssertSqlSafe, Connection, PgConnection, PgPool};
 
 /// Временная схема с пулом подключений к ней. После теста — [`TestDb::close`].
 pub struct TestDb {
@@ -23,7 +23,11 @@ impl TestDb {
         };
         let schema = format!("test_{name}_{}", uuid::Uuid::new_v4().simple());
         let mut admin = PgConnection::connect(&url).await.expect("TEST_DATABASE_URL: нет подключения к PostgreSQL");
-        sqlx::raw_sql(&format!("CREATE SCHEMA {schema}")).execute(&mut admin).await.expect("CREATE SCHEMA");
+        // Имя схемы нельзя передать параметром; оно собрано из имени теста и UUID — внешних данных в нём нет.
+        sqlx::raw_sql(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
+            .execute(&mut admin)
+            .await
+            .expect("CREATE SCHEMA");
         admin.close().await.ok();
         let opts: PgConnectOptions = url.parse().expect("TEST_DATABASE_URL");
         // Два подключения на тест: десятки тестов идут параллельно, а у PostgreSQL по умолчанию их 100.
@@ -53,7 +57,10 @@ impl TestDb {
     pub async fn close(self) {
         self.pool.close().await;
         let mut admin = PgConnection::connect(&self.url).await.expect("TEST_DATABASE_URL");
-        sqlx::raw_sql(&format!("DROP SCHEMA {} CASCADE", self.schema)).execute(&mut admin).await.expect("DROP SCHEMA");
+        sqlx::raw_sql(AssertSqlSafe(format!("DROP SCHEMA {} CASCADE", self.schema)))
+            .execute(&mut admin)
+            .await
+            .expect("DROP SCHEMA");
         admin.close().await.ok();
     }
 }

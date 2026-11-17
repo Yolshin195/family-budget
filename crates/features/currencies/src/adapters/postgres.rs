@@ -10,7 +10,11 @@ use uuid::Uuid;
 use crate::domain::{Currency, CurrencyNameLang};
 use crate::ports::CurrencyRepository;
 
-const COLUMNS: &str = "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, symbol, minor_units";
+macro_rules! columns {
+    () => {
+        "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, symbol, minor_units"
+    };
+}
 
 pub struct PostgresCurrencyRepository {
     pool: PgPool,
@@ -65,11 +69,11 @@ fn bad_value(column: &str, value: &str) -> AppError {
 #[async_trait]
 impl CurrencyRepository for PostgresCurrencyRepository {
     async fn insert(&self, item: &Currency) -> AppResult<()> {
-        sqlx::query(
-            "INSERT INTO fb_currencies ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
-                .replace("{COLUMNS}", COLUMNS)
-                .as_str(),
-        )
+        sqlx::query(concat!(
+            "INSERT INTO fb_currencies (",
+            columns!(),
+            ") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+        ))
         .bind(item.id)
         .bind(item.project_id)
         .bind(&item.code)
@@ -110,8 +114,8 @@ impl CurrencyRepository for PostgresCurrencyRepository {
     }
 
     async fn find_by_code(&self, project_id: Uuid, code: &str) -> AppResult<Option<Currency>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_currencies WHERE project_id = $1 AND code = $2");
-        let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_currencies WHERE project_id = $1 AND code = $2");
+        let row: Option<Row> = sqlx::query_as(sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
         row.map(Currency::try_from).transpose()
     }
 
@@ -122,10 +126,12 @@ impl CurrencyRepository for PostgresCurrencyRepository {
         limit: i64,
         offset: i64,
     ) -> AppResult<Vec<Currency>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_currencies WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY code LIMIT $3 OFFSET $4"
+        let sql = concat!(
+            "SELECT ",
+            columns!(),
+            " FROM fb_currencies WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY code LIMIT $3 OFFSET $4"
         );
-        let rows: Vec<Row> = sqlx::query_as(&sql)
+        let rows: Vec<Row> = sqlx::query_as(sql)
             .bind(project_id)
             .bind(include_archived)
             .bind(limit)

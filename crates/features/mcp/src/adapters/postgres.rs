@@ -9,7 +9,11 @@ use uuid::Uuid;
 use crate::domain::Grant;
 use crate::ports::GrantRepository;
 
-const COLUMNS: &str = "id, user_id, client_id, project_id, scopes, mfa, created_at, updated_at, last_used_at";
+macro_rules! columns {
+    () => {
+        "id, user_id, client_id, project_id, scopes, mfa, created_at, updated_at, last_used_at"
+    };
+}
 
 pub struct PostgresGrantRepository {
     pool: PgPool,
@@ -54,7 +58,7 @@ impl From<Row> for Grant {
 impl GrantRepository for PostgresGrantRepository {
     async fn grant(&self, user_id: Uuid, client_id: &str) -> AppResult<Option<Grant>> {
         let row: Option<Row> =
-            sqlx::query_as(&format!("SELECT {COLUMNS} FROM fb_mcp_grants WHERE user_id = $1 AND client_id = $2"))
+            sqlx::query_as(concat!("SELECT ", columns!(), " FROM fb_mcp_grants WHERE user_id = $1 AND client_id = $2"))
                 .bind(user_id)
                 .bind(client_id)
                 .fetch_optional(&self.pool)
@@ -63,20 +67,21 @@ impl GrantRepository for PostgresGrantRepository {
     }
 
     async fn grants_of(&self, user_id: Uuid) -> AppResult<Vec<Grant>> {
-        let rows: Vec<Row> =
-            sqlx::query_as(&format!("SELECT {COLUMNS} FROM fb_mcp_grants WHERE user_id = $1 ORDER BY created_at"))
-                .bind(user_id)
-                .fetch_all(&self.pool)
-                .await?;
+        let rows: Vec<Row> = sqlx::query_as(concat!(
+            "SELECT ",
+            columns!(),
+            " FROM fb_mcp_grants WHERE user_id = $1 ORDER BY created_at"
+        ))
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn save(&self, g: &Grant) -> AppResult<()> {
-        sqlx::query(&format!(
-            "INSERT INTO fb_mcp_grants ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
+        sqlx::query(concat!("INSERT INTO fb_mcp_grants (", columns!(), ") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
              ON CONFLICT (user_id, client_id) DO UPDATE SET project_id = EXCLUDED.project_id, scopes = EXCLUDED.scopes, \
-             mfa = EXCLUDED.mfa, updated_at = EXCLUDED.updated_at"
-        ))
+             mfa = EXCLUDED.mfa, updated_at = EXCLUDED.updated_at"))
         .bind(g.id)
         .bind(g.user_id)
         .bind(&g.client_id)

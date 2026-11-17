@@ -10,7 +10,11 @@ use uuid::Uuid;
 use crate::domain::Person;
 use crate::ports::PersonRepository;
 
-const COLUMNS: &str = "id, project_id, code, name, aliases, user_id, former_member, archived";
+macro_rules! columns {
+    () => {
+        "id, project_id, code, name, aliases, user_id, former_member, archived"
+    };
+}
 
 pub struct PostgresPersonRepository {
     pool: PgPool,
@@ -52,7 +56,7 @@ impl From<Row> for Person {
 #[async_trait]
 impl PersonRepository for PostgresPersonRepository {
     async fn insert(&self, item: &Person) -> AppResult<()> {
-        sqlx::query(&format!("INSERT INTO fb_people ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"))
+        sqlx::query(concat!("INSERT INTO fb_people (", columns!(), ") VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"))
             .bind(item.id)
             .bind(item.project_id)
             .bind(&item.code)
@@ -86,28 +90,30 @@ impl PersonRepository for PostgresPersonRepository {
     }
 
     async fn find_by_code(&self, project_id: Uuid, code: &str) -> AppResult<Option<Person>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_people WHERE project_id = $1 AND code = $2");
-        let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_people WHERE project_id = $1 AND code = $2");
+        let row: Option<Row> = sqlx::query_as(sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
         Ok(row.map(Into::into))
     }
 
     async fn find_by_user(&self, project_id: Uuid, user_id: Uuid) -> AppResult<Option<Person>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_people WHERE project_id = $1 AND user_id = $2");
-        let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(user_id).fetch_optional(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_people WHERE project_id = $1 AND user_id = $2");
+        let row: Option<Row> = sqlx::query_as(sql).bind(project_id).bind(user_id).fetch_optional(&self.pool).await?;
         Ok(row.map(Into::into))
     }
 
     async fn of_user(&self, user_id: Uuid) -> AppResult<Vec<Person>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_people WHERE user_id = $1");
-        let rows: Vec<Row> = sqlx::query_as(&sql).bind(user_id).fetch_all(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_people WHERE user_id = $1");
+        let rows: Vec<Row> = sqlx::query_as(sql).bind(user_id).fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(Into::into).collect())
     }
 
     async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Person>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_people WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY lower(name), code LIMIT $3 OFFSET $4"
+        let sql = concat!(
+            "SELECT ",
+            columns!(),
+            " FROM fb_people WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY lower(name), code LIMIT $3 OFFSET $4"
         );
-        let rows: Vec<Row> = sqlx::query_as(&sql)
+        let rows: Vec<Row> = sqlx::query_as(sql)
             .bind(project_id)
             .bind(include_archived)
             .bind(limit)
