@@ -10,7 +10,11 @@ use uuid::Uuid;
 use crate::domain::{Category, CategoryCategoryKind, CategoryNameLang};
 use crate::ports::CategoryRepository;
 
-const COLUMNS: &str = "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, category_kind, parent_code, sort_order";
+macro_rules! columns {
+    () => {
+        "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, category_kind, parent_code, sort_order"
+    };
+}
 
 pub struct PostgresCategoryRepository {
     pool: PgPool,
@@ -68,11 +72,11 @@ fn bad_value(column: &str, value: &str) -> AppError {
 #[async_trait]
 impl CategoryRepository for PostgresCategoryRepository {
     async fn insert(&self, item: &Category) -> AppResult<()> {
-        sqlx::query(
-            "INSERT INTO fb_categories ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
-                .replace("{COLUMNS}", COLUMNS)
-                .as_str(),
-        )
+        sqlx::query(concat!(
+            "INSERT INTO fb_categories (",
+            columns!(),
+            ") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
+        ))
         .bind(item.id)
         .bind(item.project_id)
         .bind(&item.code)
@@ -115,8 +119,8 @@ impl CategoryRepository for PostgresCategoryRepository {
     }
 
     async fn find_by_code(&self, project_id: Uuid, code: &str) -> AppResult<Option<Category>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_categories WHERE project_id = $1 AND code = $2");
-        let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_categories WHERE project_id = $1 AND code = $2");
+        let row: Option<Row> = sqlx::query_as(sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
         row.map(Category::try_from).transpose()
     }
 
@@ -127,10 +131,12 @@ impl CategoryRepository for PostgresCategoryRepository {
         limit: i64,
         offset: i64,
     ) -> AppResult<Vec<Category>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_categories WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY code LIMIT $3 OFFSET $4"
+        let sql = concat!(
+            "SELECT ",
+            columns!(),
+            " FROM fb_categories WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY code LIMIT $3 OFFSET $4"
         );
-        let rows: Vec<Row> = sqlx::query_as(&sql)
+        let rows: Vec<Row> = sqlx::query_as(sql)
             .bind(project_id)
             .bind(include_archived)
             .bind(limit)

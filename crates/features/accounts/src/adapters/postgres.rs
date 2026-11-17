@@ -10,7 +10,11 @@ use uuid::Uuid;
 use crate::domain::{Account, AccountAccountKind, AccountNameLang};
 use crate::ports::AccountRepository;
 
-const COLUMNS: &str = "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, account_kind, currency_code, holder_user_id";
+macro_rules! columns {
+    () => {
+        "id, project_id, code, name, archived, name_lang, name_ru, name_en, name_th, account_kind, currency_code, holder_user_id"
+    };
+}
 
 pub struct PostgresAccountRepository {
     pool: PgPool,
@@ -68,11 +72,11 @@ fn bad_value(column: &str, value: &str) -> AppError {
 #[async_trait]
 impl AccountRepository for PostgresAccountRepository {
     async fn insert(&self, item: &Account) -> AppResult<()> {
-        sqlx::query(
-            "INSERT INTO fb_accounts ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
-                .replace("{COLUMNS}", COLUMNS)
-                .as_str(),
-        )
+        sqlx::query(concat!(
+            "INSERT INTO fb_accounts (",
+            columns!(),
+            ") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)"
+        ))
         .bind(item.id)
         .bind(item.project_id)
         .bind(&item.code)
@@ -115,16 +119,18 @@ impl AccountRepository for PostgresAccountRepository {
     }
 
     async fn find_by_code(&self, project_id: Uuid, code: &str) -> AppResult<Option<Account>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_accounts WHERE project_id = $1 AND code = $2");
-        let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_accounts WHERE project_id = $1 AND code = $2");
+        let row: Option<Row> = sqlx::query_as(sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
         row.map(Account::try_from).transpose()
     }
 
     async fn list(&self, project_id: Uuid, include_archived: bool, limit: i64, offset: i64) -> AppResult<Vec<Account>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_accounts WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY code LIMIT $3 OFFSET $4"
+        let sql = concat!(
+            "SELECT ",
+            columns!(),
+            " FROM fb_accounts WHERE project_id = $1 AND ($2 OR NOT archived) ORDER BY code LIMIT $3 OFFSET $4"
         );
-        let rows: Vec<Row> = sqlx::query_as(&sql)
+        let rows: Vec<Row> = sqlx::query_as(sql)
             .bind(project_id)
             .bind(include_archived)
             .bind(limit)

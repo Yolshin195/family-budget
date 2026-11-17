@@ -30,7 +30,7 @@ rust_decimal = { version = "1", features = ["serde-with-float"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "migrate", "chrono", "uuid", "rust_decimal"] }
+sqlx = { version = "0.9", features = ["postgres", "runtime-tokio", "tls-rustls-ring-webpki", "migrate", "chrono", "uuid", "rust_decimal"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 # Сравнение названий без диакритики (kernel::search); уже в дереве зависимостей через sqlx.

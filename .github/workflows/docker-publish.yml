@@ -25,8 +25,8 @@ name: Docker build and publish
 on:
   push:
     branches: [main]
-    # Всё, что читают docker build и cargo build. .cargo/config.toml и rust-toolchain.toml пока нет, но cargo
-    # подхватит их из контекста сборки. FEATURE.md и прочие *.md в crates/ в бинарник не попадают.
+    # Всё, что читают docker build и cargo build. rust-toolchain.toml пока нет, но cargo подхватит его из контекста
+    # сборки. FEATURE.md и прочие *.md в crates/ в бинарник не попадают.
     paths:
       - 'crates/**'
       - '!**.md'

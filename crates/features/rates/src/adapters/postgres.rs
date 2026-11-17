@@ -9,10 +9,18 @@ use uuid::Uuid;
 use crate::domain::Rate;
 use crate::ports::{Period, RateRepository};
 
-const COLUMNS: &str = "id, project_id, rate_date, currency_code, rate, entered, inverted";
+macro_rules! columns {
+    () => {
+        "id, project_id, rate_date, currency_code, rate, entered, inverted"
+    };
+}
 /// Общий фильтр: пользователь + период ($2, $3 — границы или NULL).
-const FILTER: &str = "project_id = $1 AND ($2::date IS NULL OR rate_date >= $2) \
-                      AND ($3::date IS NULL OR rate_date <= $3)";
+macro_rules! filter {
+    () => {
+        "project_id = $1 AND ($2::date IS NULL OR rate_date >= $2) \
+                      AND ($3::date IS NULL OR rate_date <= $3)"
+    };
+}
 
 pub struct PostgresRateRepository {
     pool: PgPool,
@@ -96,15 +104,20 @@ impl RateRepository for PostgresRateRepository {
     }
 
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Rate>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_rates WHERE project_id = $1 AND id = $2");
-        let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(id).fetch_optional(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_rates WHERE project_id = $1 AND id = $2");
+        let row: Option<Row> = sqlx::query_as(sql).bind(project_id).bind(id).fetch_optional(&self.pool).await?;
         row.map(Rate::try_from).transpose()
     }
 
     async fn list(&self, project_id: Uuid, period: Period, limit: i64, offset: i64) -> AppResult<Vec<Rate>> {
-        let sql =
-            format!("SELECT {COLUMNS} FROM fb_rates WHERE {FILTER} ORDER BY rate_date DESC, id LIMIT $4 OFFSET $5");
-        let rows: Vec<Row> = sqlx::query_as(&sql)
+        let sql = concat!(
+            "SELECT ",
+            columns!(),
+            " FROM fb_rates WHERE ",
+            filter!(),
+            " ORDER BY rate_date DESC, id LIMIT $4 OFFSET $5"
+        );
+        let rows: Vec<Row> = sqlx::query_as(sql)
             .bind(project_id)
             .bind(period.from)
             .bind(period.to)
@@ -116,9 +129,9 @@ impl RateRepository for PostgresRateRepository {
     }
 
     async fn count(&self, project_id: Uuid, period: Period) -> AppResult<i64> {
-        let sql = format!("SELECT COUNT(*) FROM fb_rates WHERE {FILTER}");
+        let sql = concat!("SELECT COUNT(*) FROM fb_rates WHERE ", filter!());
         let (n,): (i64,) =
-            sqlx::query_as(&sql).bind(project_id).bind(period.from).bind(period.to).fetch_one(&self.pool).await?;
+            sqlx::query_as(sql).bind(project_id).bind(period.from).bind(period.to).fetch_one(&self.pool).await?;
         Ok(n)
     }
 

@@ -9,7 +9,11 @@ use uuid::Uuid;
 use crate::domain::{Place, PlaceKind};
 use crate::ports::PlaceRepository;
 
-const COLUMNS: &str = "id, project_id, code, name, parent_code, aliases, default_category_code, default_account_code, place_kind, location, archived";
+macro_rules! columns {
+    () => {
+        "id, project_id, code, name, parent_code, aliases, default_category_code, default_account_code, place_kind, location, archived"
+    };
+}
 
 pub struct PostgresPlaceRepository {
     pool: PgPool,
@@ -61,8 +65,10 @@ impl TryFrom<Row> for Place {
 #[async_trait]
 impl PlaceRepository for PostgresPlaceRepository {
     async fn insert(&self, item: &Place) -> AppResult<()> {
-        sqlx::query(&format!(
-            "INSERT INTO fb_places ({COLUMNS}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
+        sqlx::query(concat!(
+            "INSERT INTO fb_places (",
+            columns!(),
+            ") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
         ))
         .bind(item.id)
         .bind(item.project_id)
@@ -104,14 +110,14 @@ impl PlaceRepository for PostgresPlaceRepository {
     }
 
     async fn find_by_code(&self, project_id: Uuid, code: &str) -> AppResult<Option<Place>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_places WHERE project_id = $1 AND code = $2");
-        let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_places WHERE project_id = $1 AND code = $2");
+        let row: Option<Row> = sqlx::query_as(sql).bind(project_id).bind(code).fetch_optional(&self.pool).await?;
         row.map(Place::try_from).transpose()
     }
 
     async fn all(&self, project_id: Uuid) -> AppResult<Vec<Place>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_places WHERE project_id = $1");
-        let rows: Vec<Row> = sqlx::query_as(&sql).bind(project_id).fetch_all(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_places WHERE project_id = $1");
+        let rows: Vec<Row> = sqlx::query_as(sql).bind(project_id).fetch_all(&self.pool).await?;
         rows.into_iter().map(Place::try_from).collect()
     }
 

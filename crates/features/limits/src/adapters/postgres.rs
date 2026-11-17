@@ -9,10 +9,18 @@ use uuid::Uuid;
 use crate::domain::{Limit, LimitLimitPeriod};
 use crate::ports::{LimitRepository, Period};
 
-const COLUMNS: &str = "id, project_id, valid_from, category_code, limit_period, amount";
+macro_rules! columns {
+    () => {
+        "id, project_id, valid_from, category_code, limit_period, amount"
+    };
+}
 /// Общий фильтр: пользователь + период ($2, $3 — границы или NULL).
-const FILTER: &str = "project_id = $1 AND ($2::date IS NULL OR valid_from >= $2) \
-                      AND ($3::date IS NULL OR valid_from <= $3)";
+macro_rules! filter {
+    () => {
+        "project_id = $1 AND ($2::date IS NULL OR valid_from >= $2) \
+                      AND ($3::date IS NULL OR valid_from <= $3)"
+    };
+}
 
 pub struct PostgresLimitRepository {
     pool: PgPool,
@@ -94,15 +102,20 @@ impl LimitRepository for PostgresLimitRepository {
     }
 
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Limit>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_limits WHERE project_id = $1 AND id = $2");
-        let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(id).fetch_optional(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_limits WHERE project_id = $1 AND id = $2");
+        let row: Option<Row> = sqlx::query_as(sql).bind(project_id).bind(id).fetch_optional(&self.pool).await?;
         row.map(Limit::try_from).transpose()
     }
 
     async fn list(&self, project_id: Uuid, period: Period, limit: i64, offset: i64) -> AppResult<Vec<Limit>> {
-        let sql =
-            format!("SELECT {COLUMNS} FROM fb_limits WHERE {FILTER} ORDER BY valid_from DESC, id LIMIT $4 OFFSET $5");
-        let rows: Vec<Row> = sqlx::query_as(&sql)
+        let sql = concat!(
+            "SELECT ",
+            columns!(),
+            " FROM fb_limits WHERE ",
+            filter!(),
+            " ORDER BY valid_from DESC, id LIMIT $4 OFFSET $5"
+        );
+        let rows: Vec<Row> = sqlx::query_as(sql)
             .bind(project_id)
             .bind(period.from)
             .bind(period.to)
@@ -114,9 +127,9 @@ impl LimitRepository for PostgresLimitRepository {
     }
 
     async fn count(&self, project_id: Uuid, period: Period) -> AppResult<i64> {
-        let sql = format!("SELECT COUNT(*) FROM fb_limits WHERE {FILTER}");
+        let sql = concat!("SELECT COUNT(*) FROM fb_limits WHERE ", filter!());
         let (n,): (i64,) =
-            sqlx::query_as(&sql).bind(project_id).bind(period.from).bind(period.to).fetch_one(&self.pool).await?;
+            sqlx::query_as(sql).bind(project_id).bind(period.from).bind(period.to).fetch_one(&self.pool).await?;
         Ok(n)
     }
 

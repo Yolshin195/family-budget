@@ -224,23 +224,24 @@ async fn default_direction_comes_from_the_latest_rate_of_the_currency() {
 /// Всё выполняется во временной схеме внутри транзакции и откатывается.
 #[tokio::test]
 async fn migration_fills_entered_from_rate() {
-    use sqlx::{Connection, Row};
+    use sqlx::{AssertSqlSafe, Connection, Row};
     let Ok(url) = std::env::var("TEST_DATABASE_URL") else {
         eprintln!("TEST_DATABASE_URL не задан — тест миграции пропущен");
         return;
     };
     let migrator = sqlx::migrate!("./migrations");
     let sql = |desc: &str| {
-        migrator.iter().find(|m| m.description == desc && m.migration_type.is_up_migration()).unwrap().sql.to_string()
+        migrator.iter().find(|m| m.description == desc && m.migration_type.is_up_migration()).unwrap().sql.clone()
     };
     let mut conn = sqlx::PgConnection::connect(&url).await.unwrap();
     let mut tx = conn.begin().await.unwrap();
     let schema = format!("rates_mig_{}", Uuid::new_v4().simple());
-    sqlx::raw_sql(&format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}"))
+    // Имя схемы нельзя передать параметром; оно собрано из UUID — внешних данных в нём нет.
+    sqlx::raw_sql(AssertSqlSafe(format!("CREATE SCHEMA {schema}; SET LOCAL search_path TO {schema}")))
         .execute(&mut *tx)
         .await
         .unwrap();
-    sqlx::raw_sql(&sql("create fb rates")).execute(&mut *tx).await.unwrap();
+    sqlx::raw_sql(sql("create fb rates")).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO fb_rates (id, project_id, rate_date, currency_code, rate) VALUES ($1, $2, $3, 'USD', 36.5), ($4, $2, $3, 'RUB', 0.4)")
         .bind(Uuid::new_v4())
         .bind(Uuid::new_v4())
@@ -249,7 +250,7 @@ async fn migration_fills_entered_from_rate() {
         .execute(&mut *tx)
         .await
         .unwrap();
-    sqlx::raw_sql(&sql("rate direction")).execute(&mut *tx).await.unwrap();
+    sqlx::raw_sql(sql("rate direction")).execute(&mut *tx).await.unwrap();
     let rows = sqlx::query("SELECT currency_code, rate, entered, inverted FROM fb_rates ORDER BY currency_code")
         .fetch_all(&mut *tx)
         .await

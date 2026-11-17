@@ -1,8 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":semanticCommitsDisabled", "customManagers:dockerfileVersions"],
-  "description": "Обновления зависимостей: Cargo, npm (сборка статики), образы контейнеров (включая Rauthy), GitHub Actions.",
+  "extends": ["config:recommended", ":semanticCommitsDisabled", "customManagers:dockerfileVersions",
+    "helpers:pinGitHubActionDigests"],
+  "description": "Обновления зависимостей: Cargo, npm (сборка статики), образы контейнеров (включая Rauthy), GitHub Actions (закреплены по SHA). Новая версия — не раньше чем через 5 дней после публикации, как global-min-publish-age в .cargo/config.toml; исправления уязвимостей — без задержки.",
   "labels": ["dependencies"],
+  "minimumReleaseAge": "5 days",
+  "internalChecksFilter": "strict",
   "packageRules": [
     {
       "matchManagers": ["docker-compose", "dockerfile"],
@@ -20,5 +23,5 @@
       "groupName": "Сборка статики (npm)"
     }
   ],
-  "vulnerabilityAlerts": { "enabled": true, "labels": ["security"] }
+  "vulnerabilityAlerts": { "enabled": true, "labels": ["security"], "minimumReleaseAge": null }
 }

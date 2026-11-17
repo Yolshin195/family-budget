@@ -14,8 +14,12 @@ use uuid::Uuid;
 use crate::domain::{Description, ExternalRef, Item, Posting, RefKind, RefLink, Transaction, TxKind, Unit, system};
 use crate::ports::{ExchangeLine, FactLine, Filter, Payment, QuickStats, TransactionRepository, taken};
 
-const COLUMNS: &str = "id, project_id, occurred_on, tx_kind, description, description_lang, \
-                       description_ru, description_en, description_th, created_by, plan_id, plan_date, place_code";
+macro_rules! columns {
+    () => {
+        "id, project_id, occurred_on, tx_kind, description, description_lang, \
+                       description_ru, description_en, description_th, created_by, plan_id, plan_date, place_code"
+    };
+}
 /// Транзакция с проводкой на счёт $N.
 macro_rules! touches {
     ($n:literal) => {
@@ -29,7 +33,9 @@ macro_rules! touches {
 }
 /// $1 проект, $2..$3 период, $4 счёт, $5 тип, $6 автор, $7 язык «без перевода», $8 место, $9 для кого — есть позиция
 /// этого человека, '' — «Для всех», $10 источник внешних записей — есть связь с ним (NULL — условие выключено).
-const FILTER: &str = concat!(
+macro_rules! filter {
+    () => {
+        concat!(
     "project_id = $1 \
     AND ($2::date IS NULL OR occurred_on >= $2) AND ($3::date IS NULL OR occurred_on <= $3) \
     AND ($4::text IS NULL OR ",
@@ -42,9 +48,14 @@ const FILTER: &str = concat!(
          WHERE i.transaction_id = fb_transactions.id AND i.for_person_code IS NOT DISTINCT FROM NULLIF($9, ''))) \
     AND ($10::text IS NULL OR EXISTS (SELECT 1 FROM fb_external_refs r \
          WHERE r.project_id = fb_transactions.project_id AND r.transaction_id = fb_transactions.id AND r.provider = $10))"
-);
-const REF_COLUMNS: &str =
-    "id, project_id, provider, external_id, transaction_id, link, received_at, created_at, created_by";
+)
+    };
+}
+macro_rules! ref_columns {
+    () => {
+        "id, project_id, provider, external_id, transaction_id, link, received_at, created_at, created_by"
+    };
+}
 
 pub struct PostgresTransactionRepository {
     pool: PgPool,
@@ -368,19 +379,23 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn find_ref(&self, project_id: Uuid, provider: &str, external_id: &str) -> AppResult<Option<ExternalRef>> {
-        let sql = format!(
-            "SELECT {REF_COLUMNS} FROM fb_external_refs WHERE project_id = $1 AND provider = $2 AND external_id = $3"
+        let sql = concat!(
+            "SELECT ",
+            ref_columns!(),
+            " FROM fb_external_refs WHERE project_id = $1 AND provider = $2 AND external_id = $3"
         );
         let row: Option<RefRow> =
-            sqlx::query_as(&sql).bind(project_id).bind(provider).bind(external_id).fetch_optional(&self.pool).await?;
+            sqlx::query_as(sql).bind(project_id).bind(provider).bind(external_id).fetch_optional(&self.pool).await?;
         row.map(RefRow::into_domain).transpose()
     }
 
     async fn refs_of(&self, project_id: Uuid, ids: &[Uuid]) -> AppResult<Vec<ExternalRef>> {
-        let sql = format!(
-            "SELECT {REF_COLUMNS} FROM fb_external_refs WHERE project_id = $1 AND transaction_id = ANY($2) ORDER BY created_at, id"
+        let sql = concat!(
+            "SELECT ",
+            ref_columns!(),
+            " FROM fb_external_refs WHERE project_id = $1 AND transaction_id = ANY($2) ORDER BY created_at, id"
         );
-        let rows: Vec<RefRow> = sqlx::query_as(&sql).bind(project_id).bind(ids).fetch_all(&self.pool).await?;
+        let rows: Vec<RefRow> = sqlx::query_as(sql).bind(project_id).bind(ids).fetch_all(&self.pool).await?;
         rows.into_iter().map(RefRow::into_domain).collect()
     }
 
@@ -419,8 +434,8 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn find(&self, project_id: Uuid, id: Uuid) -> AppResult<Option<Transaction>> {
-        let sql = format!("SELECT {COLUMNS} FROM fb_transactions WHERE project_id = $1 AND id = $2");
-        let row: Option<Row> = sqlx::query_as(&sql).bind(project_id).bind(id).fetch_optional(&self.pool).await?;
+        let sql = concat!("SELECT ", columns!(), " FROM fb_transactions WHERE project_id = $1 AND id = $2");
+        let row: Option<Row> = sqlx::query_as(sql).bind(project_id).bind(id).fetch_optional(&self.pool).await?;
         match row {
             None => Ok(None),
             Some(r) => Ok(self.with_postings(vec![r]).await?.pop()),
@@ -428,46 +443,51 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn list(&self, project_id: Uuid, filter: &Filter, limit: i64, offset: i64) -> AppResult<Vec<Transaction>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_transactions WHERE {FILTER} ORDER BY occurred_on DESC, created_at DESC, id LIMIT $11 OFFSET $12"
+        let sql = concat!(
+            "SELECT ",
+            columns!(),
+            " FROM fb_transactions WHERE ",
+            filter!(),
+            " ORDER BY occurred_on DESC, created_at DESC, id LIMIT $11 OFFSET $12"
         );
-        let rows: Vec<Row> = bind_filter(sqlx::query_as(&sql), project_id, filter)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(&self.pool)
-            .await?;
+        let rows: Vec<Row> =
+            bind_filter(sqlx::query_as(sql), project_id, filter).bind(limit).bind(offset).fetch_all(&self.pool).await?;
         self.with_postings(rows).await
     }
 
     async fn count(&self, project_id: Uuid, filter: &Filter) -> AppResult<i64> {
-        let sql = format!("SELECT COUNT(*) FROM fb_transactions WHERE {FILTER}");
-        let (n,): (i64,) = bind_filter(sqlx::query_as(&sql), project_id, filter).fetch_one(&self.pool).await?;
+        let sql = concat!("SELECT COUNT(*) FROM fb_transactions WHERE ", filter!());
+        let (n,): (i64,) = bind_filter(sqlx::query_as(sql), project_id, filter).fetch_one(&self.pool).await?;
         Ok(n)
     }
 
     async fn category_totals(&self, project_id: Uuid, filter: &Filter) -> AppResult<Vec<(String, Decimal, Decimal)>> {
         // Доход — проводка на категорию со знаком «−», расход — «+»; возврат — обратный знак, он и уменьшает итог.
         // С фильтром «Для кого» — только позиции этого получателя: доля человека в общих чеках.
-        let sql = format!(
+        let sql = concat!(
             "SELECT p.currency_code, \
                     COALESCE(SUM(CASE WHEN t.tx_kind = 'INCOME' THEN -p.amount END), 0), \
                     COALESCE(SUM(CASE WHEN t.tx_kind <> 'INCOME' THEN p.amount END), 0) \
              FROM fb_postings p JOIN fb_transactions t ON t.id = p.transaction_id \
-             WHERE p.ref_kind = 'CATEGORY' AND p.transaction_id IN (SELECT id FROM fb_transactions WHERE {FILTER}) \
+             WHERE p.ref_kind = 'CATEGORY' AND p.transaction_id IN (SELECT id FROM fb_transactions WHERE ",
+            filter!(),
+            ") \
              AND ($9::text IS NULL OR EXISTS (SELECT 1 FROM fb_transaction_items i \
                   WHERE i.id = p.item_id AND i.for_person_code IS NOT DISTINCT FROM NULLIF($9, ''))) \
              GROUP BY p.currency_code ORDER BY p.currency_code"
         );
-        Ok(bind_filter(sqlx::query_as(&sql), project_id, filter).fetch_all(&self.pool).await?)
+        Ok(bind_filter(sqlx::query_as(sql), project_id, filter).fetch_all(&self.pool).await?)
     }
 
     async fn account_flows(&self, project_id: Uuid, filter: &Filter, account: &str) -> AppResult<(Decimal, Decimal)> {
-        let sql = format!(
+        let sql = concat!(
             "SELECT COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0), COALESCE(SUM(amount) FILTER (WHERE amount < 0), 0) \
              FROM fb_postings WHERE ref_kind = 'ACCOUNT' AND ref_code = $11 \
-             AND transaction_id IN (SELECT id FROM fb_transactions WHERE {FILTER})"
+             AND transaction_id IN (SELECT id FROM fb_transactions WHERE ",
+            filter!(),
+            ")"
         );
-        Ok(bind_filter(sqlx::query_as(&sql), project_id, filter).bind(account).fetch_one(&self.pool).await?)
+        Ok(bind_filter(sqlx::query_as(sql), project_id, filter).bind(account).fetch_one(&self.pool).await?)
     }
 
     async fn delete(&self, project_id: Uuid, id: Uuid) -> AppResult<bool> {
@@ -525,10 +545,12 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn payments(&self, project_id: Uuid, from: NaiveDate, to: NaiveDate) -> AppResult<Vec<Payment>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_transactions WHERE project_id = $1 AND plan_id IS NOT NULL AND plan_date BETWEEN $2 AND $3"
+        let sql = concat!(
+            "SELECT ",
+            columns!(),
+            " FROM fb_transactions WHERE project_id = $1 AND plan_id IS NOT NULL AND plan_date BETWEEN $2 AND $3"
         );
-        let rows: Vec<Row> = sqlx::query_as(&sql).bind(project_id).bind(from).bind(to).fetch_all(&self.pool).await?;
+        let rows: Vec<Row> = sqlx::query_as(sql).bind(project_id).bind(from).bind(to).fetch_all(&self.pool).await?;
         Ok(self
             .with_postings(rows)
             .await?
@@ -595,12 +617,15 @@ impl TransactionRepository for PostgresTransactionRepository {
     }
 
     async fn find_opening(&self, project_id: Uuid, account_code: &str) -> AppResult<Option<Transaction>> {
-        let sql = format!(
-            "SELECT {COLUMNS} FROM fb_transactions WHERE project_id = $1 AND tx_kind = 'OPENING' AND {} ORDER BY occurred_on LIMIT 1",
-            touches!("2")
+        let sql = concat!(
+            "SELECT ",
+            columns!(),
+            " FROM fb_transactions WHERE project_id = $1 AND tx_kind = 'OPENING' AND ",
+            touches!("2"),
+            " ORDER BY occurred_on LIMIT 1"
         );
         let row: Option<Row> =
-            sqlx::query_as(&sql).bind(project_id).bind(account_code).fetch_optional(&self.pool).await?;
+            sqlx::query_as(sql).bind(project_id).bind(account_code).fetch_optional(&self.pool).await?;
         match row {
             None => Ok(None),
             Some(r) => Ok(self.with_postings(vec![r]).await?.pop()),
