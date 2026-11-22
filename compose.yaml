@@ -30,7 +30,7 @@ services:
       retries: 20
 
   rauthy:
-    image: ghcr.io/sebadob/rauthy:0.37.1
+    image: ghcr.io/sebadob/rauthy:0.37.2
     restart: unless-stopped
     depends_on:
       db:
@@ -58,7 +58,7 @@ services:
       HQL_NODE_ID: "1"
       HQL_SECRET_RAFT: ${RAUTHY_SECRET_RAFT:-dev-only-raft-secret-0123456789}
       HQL_SECRET_API: ${RAUTHY_SECRET_API:-dev-only-api-secret-0123456789x}
-      # Ключ шифрования: `podman run --rm --entrypoint /app/rauthy ghcr.io/sebadob/rauthy:0.37.1 generate-enc-key`
+      # Ключ шифрования: `podman run --rm --entrypoint /app/rauthy ghcr.io/sebadob/rauthy:0.37.2 generate-enc-key`
       ENC_KEYS: ${RAUTHY_ENC_KEYS:-dev-2026/wynhNpSS5pN9HE/Jh88sg2HIrfa+cRjM6sSCU93fJio=}
       ENC_KEY_ACTIVE: ${RAUTHY_ENC_KEY_ACTIVE:-dev-2026}
       BOOTSTRAP_ADMIN_EMAIL: ${RAUTHY_ADMIN_EMAIL:-admin@localhost}
