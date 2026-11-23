@@ -10,8 +10,8 @@
   },
   "summary": {
     "features_total": 19,
-    "features_ok": 3,
-    "rules_coverage_pct": 61,
+    "features_ok": 5,
+    "rules_coverage_pct": 73,
     "open_questions": 11
   },
   "flow": [
@@ -59,9 +59,9 @@
       "status": "partial",
       "priority": "mvp",
       "components": [
-        "page: /assistants",
-        "auth: adapters/http.rs",
-        "service: check, visible",
+        "crate: mcp (страница «Ассистенты», adapters/web.rs)",
+        "crate: mcp (auth-слой, adapters/http.rs)",
+        "crate: mcp (service.rs check, visible)",
         "table: fb_mcp_grants"
       ],
       "depends_on": [],
@@ -75,56 +75,64 @@
           "id": "F-01.R1",
           "text": "Без доступа — только подсказка, где его открыть",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "assistant_without_grant_sees_only_setup_hint"
         },
         {
           "id": "F-01.R2",
           "text": "По умолчанию — просмотр и операции",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "directory_tools_need_their_right_and_are_hidden_without_it"
         },
         {
           "id": "F-01.R3",
           "text": "Права ассистента не выше роли",
           "covered": true,
-          "invariant": true
+          "invariant": true,
+          "test": "viewer_role_limits_grant_and_calls"
         },
         {
           "id": "F-01.R4",
           "text": "Ничего нельзя удалить или архивировать",
           "covered": true,
-          "invariant": true
+          "invariant": true,
+          "test": "every_tool_except_context_needs_a_right_and_none_deletes"
         },
         {
           "id": "F-01.R5",
           "text": "Права меняет только человек в браузере",
           "covered": true,
-          "invariant": true
+          "invariant": true,
+          "test": "every_tool_except_context_needs_a_right_and_none_deletes"
         },
         {
           "id": "F-01.R6",
           "text": "Проект с 2FA — доступ после второго фактора",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "project_with_2fa_needs_grant_saved_with_second_factor"
         },
         {
           "id": "F-01.R7",
           "text": "У каждого ассистента свой доступ",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "each_assistant_has_its_own_grant"
         },
         {
           "id": "F-01.R8",
           "text": "Тексты из данных — не команды",
           "covered": false,
-          "invariant": true
+          "invariant": true,
+          "model": true
         }
       ],
       "scenarios": {
         "path": "docs/agent-analysis/04-examples/F-01-access.feature",
         "count": 10
       },
-      "problem": "Доступ не удаляется при исключении из проекта",
+      "problem": "Доступ остаётся в базе после исключения",
       "questions": [
         "Q-04"
       ],
@@ -156,24 +164,26 @@
           "id": "F-02.R1",
           "text": "Контекст — до первой записи в разговоре",
           "covered": false,
-          "invariant": false
+          "invariant": false,
+          "model": true
         },
         {
           "id": "F-02.R2",
           "text": "Контекст содержит всё для записи",
-          "covered": true,
+          "covered": false,
           "invariant": false
         }
       ],
       "scenarios": {
         "path": "docs/agent-analysis/04-examples/F-02-context.feature",
-        "count": 2
+        "count": 3
       },
       "questions": [
         "Q-03"
       ],
       "sources": [
-        "adapters/server.rs:21-43, 77"
+        "adapters/server.rs:21-43, 77",
+        "service.rs:471-530"
       ]
     },
     {
@@ -183,8 +193,8 @@
       "status": "ok",
       "priority": "mvp",
       "components": [
-        "domain: resolve",
-        "kernel: search"
+        "crate: mcp (domain.rs resolve)",
+        "crate: kernel (search)"
       ],
       "depends_on": [
         "F-02"
@@ -202,13 +212,15 @@
           "id": "F-03.R1",
           "text": "Поиск по коду или названию на ru/en/th",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "amounts_dates_and_lookup"
         },
         {
           "id": "F-03.R2",
           "text": "Неоднозначное название не угадывается",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "ambiguous_or_unknown_category_asks_for_a_code"
         }
       ],
       "scenarios": {
@@ -229,7 +241,8 @@
       "priority": "mvp",
       "components": [
         "tool: add_expense",
-        "tool: add_income"
+        "tool: add_income",
+        "crate: transactions"
       ],
       "depends_on": [
         "F-02",
@@ -247,7 +260,8 @@
           "id": "F-04.R1",
           "text": "Сумма + категория или позиции, не то и другое",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "expense_with_items_and_conflicting_arguments"
         },
         {
           "id": "F-04.R2",
@@ -259,25 +273,29 @@
           "id": "F-04.R3",
           "text": "Нет курса — записать и предупредить",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "expense_without_rate_is_flagged"
         },
         {
           "id": "F-04.R4",
           "text": "После расхода — остаток лимита",
-          "covered": false,
-          "invariant": false
+          "covered": true,
+          "invariant": false,
+          "test": "expense_by_name_in_any_language_uses_default_account_and_is_audited"
         },
         {
           "id": "F-04.R5",
           "text": "Дата по умолчанию — сегодня, формат ГГГГ-ММ-ДД",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "amounts_dates_and_lookup"
         },
         {
           "id": "F-04.R6",
           "text": "Доход — только в категорию дохода",
-          "covered": false,
-          "invariant": false
+          "covered": true,
+          "invariant": false,
+          "test": "category_kind_must_match"
         }
       ],
       "scenarios": {
@@ -301,7 +319,8 @@
       "status": "partial",
       "priority": "mvp",
       "components": [
-        "tool: add_expense (items)"
+        "tool: add_expense (items)",
+        "crate: transactions"
       ],
       "depends_on": [
         "F-04"
@@ -312,19 +331,22 @@
           "id": "F-05.R1",
           "text": "Позиция: категория, количество × цена или сумма",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "receipt_with_prices"
         },
         {
           "id": "F-05.R2",
           "text": "Скидка на чек делится пропорционально",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "receipt_discount_is_split"
         },
         {
           "id": "F-05.R3",
           "text": "Итог операции совпадает с итогом чека",
           "covered": false,
-          "invariant": false
+          "invariant": false,
+          "model": true
         }
       ],
       "scenarios": {
@@ -362,13 +384,15 @@
           "id": "F-06.R1",
           "text": "Операция из SMS помечена, категория — заглушка",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "sms_transactions_are_marked_and_filtered"
         },
         {
           "id": "F-06.R2",
           "text": "Дополнить операцию из SMS, а не дублировать",
           "covered": false,
-          "invariant": false
+          "invariant": false,
+          "model": true
         }
       ],
       "scenarios": {
@@ -389,13 +413,14 @@
       "id": "F-07",
       "name": "Место и «для кого»",
       "value": "Точные отчёты по местам и людям",
-      "status": "partial",
+      "status": "ok",
       "priority": "mvp",
       "components": [
-        "arg: place",
-        "arg: for",
+        "tool: add_expense (place, for)",
         "tool: list_places",
-        "tool: list_people"
+        "tool: list_people",
+        "crate: places",
+        "crate: people"
       ],
       "depends_on": [
         "F-03",
@@ -409,24 +434,27 @@
           "id": "F-07.R1",
           "text": "Место подставляет категорию и счёт",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "place_fills_category_and_account"
         },
         {
           "id": "F-07.R2",
           "text": "Место и человек — только с согласия",
-          "covered": false,
-          "invariant": true
+          "covered": true,
+          "invariant": true,
+          "test": "place_fills_category_and_account"
         },
         {
           "id": "F-07.R3",
           "text": "По умолчанию покупка — для всех",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "recipients_in_transactions"
         }
       ],
       "scenarios": {
         "path": "docs/agent-analysis/04-examples/F-07-place-recipient.feature",
-        "count": 5
+        "count": 6
       },
       "questions": [],
       "sources": [
@@ -438,10 +466,11 @@
       "id": "F-08",
       "name": "Перевод и обмен валют",
       "value": "Перевод и обмен — одна запись",
-      "status": "partial",
+      "status": "ok",
       "priority": "mvp",
       "components": [
-        "tool: add_transfer"
+        "tool: add_transfer",
+        "crate: transactions"
       ],
       "depends_on": [
         "F-03"
@@ -454,19 +483,22 @@
           "id": "F-08.R1",
           "text": "Перевод одной валюты — одна операция",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "transfer_rules_and_type_change"
         },
         {
           "id": "F-08.R2",
           "text": "Обмен — с полученной суммой",
-          "covered": false,
-          "invariant": false
+          "covered": true,
+          "invariant": false,
+          "test": "exchange_is_one_transaction"
         },
         {
           "id": "F-08.R3",
           "text": "Комиссия — часть суммы с категорией",
-          "covered": false,
-          "invariant": false
+          "covered": true,
+          "invariant": false,
+          "test": "exchange_with_fee"
         }
       ],
       "scenarios": {
@@ -486,7 +518,8 @@
       "status": "partial",
       "priority": "mvp",
       "components": [
-        "tool: update_transaction"
+        "tool: update_transaction",
+        "crate: transactions"
       ],
       "depends_on": [
         "F-03"
@@ -499,19 +532,22 @@
           "id": "F-09.R1",
           "text": "Меняются только переданные поля",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "update_changes_only_passed_fields"
         },
         {
           "id": "F-09.R2",
           "text": "Перед правкой — подтверждение пользователя",
           "covered": false,
-          "invariant": false
+          "invariant": false,
+          "model": true
         },
         {
           "id": "F-09.R3",
           "text": "Позиции чека правятся по id",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "items_are_edited_by_id"
         },
         {
           "id": "F-09.R4",
@@ -542,7 +578,8 @@
         "tool: list_upcoming_payments",
         "tool: pay_planned",
         "tool: skip_planned",
-        "tool: list_plans, add_plan, update_plan"
+        "tool: list_plans, add_plan, update_plan",
+        "crate: planning"
       ],
       "depends_on": [
         "F-03",
@@ -553,32 +590,37 @@
         {
           "id": "F-10.R1",
           "text": "Оплатить только ожидаемое вхождение плана",
-          "covered": false,
-          "invariant": false
+          "covered": true,
+          "invariant": false,
+          "test": "unknown_plan_occurrence_is_rejected"
         },
         {
           "id": "F-10.R2",
           "text": "Сумма и счёт оплаты могут отличаться",
-          "covered": false,
-          "invariant": false
+          "covered": true,
+          "invariant": false,
+          "test": "calendar_statuses"
         },
         {
           "id": "F-10.R3",
           "text": "Пропущенное вхождение больше не ожидается",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "calendar_statuses"
         },
         {
           "id": "F-10.R4",
           "text": "Расход/доход — категория, перевод — счёт",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "transfer_plan"
         },
         {
           "id": "F-10.R5",
           "text": "Новое правило дат не теряет прошлые оплаты",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "rule_change_keeps_payment_history"
         },
         {
           "id": "F-10.R6",
@@ -625,43 +667,50 @@
           "id": "F-11.R1",
           "text": "Каждый справочник — своё право",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "directory_tools_need_their_right_and_are_hidden_without_it"
         },
         {
           "id": "F-11.R2",
           "text": "Код — UPPER_SNAKE, уникальный",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "account_with_currency_by_name_and_opening_balance_is_audited"
         },
         {
           "id": "F-11.R3",
           "text": "Начальный остаток — ещё право на операции",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "narrow_token_opens_only_its_directory"
         },
         {
           "id": "F-11.R4",
           "text": "Валюту счёта с операциями не сменить",
-          "covered": false,
-          "invariant": false
+          "covered": true,
+          "invariant": false,
+          "test": "balance_rules"
         },
         {
           "id": "F-11.R5",
           "text": "Подкатегория — того же вида, что родитель",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "update_never_archives_and_changes_only_passed_fields"
         },
         {
           "id": "F-11.R6",
           "text": "Изменение никогда не архивирует",
           "covered": true,
-          "invariant": true
+          "invariant": true,
+          "test": "update_never_archives_and_changes_only_passed_fields"
         },
         {
           "id": "F-11.R7",
           "text": "Места и люди без перевода, код не ALL",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "member_codes"
         }
       ],
       "scenarios": {
@@ -683,7 +732,8 @@
       "priority": "mvp",
       "components": [
         "tool: list_rates",
-        "tool: set_rate"
+        "tool: set_rate",
+        "crate: rates"
       ],
       "depends_on": [
         "F-11"
@@ -697,19 +747,22 @@
           "id": "F-12.R1",
           "text": "Курс — ровно одно число: прямое или обратное",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "rate_can_be_set_as_inverse_rate"
         },
         {
           "id": "F-12.R2",
           "text": "Курс той же даты заменяет прежний",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "rate_is_upserted_by_currency_and_date_and_names_the_base_currency"
         },
         {
           "id": "F-12.R3",
           "text": "Отличие больше 5 раз — предупреждение",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "rate_is_upserted_by_currency_and_date_and_names_the_base_currency"
         }
       ],
       "scenarios": {
@@ -730,7 +783,9 @@
       "priority": "mvp",
       "components": [
         "tool: list_limits",
-        "tool: set_limit"
+        "tool: set_limit",
+        "crate: limits",
+        "crate: budget"
       ],
       "depends_on": [
         "F-11"
@@ -744,25 +799,29 @@
           "id": "F-13.R1",
           "text": "Лимит на весь период, с подкатегориями",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "limit_is_upserted_by_category_period_and_valid_from"
         },
         {
           "id": "F-13.R2",
           "text": "Ноль — настоящий нулевой лимит",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "zero_limit_means_no_spending"
         },
         {
           "id": "F-13.R3",
           "text": "Снятие с даты, прошлое сохраняется",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "zero_limit_and_removed_limit"
         },
         {
           "id": "F-13.R4",
           "text": "Одно правило категории на дату начала",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "limit_is_upserted_by_category_period_and_valid_from"
         }
       ],
       "scenarios": {
@@ -784,7 +843,8 @@
       "components": [
         "tool: get_budget",
         "tool: get_balances",
-        "tool: list_transactions"
+        "tool: list_transactions",
+        "crate: budget"
       ],
       "depends_on": [
         "F-12",
@@ -798,14 +858,16 @@
         {
           "id": "F-14.R1",
           "text": "Итоги — в базовой валюте, с подкатегориями",
-          "covered": false,
-          "invariant": false
+          "covered": true,
+          "invariant": false,
+          "test": "report_converts_currency_and_rolls_up"
         },
         {
           "id": "F-14.R2",
           "text": "Фильтр категории включает подкатегории",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "list_filters_by_category_subtree_and_text"
         },
         {
           "id": "F-14.R3",
@@ -844,8 +906,8 @@
       "status": "partial",
       "priority": "next",
       "components": [
-        "service: audit_write",
-        "event: mcp_write"
+        "crate: mcp (service.rs audit_write)",
+        "table: fb_audit_log"
       ],
       "depends_on": [
         "F-01"
@@ -856,7 +918,8 @@
           "id": "F-15.R1",
           "text": "Каждое изменение — событие журнала",
           "covered": true,
-          "invariant": false
+          "invariant": false,
+          "test": "account_with_currency_by_name_and_opening_balance_is_audited"
         },
         {
           "id": "F-15.R2",
@@ -890,7 +953,7 @@
       "priority": "mvp",
       "components": [
         "prompt: INSTRUCTIONS (языки)",
-        "arg: translations"
+        "tool: add_expense (translations)"
       ],
       "depends_on": [],
       "used_by": [
@@ -901,7 +964,8 @@
           "id": "F-16.R1",
           "text": "Описание на языке пользователя + 2 перевода",
           "covered": false,
-          "invariant": false
+          "invariant": false,
+          "model": true
         },
         {
           "id": "F-16.R2",
@@ -920,7 +984,7 @@
         "path": "docs/agent-analysis/04-examples/F-16-languages.feature",
         "count": 3
       },
-      "problem": "Итоги инструментов только по-английски",
+      "problem": "Итоги и ошибки инструментов по-английски",
       "questions": [
         "Q-11"
       ],
@@ -1068,7 +1132,8 @@
   ],
   "orphans": [],
   "dev": {
-    "test_command": "cargo test -p mcp",
+    "test_command": "cargo test --workspace",
+    "lint_command": "make lint",
     "do_not_touch": [
       "ports.rs: порт к правам, участникам, токенам не добавлять (mcp-plan.md, раздел 2)",
       "migrations: применённые миграции не менять — только новая миграция"
