@@ -1,0 +1,1139 @@
+{
+  "agent": {
+    "name": "Ассистент семейного бюджета (MCP)",
+    "mission": "Ведёт семейный бюджет голосом и по фото чека под правами пользователя",
+    "goal_metric": {
+      "value": "< 5 с",
+      "label": "на запись расхода"
+    },
+    "updated": "2026-11-23"
+  },
+  "summary": {
+    "features_total": 19,
+    "features_ok": 3,
+    "rules_coverage_pct": 61,
+    "open_questions": 11
+  },
+  "flow": [
+    {
+      "event": "Доступ открыт",
+      "feature": "F-01",
+      "status": "partial"
+    },
+    {
+      "event": "Контекст бюджета получен",
+      "feature": "F-02",
+      "status": "partial"
+    },
+    {
+      "event": "Названия распознаны",
+      "feature": "F-03",
+      "status": "ok"
+    },
+    {
+      "event": "Покупка сверена с SMS банка",
+      "feature": "F-06",
+      "status": "partial"
+    },
+    {
+      "event": "Операция записана",
+      "feature": "F-04",
+      "status": "partial"
+    },
+    {
+      "event": "Описание переведено",
+      "feature": "F-16",
+      "status": "partial"
+    },
+    {
+      "event": "Изменение записано в журнал",
+      "feature": "F-15",
+      "status": "partial"
+    }
+  ],
+  "features": [
+    {
+      "id": "F-01",
+      "name": "Доступ под контролем пользователя",
+      "value": "Ассистент делает только разрешённое, без удаления",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "page: /assistants",
+        "auth: adapters/http.rs",
+        "service: check, visible",
+        "table: fb_mcp_grants"
+      ],
+      "depends_on": [],
+      "used_by": [
+        "F-02",
+        "F-15",
+        "F-17"
+      ],
+      "rules": [
+        {
+          "id": "F-01.R1",
+          "text": "Без доступа — только подсказка, где его открыть",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-01.R2",
+          "text": "По умолчанию — просмотр и операции",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-01.R3",
+          "text": "Права ассистента не выше роли",
+          "covered": true,
+          "invariant": true
+        },
+        {
+          "id": "F-01.R4",
+          "text": "Ничего нельзя удалить или архивировать",
+          "covered": true,
+          "invariant": true
+        },
+        {
+          "id": "F-01.R5",
+          "text": "Права меняет только человек в браузере",
+          "covered": true,
+          "invariant": true
+        },
+        {
+          "id": "F-01.R6",
+          "text": "Проект с 2FA — доступ после второго фактора",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-01.R7",
+          "text": "У каждого ассистента свой доступ",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-01.R8",
+          "text": "Тексты из данных — не команды",
+          "covered": false,
+          "invariant": true
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-01-access.feature",
+        "count": 10
+      },
+      "problem": "Доступ не удаляется при исключении из проекта",
+      "questions": [
+        "Q-04"
+      ],
+      "sources": [
+        "docs/mcp.md «Права»",
+        "docs/mcp-plan.md 2–3",
+        "tech-debt №34"
+      ]
+    },
+    {
+      "id": "F-02",
+      "name": "Знание бюджета перед действием",
+      "value": "Записи в нужные счета и категории",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "prompt: INSTRUCTIONS",
+        "tool: get_context"
+      ],
+      "depends_on": [
+        "F-01"
+      ],
+      "used_by": [
+        "F-03",
+        "F-04"
+      ],
+      "rules": [
+        {
+          "id": "F-02.R1",
+          "text": "Контекст — до первой записи в разговоре",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-02.R2",
+          "text": "Контекст содержит всё для записи",
+          "covered": true,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-02-context.feature",
+        "count": 2
+      },
+      "questions": [
+        "Q-03"
+      ],
+      "sources": [
+        "adapters/server.rs:21-43, 77"
+      ]
+    },
+    {
+      "id": "F-03",
+      "name": "Понимание названий на любом языке",
+      "value": "«Кофе», «Food», «รถ» находят запись без кодов",
+      "status": "ok",
+      "priority": "mvp",
+      "components": [
+        "domain: resolve",
+        "kernel: search"
+      ],
+      "depends_on": [
+        "F-02"
+      ],
+      "used_by": [
+        "F-04",
+        "F-07",
+        "F-08",
+        "F-09",
+        "F-10",
+        "F-11"
+      ],
+      "rules": [
+        {
+          "id": "F-03.R1",
+          "text": "Поиск по коду или названию на ru/en/th",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-03.R2",
+          "text": "Неоднозначное название не угадывается",
+          "covered": true,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-03-names.feature",
+        "count": 3
+      },
+      "questions": [],
+      "sources": [
+        "docs/mcp.md «Соглашения»",
+        "domain.rs:840-861"
+      ]
+    },
+    {
+      "id": "F-04",
+      "name": "Расход и доход за секунды",
+      "value": "Трата с голоса и сразу остаток лимита",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "tool: add_expense",
+        "tool: add_income"
+      ],
+      "depends_on": [
+        "F-02",
+        "F-03",
+        "F-07",
+        "F-12",
+        "F-13",
+        "F-16"
+      ],
+      "used_by": [
+        "F-05"
+      ],
+      "rules": [
+        {
+          "id": "F-04.R1",
+          "text": "Сумма + категория или позиции, не то и другое",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-04.R2",
+          "text": "Счёт не в базовой валюте — предупреждение",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-04.R3",
+          "text": "Нет курса — записать и предупредить",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-04.R4",
+          "text": "После расхода — остаток лимита",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-04.R5",
+          "text": "Дата по умолчанию — сегодня, формат ГГГГ-ММ-ДД",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-04.R6",
+          "text": "Доход — только в категорию дохода",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-04-expense-income.feature",
+        "count": 11
+      },
+      "problem": "«Сегодня» считается по поясу сервера",
+      "questions": [
+        "Q-05"
+      ],
+      "sources": [
+        "adapters/server.rs:138-174",
+        "service.rs:754-830",
+        "stage-0.md реш. 3"
+      ]
+    },
+    {
+      "id": "F-05",
+      "name": "Чек по фото",
+      "value": "Чек позициями без ручного ввода",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "tool: add_expense (items)"
+      ],
+      "depends_on": [
+        "F-04"
+      ],
+      "used_by": [],
+      "rules": [
+        {
+          "id": "F-05.R1",
+          "text": "Позиция: категория, количество × цена или сумма",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-05.R2",
+          "text": "Скидка на чек делится пропорционально",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-05.R3",
+          "text": "Итог операции совпадает с итогом чека",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-05-receipt.feature",
+        "count": 3
+      },
+      "questions": [
+        "Q-03"
+      ],
+      "sources": [
+        "adapters/server.rs:138",
+        "docs/group-1.md"
+      ]
+    },
+    {
+      "id": "F-06",
+      "name": "Без дублей с SMS банка",
+      "value": "Покупка из банка не записывается второй раз",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "prompt: INSTRUCTIONS (SMS)",
+        "tool: list_transactions (from_sms)",
+        "tool: update_transaction"
+      ],
+      "depends_on": [
+        "F-09",
+        "F-14"
+      ],
+      "used_by": [
+        "F-18"
+      ],
+      "rules": [
+        {
+          "id": "F-06.R1",
+          "text": "Операция из SMS помечена, категория — заглушка",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-06.R2",
+          "text": "Дополнить операцию из SMS, а не дублировать",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-06-bank-sms.feature",
+        "count": 5
+      },
+      "problem": "Дубль ловит только инструкция модели",
+      "questions": [
+        "Q-03",
+        "Q-06"
+      ],
+      "sources": [
+        "adapters/server.rs:37-42",
+        "docs/external-refs.md"
+      ]
+    },
+    {
+      "id": "F-07",
+      "name": "Место и «для кого»",
+      "value": "Точные отчёты по местам и людям",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "arg: place",
+        "arg: for",
+        "tool: list_places",
+        "tool: list_people"
+      ],
+      "depends_on": [
+        "F-03",
+        "F-11"
+      ],
+      "used_by": [
+        "F-04"
+      ],
+      "rules": [
+        {
+          "id": "F-07.R1",
+          "text": "Место подставляет категорию и счёт",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-07.R2",
+          "text": "Место и человек — только с согласия",
+          "covered": false,
+          "invariant": true
+        },
+        {
+          "id": "F-07.R3",
+          "text": "По умолчанию покупка — для всех",
+          "covered": true,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-07-place-recipient.feature",
+        "count": 5
+      },
+      "questions": [],
+      "sources": [
+        "adapters/server.rs:24-29",
+        "service.rs:758-767"
+      ]
+    },
+    {
+      "id": "F-08",
+      "name": "Перевод и обмен валют",
+      "value": "Перевод и обмен — одна запись",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "tool: add_transfer"
+      ],
+      "depends_on": [
+        "F-03"
+      ],
+      "used_by": [
+        "F-10"
+      ],
+      "rules": [
+        {
+          "id": "F-08.R1",
+          "text": "Перевод одной валюты — одна операция",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-08.R2",
+          "text": "Обмен — с полученной суммой",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-08.R3",
+          "text": "Комиссия — часть суммы с категорией",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-08-transfer.feature",
+        "count": 4
+      },
+      "questions": [],
+      "sources": [
+        "adapters/server.rs:176",
+        "service.rs:883"
+      ]
+    },
+    {
+      "id": "F-09",
+      "name": "Исправление операций",
+      "value": "Ошибку можно поправить словами",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "tool: update_transaction"
+      ],
+      "depends_on": [
+        "F-03"
+      ],
+      "used_by": [
+        "F-06"
+      ],
+      "rules": [
+        {
+          "id": "F-09.R1",
+          "text": "Меняются только переданные поля",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-09.R2",
+          "text": "Перед правкой — подтверждение пользователя",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-09.R3",
+          "text": "Позиции чека правятся по id",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-09.R4",
+          "text": "Начальный остаток не правится как операция",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-09-edit.feature",
+        "count": 4
+      },
+      "questions": [
+        "Q-07"
+      ],
+      "sources": [
+        "adapters/server.rs:195",
+        "service.rs:894-995"
+      ]
+    },
+    {
+      "id": "F-10",
+      "name": "Плановые платежи",
+      "value": "Регулярные платежи — одной фразой",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "tool: list_upcoming_payments",
+        "tool: pay_planned",
+        "tool: skip_planned",
+        "tool: list_plans, add_plan, update_plan"
+      ],
+      "depends_on": [
+        "F-03",
+        "F-08"
+      ],
+      "used_by": [],
+      "rules": [
+        {
+          "id": "F-10.R1",
+          "text": "Оплатить только ожидаемое вхождение плана",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-10.R2",
+          "text": "Сумма и счёт оплаты могут отличаться",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-10.R3",
+          "text": "Пропущенное вхождение больше не ожидается",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-10.R4",
+          "text": "Расход/доход — категория, перевод — счёт",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-10.R5",
+          "text": "Новое правило дат не теряет прошлые оплаты",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-10.R6",
+          "text": "Плановый обмен оплачивается с суммой",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-10-planned.feature",
+        "count": 8
+      },
+      "problem": "Плановый обмен валют не оплатить",
+      "questions": [],
+      "sources": [
+        "adapters/server.rs:214-297",
+        "stage-0.md реш. 4–5",
+        "tech-debt №33"
+      ]
+    },
+    {
+      "id": "F-11",
+      "name": "Справочники через разговор",
+      "value": "Валюты, счета, категории без формы",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "tool: add_/update_currency",
+        "tool: add_/update_account",
+        "tool: add_/update_category",
+        "tool: add_/update_place",
+        "tool: add_/update_person"
+      ],
+      "depends_on": [
+        "F-03"
+      ],
+      "used_by": [
+        "F-07",
+        "F-12",
+        "F-13"
+      ],
+      "rules": [
+        {
+          "id": "F-11.R1",
+          "text": "Каждый справочник — своё право",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-11.R2",
+          "text": "Код — UPPER_SNAKE, уникальный",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-11.R3",
+          "text": "Начальный остаток — ещё право на операции",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-11.R4",
+          "text": "Валюту счёта с операциями не сменить",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-11.R5",
+          "text": "Подкатегория — того же вида, что родитель",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-11.R6",
+          "text": "Изменение никогда не архивирует",
+          "covered": true,
+          "invariant": true
+        },
+        {
+          "id": "F-11.R7",
+          "text": "Места и люди без перевода, код не ALL",
+          "covered": true,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-11-directories.feature",
+        "count": 7
+      },
+      "problem": "Счёт и остаток — не одна транзакция",
+      "questions": [],
+      "sources": [
+        "adapters/server.rs:299-513",
+        "tech-debt №18"
+      ]
+    },
+    {
+      "id": "F-12",
+      "name": "Курсы валют",
+      "value": "Верные итоги при любом направлении курса",
+      "status": "ok",
+      "priority": "mvp",
+      "components": [
+        "tool: list_rates",
+        "tool: set_rate"
+      ],
+      "depends_on": [
+        "F-11"
+      ],
+      "used_by": [
+        "F-04",
+        "F-14"
+      ],
+      "rules": [
+        {
+          "id": "F-12.R1",
+          "text": "Курс — ровно одно число: прямое или обратное",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-12.R2",
+          "text": "Курс той же даты заменяет прежний",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-12.R3",
+          "text": "Отличие больше 5 раз — предупреждение",
+          "covered": true,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-12-rates.feature",
+        "count": 5
+      },
+      "questions": [],
+      "sources": [
+        "adapters/server.rs:515-545",
+        "service.rs:1376-1423"
+      ]
+    },
+    {
+      "id": "F-13",
+      "name": "Лимиты",
+      "value": "Ограничить траты словами",
+      "status": "ok",
+      "priority": "mvp",
+      "components": [
+        "tool: list_limits",
+        "tool: set_limit"
+      ],
+      "depends_on": [
+        "F-11"
+      ],
+      "used_by": [
+        "F-04",
+        "F-14"
+      ],
+      "rules": [
+        {
+          "id": "F-13.R1",
+          "text": "Лимит на весь период, с подкатегориями",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-13.R2",
+          "text": "Ноль — настоящий нулевой лимит",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-13.R3",
+          "text": "Снятие с даты, прошлое сохраняется",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-13.R4",
+          "text": "Одно правило категории на дату начала",
+          "covered": true,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-13-limits.feature",
+        "count": 5
+      },
+      "questions": [],
+      "sources": [
+        "adapters/server.rs:547-573",
+        "stage-0.md реш. 1–2"
+      ]
+    },
+    {
+      "id": "F-14",
+      "name": "Ответы о деньгах",
+      "value": "Ответ «сколько потратили» без приложения",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "tool: get_budget",
+        "tool: get_balances",
+        "tool: list_transactions"
+      ],
+      "depends_on": [
+        "F-12",
+        "F-13"
+      ],
+      "used_by": [
+        "F-06",
+        "F-19"
+      ],
+      "rules": [
+        {
+          "id": "F-14.R1",
+          "text": "Итоги — в базовой валюте, с подкатегориями",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-14.R2",
+          "text": "Фильтр категории включает подкатегории",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-14.R3",
+          "text": "Страницы идут подряд без пропусков",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-14.R4",
+          "text": "Обрезанный список помечен",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-14.R5",
+          "text": "Остаток на дату — на конец дня",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-14-answers.feature",
+        "count": 5
+      },
+      "problem": "Страницы со смещением пропускают операции",
+      "questions": [],
+      "sources": [
+        "adapters/server.rs:86-123",
+        "tech-debt №4, №25"
+      ]
+    },
+    {
+      "id": "F-15",
+      "name": "Журнал действий ассистента",
+      "value": "Видно, что и когда изменил ассистент",
+      "status": "partial",
+      "priority": "next",
+      "components": [
+        "service: audit_write",
+        "event: mcp_write"
+      ],
+      "depends_on": [
+        "F-01"
+      ],
+      "used_by": [],
+      "rules": [
+        {
+          "id": "F-15.R1",
+          "text": "Каждое изменение — событие журнала",
+          "covered": true,
+          "invariant": false
+        },
+        {
+          "id": "F-15.R2",
+          "text": "Чтение в журнал не пишется",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-15.R3",
+          "text": "В событии — id доступа или токена",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-15-audit.feature",
+        "count": 3
+      },
+      "problem": "Нет id доступа и токена в событии",
+      "questions": [],
+      "sources": [
+        "service.rs:442-446",
+        "tech-debt №49"
+      ]
+    },
+    {
+      "id": "F-16",
+      "name": "Записи на трёх языках",
+      "value": "Каждый читает записи на своём языке",
+      "status": "partial",
+      "priority": "mvp",
+      "components": [
+        "prompt: INSTRUCTIONS (языки)",
+        "arg: translations"
+      ],
+      "depends_on": [],
+      "used_by": [
+        "F-04"
+      ],
+      "rules": [
+        {
+          "id": "F-16.R1",
+          "text": "Описание на языке пользователя + 2 перевода",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-16.R2",
+          "text": "Названия справочников — на трёх языках",
+          "covered": false,
+          "invariant": false
+        },
+        {
+          "id": "F-16.R3",
+          "text": "Ошибки — на языке пользователя",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-16-languages.feature",
+        "count": 3
+      },
+      "problem": "Итоги инструментов только по-английски",
+      "questions": [
+        "Q-11"
+      ],
+      "sources": [
+        "adapters/server.rs:30-32",
+        "CLAUDE.md «Три языка»"
+      ]
+    },
+    {
+      "id": "F-17",
+      "name": "Удаление с отменой",
+      "value": "Убрать лишнее и вернуть случайное",
+      "status": "missing",
+      "priority": "later",
+      "components": [],
+      "depends_on": [
+        "F-01"
+      ],
+      "used_by": [],
+      "rules": [
+        {
+          "id": "F-17.R1",
+          "text": "Удаление — отдельное право + право записи",
+          "covered": false,
+          "invariant": true
+        },
+        {
+          "id": "F-17.R2",
+          "text": "Отмена кодом 2 минуты, содержимое в журнале",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-17-delete-undo.feature",
+        "count": 2
+      },
+      "problem": "Не сделано: решение не принято",
+      "questions": [
+        "Q-08"
+      ],
+      "sources": [
+        "docs/mcp-plan.md 2–4"
+      ]
+    },
+    {
+      "id": "F-18",
+      "name": "Импорт выписки банка",
+      "value": "Месяц операций одним файлом без дублей",
+      "status": "missing",
+      "priority": "later",
+      "components": [],
+      "depends_on": [
+        "F-06"
+      ],
+      "used_by": [],
+      "rules": [
+        {
+          "id": "F-18.R1",
+          "text": "Записанная операция не создаётся второй раз",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-18-statement-import.feature",
+        "count": 1
+      },
+      "problem": "Не сделано: нет ТЗ",
+      "questions": [
+        "Q-09"
+      ],
+      "sources": [
+        "docs/mcp-plan.md 7, этап 5"
+      ]
+    },
+    {
+      "id": "F-19",
+      "name": "Итоги месяца",
+      "value": "Ассистент сам подводит итоги месяца",
+      "status": "missing",
+      "priority": "later",
+      "components": [],
+      "depends_on": [
+        "F-14"
+      ],
+      "used_by": [],
+      "rules": [
+        {
+          "id": "F-19.R1",
+          "text": "Цифры итогов совпадают с «Бюджетом»",
+          "covered": false,
+          "invariant": false
+        }
+      ],
+      "scenarios": {
+        "path": "docs/agent-analysis/04-examples/F-19-month-summary.feature",
+        "count": 1
+      },
+      "problem": "Не сделано: состав итогов не описан",
+      "questions": [
+        "Q-10"
+      ],
+      "sources": [
+        "docs/mcp-plan.md 7, этап 5"
+      ]
+    }
+  ],
+  "pain": [
+    {
+      "id": "Q-08",
+      "severity": "high",
+      "text": "Не решено, нужно ли удаление через ассистента",
+      "feature": "F-17",
+      "blocks": true
+    },
+    {
+      "id": "X-02",
+      "severity": "high",
+      "text": "Смещение страницы → пропуски и дубли операций",
+      "feature": "F-14",
+      "blocks": false
+    },
+    {
+      "id": "Q-06",
+      "severity": "high",
+      "text": "Дубль с SMS ловит только инструкция модели",
+      "feature": "F-06",
+      "blocks": false
+    },
+    {
+      "id": "Q-03",
+      "severity": "high",
+      "text": "Поведение модели не проверяется ничем",
+      "feature": "F-06",
+      "blocks": false
+    },
+    {
+      "id": "X-03",
+      "severity": "medium",
+      "text": "Плановый обмен валют не оплатить",
+      "feature": "F-10",
+      "blocks": false
+    }
+  ],
+  "orphans": [],
+  "dev": {
+    "test_command": "cargo test -p mcp",
+    "do_not_touch": [
+      "ports.rs: порт к правам, участникам, токенам не добавлять (mcp-plan.md, раздел 2)",
+      "migrations: применённые миграции не менять — только новая миграция"
+    ]
+  },
+  "changes": [
+    {
+      "date": "2026-10-24",
+      "type": "feature",
+      "feature": "F-06",
+      "text": "Операции из SMS банка: пометка и фильтр"
+    },
+    {
+      "date": "2026-10-20",
+      "type": "feature",
+      "feature": "F-01",
+      "text": "ChatGPT — второй ассистент со своим доступом"
+    },
+    {
+      "date": "2026-10-20",
+      "type": "feature",
+      "feature": "F-07",
+      "text": "Места деревом: сеть и её магазины"
+    },
+    {
+      "date": "2026-10-20",
+      "type": "feature",
+      "feature": "F-07",
+      "text": "«Для кого» в операциях"
+    },
+    {
+      "date": "2026-10-19",
+      "type": "feature",
+      "feature": "F-07",
+      "text": "Место подставляет категорию и счёт"
+    },
+    {
+      "date": "2026-10-19",
+      "type": "bug",
+      "feature": "F-03",
+      "text": "Строгие коды новых записей и единый поиск"
+    },
+    {
+      "date": "2026-10-19",
+      "type": "feature",
+      "feature": "F-05",
+      "text": "Чек: количество × цена − скидка, правка по id"
+    },
+    {
+      "date": "2026-10-19",
+      "type": "bug",
+      "feature": "F-04",
+      "text": "Сумма без курса не входит в итоги"
+    },
+    {
+      "date": "2026-10-19",
+      "type": "bug",
+      "feature": "F-13",
+      "text": "Лимит на период, нулевой лимит, снятие с даты"
+    },
+    {
+      "date": "2026-10-19",
+      "type": "bug",
+      "feature": "F-01",
+      "text": "API-токен помнит второй фактор сессии"
+    }
+  ]
+}
